@@ -25,12 +25,20 @@ jobs:
       - name: Checkout orchestrator (public, scripts only)
         uses: actions/checkout@v4
 
-      - name: Checkout private config repo (business data)
-        uses: actions/checkout@v4
+      - name: Setup SSH deploy key for private config repo
+        uses: webfactory/ssh-agent@v0.9.0
         with:
-          repository: ${{ github.repository_owner }}/ai-ops-config
-          token: ${{ secrets.GH_PAT }}
-          path: config
+          ssh-private-key: ${{ secrets.CONFIG_DEPLOY_KEY }}
+
+      - name: Add github.com to known_hosts
+        run: |
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          ssh-keyscan -H github.com >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: Checkout private config repo via deploy key (SSH)
+        run: |
+          git clone --depth 1 --branch main git@github.com:yusuken10121990-hub/ai-ops-config.git config
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -45,17 +53,17 @@ jobs:
           chmod +x scripts/run-loop.sh
           bash scripts/run-loop.sh team-learning-loop
 
-      - name: Commit & push generated learnings to private config repo
+      - name: Commit & push generated learnings to private config repo (SSH)
         working-directory: config
         run: |
-          git config user.name "ai-ops-bot"
-          git config user.email "ai-ops-bot@users.noreply.github.com"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A
           if git diff --cached --quiet; then
             echo "no changes to commit"
           else
             git commit -m "chore: team-learning-loop auto update ($(TZ=Asia/Tokyo date '+%Y-%m-%d %H:%M JST'))"
-            git push
+            git push git@github.com:yusuken10121990-hub/ai-ops-config.git HEAD:main
           fi
 
       - name: Notify LINE on failure

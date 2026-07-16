@@ -1,0 +1,74 @@
+name: team-learning-loop
+
+# PoC (P0): 24h無人運用の実証。PCを落としてもGitHub Actions(cron)が
+# team-learning-loopを実行し続けることを証明する。
+#
+# JST 1,4,7,10,13,16,19,22時 (3hおき・8ドメイン) = UTC 1,4,7,10,13,16,19,22時
+# (JST = UTC+9 なので、この時刻セットはUTCでもJSTでも同じ並びになる)
+on:
+  schedule:
+    - cron: "0 1,4,7,10,13,16,19,22 * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: team-learning-loop
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout orchestrator (public, scripts only)
+        uses: actions/checkout@v4
+
+      - name: Checkout private config repo (business data)
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository_owner }}/ai-ops-config
+          token: ${{ secrets.GH_PAT }}
+          path: config
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Run team-learning-loop
+        env:
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          chmod +x scripts/run-loop.sh
+          bash scripts/run-loop.sh team-learning-loop
+
+      - name: Commit & push generated learnings to private config repo
+        working-directory: config
+        run: |
+          git config user.name "ai-ops-bot"
+          git config user.email "ai-ops-bot@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "no changes to commit"
+          else
+            git commit -m "chore: team-learning-loop auto update ($(TZ=Asia/Tokyo date '+%Y-%m-%d %H:%M JST'))"
+            git push
+          fi
+
+      - name: Notify LINE on failure
+        if: failure()
+        env:
+          LINE_CHANNEL_TOKEN: ${{ secrets.LINE_CHANNEL_TOKEN }}
+          LINE_USER_ID: ${{ secrets.LINE_USER_ID }}
+        run: |
+          if [ -z "${LINE_CHANNEL_TOKEN:-}" ] || [ -z "${LINE_USER_ID:-}" ]; then
+            echo "LINE secrets not set, skipping notification."
+            exit 0
+          fi
+          curl -sS -X POST https://api.line.me/v2/bot/message/push \
+            -H "Authorization: Bearer ${LINE_CHANNEL_TOKEN}" \
+            -H "Content-Type: application/json" \
+            -d "{\"to\":\"${LINE_USER_ID}\",\"messages\":[{\"type\":\"text\",\"text\":\"[ai-ops-orchestrator] team-learning-loop failed. Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}]}"

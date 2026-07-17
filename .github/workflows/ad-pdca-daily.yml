@@ -1,10 +1,10 @@
 name: ad-pdca-daily
 
-# P2: 24h無人運用の横展開。ZEROSYSリサーチ Meta広告の日次PDCA(毎朝10:00 JST)。
-# JST 10:00 = UTC 1:00
+# P2: 24h無人運用の横展開。ZEROSYSリサーチ Meta広告の日次PDCA(毎朝10:10 JST)。
+# JST 10:10 = UTC 1:10（team-learning-loopのUTC1:00ちょうどと衝突しないよう分をずらしてある）
 on:
   schedule:
-    - cron: "0 1 * * *"
+    - cron: "10 1 * * *"
   workflow_dispatch: {}
 
 permissions:
@@ -105,7 +105,7 @@ jobs:
             echo "no changes to commit"
           else
             git commit -m "chore: ad-pdca-daily auto update ($(TZ=Asia/Tokyo date '+%Y-%m-%d %H:%M JST'))"
-            git push git@config-gh:yusuken10121990-hub/ai-ops-config.git HEAD:main
+            bash ../scripts/git-push-retry.sh git@config-gh:yusuken10121990-hub/ai-ops-config.git main
           fi
 
       - name: Sync ai-business changes back (ai-business-ops / sales-research-tool / meta-ads)

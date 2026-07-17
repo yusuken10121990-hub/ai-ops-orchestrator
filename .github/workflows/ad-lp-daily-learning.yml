@@ -1,11 +1,12 @@
 name: ad-lp-daily-learning
 
 # P2: 24h無人運用の横展開。ad-lp-analystの学習ループ(3hおき)をGitHub Actionsへ移設。
-# team-learning-loop(毎正時+1時間おき3h)と衝突しないよう分:30にずらしてある。
-# JST 0:30,3:30,6:30,9:30,12:30,15:30,18:30,21:30 = UTC 0:30,3:30,...,21:30(同じ時集合)
+# team-learning-loop(毎正時+1時間おき3h)や他ループのpush競合を減らすため分:45にずらしてある
+# (2026-07-17: 分:30だとseo-daily/ad-lp-apply-dailyのpush直後に重なりやすかったための微調整)。
+# JST 0:45,3:45,6:45,9:45,12:45,15:45,18:45,21:45 = UTC 0:45,3:45,...,21:45(同じ時集合)
 on:
   schedule:
-    - cron: "30 0,3,6,9,12,15,18,21 * * *"
+    - cron: "45 0,3,6,9,12,15,18,21 * * *"
   workflow_dispatch: {}
 
 permissions:
@@ -67,7 +68,7 @@ jobs:
             echo "no changes to commit"
           else
             git commit -m "chore: ad-lp-daily-learning auto update ($(TZ=Asia/Tokyo date '+%Y-%m-%d %H:%M JST'))"
-            git push git@config-gh:yusuken10121990-hub/ai-ops-config.git HEAD:main
+            bash ../scripts/git-push-retry.sh git@config-gh:yusuken10121990-hub/ai-ops-config.git main
           fi
 
       - name: Sync ai-business changes back (ai-business-ops)

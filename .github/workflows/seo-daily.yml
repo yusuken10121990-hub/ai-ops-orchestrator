@@ -72,7 +72,7 @@ jobs:
             echo "no changes to commit"
           else
             git commit -m "chore: seo-daily auto update ($(TZ=Asia/Tokyo date '+%Y-%m-%d %H:%M JST'))"
-            git push git@config-gh:yusuken10121990-hub/ai-ops-config.git HEAD:main
+            bash ../scripts/git-push-retry.sh git@config-gh:yusuken10121990-hub/ai-ops-config.git main
           fi
 
       - name: Sync ai-business changes back (ai-business-ops / sales-research-tool / meta-ads)

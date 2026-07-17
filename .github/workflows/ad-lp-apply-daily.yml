@@ -1,10 +1,10 @@
 name: ad-lp-apply-daily
 
-# P2: 24h無人運用の横展開。毎朝9:00 JSTにad-lp-apply-queue.mdの可逆項目を反映。
-# JST 9:00 = UTC 0:00
+# P2: 24h無人運用の横展開。毎朝9:05 JSTにad-lp-apply-queue.mdの可逆項目を反映。
+# JST 9:05 = UTC 0:05（他ループとのpush競合を減らすため分をずらしてある）
 on:
   schedule:
-    - cron: "0 0 * * *"
+    - cron: "5 0 * * *"
   workflow_dispatch: {}
 
 permissions:
@@ -76,7 +76,7 @@ jobs:
             echo "no changes to commit"
           else
             git commit -m "chore: ad-lp-apply-daily auto update ($(TZ=Asia/Tokyo date '+%Y-%m-%d %H:%M JST'))"
-            git push git@config-gh:yusuken10121990-hub/ai-ops-config.git HEAD:main
+            bash ../scripts/git-push-retry.sh git@config-gh:yusuken10121990-hub/ai-ops-config.git main
           fi
 
       - name: Sync ai-business changes back (ai-business-ops / sales-research-tool / meta-ads)

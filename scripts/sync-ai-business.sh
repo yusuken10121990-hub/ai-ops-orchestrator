@@ -20,6 +20,8 @@ cp -r "${AI_BUSINESS_DIR}/.claude/memory/." "${AI_BUSINESS_OPS_DIR}/.claude/memo
 rm -rf "${AI_BUSINESS_OPS_DIR}/google-ads/node_modules" "${AI_BUSINESS_OPS_DIR}/google-ads/.env" \
        "${AI_BUSINESS_OPS_DIR}/google-ads/data" "${AI_BUSINESS_OPS_DIR}/google-ads/reports"
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 commit_and_push() {
   local dir="$1" remote="$2" label="$3"
   if [ ! -d "${dir}" ]; then
@@ -35,7 +37,9 @@ commit_and_push() {
       echo "[sync] ${label}: no changes"
     else
       git commit -q -m "chore: ${GITHUB_WORKFLOW:-loop} auto update ($(TZ=Asia/Tokyo date '+%Y-%m-%d %H:%M JST'))"
-      git push "${remote}" HEAD:main
+      # Multiple loops can push to the same repo/branch concurrently -- retry
+      # with rebase on non-fast-forward rejection instead of failing outright.
+      bash "${SCRIPT_DIR}/git-push-retry.sh" "${remote}" main
       echo "[sync] ${label}: pushed"
     fi
   )

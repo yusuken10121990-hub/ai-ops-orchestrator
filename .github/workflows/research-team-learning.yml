@@ -60,7 +60,7 @@ jobs:
             echo "no changes to commit"
           else
             git commit -m "chore: research-team-learning auto update ($(TZ=Asia/Tokyo date '+%Y-%m-%d %H:%M JST'))"
-            git push git@github.com:yusuken10121990-hub/ai-ops-config.git HEAD:main
+            bash ../scripts/git-push-retry.sh git@github.com:yusuken10121990-hub/ai-ops-config.git main
           fi
 
       - name: Notify LINE on failure

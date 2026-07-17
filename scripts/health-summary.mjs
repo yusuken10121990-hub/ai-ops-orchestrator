@@ -24,13 +24,16 @@ const GH_TOKEN = process.env.GITHUB_TOKEN;
 const OPS_DASHBOARD_KEY = process.env.OPS_DASHBOARD_KEY;
 const OUTPUT_FILE = process.env.OUTPUT_FILE; // required: path to write the ledger markdown to
 
+// { display name, actual .github/workflows/<file>.yml filename (they differ
+// for team-learning-loop: file is team-learning.yml but workflow `name:` is
+// team-learning-loop) }
 const LOOPS = [
-  'team-learning-loop',
-  'ad-lp-daily-learning',
-  'ad-lp-apply-daily',
-  'research-team-learning',
-  'seo-daily',
-  'ad-pdca-daily',
+  { name: 'team-learning-loop', file: 'team-learning' },
+  { name: 'ad-lp-daily-learning', file: 'ad-lp-daily-learning' },
+  { name: 'ad-lp-apply-daily', file: 'ad-lp-apply-daily' },
+  { name: 'research-team-learning', file: 'research-team-learning' },
+  { name: 'seo-daily', file: 'seo-daily' },
+  { name: 'ad-pdca-daily', file: 'ad-pdca-daily' },
 ];
 
 async function ghApi(path) {
@@ -49,13 +52,13 @@ function jstNow() {
   return new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' });
 }
 
-async function loopStatus(workflowFile) {
+async function loopStatus(loop) {
   try {
     const data = await ghApi(
-      `/repos/${REPO}/actions/workflows/${workflowFile}.yml/runs?per_page=3`
+      `/repos/${REPO}/actions/workflows/${loop.file}.yml/runs?per_page=3`
     );
     const runs = data.workflow_runs || [];
-    if (runs.length === 0) return { name: workflowFile, status: '⚪ 実行履歴なし' };
+    if (runs.length === 0) return { name: loop.name, status: '⚪ 実行履歴なし' };
     const latest = runs[0];
     const ranAgoH = (Date.now() - new Date(latest.run_started_at).getTime()) / 3600000;
     const staleFlag = ranAgoH > 26 ? '（26h以上前 ⚠️停止疑い）' : '';
@@ -66,12 +69,12 @@ async function loopStatus(workflowFile) {
       mark = '🔄';
     }
     return {
-      name: workflowFile,
+      name: loop.name,
       status: `${mark} ${latest.conclusion || latest.status}${staleFlag}`,
       url: latest.html_url,
     };
   } catch (e) {
-    return { name: workflowFile, status: `⚠️ 取得失敗(${e.message})` };
+    return { name: loop.name, status: `⚠️ 取得失敗(${e.message})` };
   }
 }
 

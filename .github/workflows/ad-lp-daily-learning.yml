@@ -23,10 +23,14 @@ jobs:
       - name: Checkout orchestrator (public, scripts only)
         uses: actions/checkout@v7
 
-      - name: Setup SSH deploy keys (config + ai-business-ops, one host-alias per repo)
+      - name: Setup SSH deploy keys (config + ai-business-ops + sales-research-tool + meta-ads, one host-alias per repo)
+        # checkout-ai-business.sh always clones all 3 ai-business repos, so all
+        # 4 keys must be present even though this loop only writes to ai-business-ops.
         env:
           CONFIG_DEPLOY_KEY: ${{ secrets.CONFIG_DEPLOY_KEY }}
           AI_BUSINESS_OPS_DEPLOY_KEY: ${{ secrets.AI_BUSINESS_OPS_DEPLOY_KEY }}
+          SALES_RESEARCH_DEPLOY_KEY: ${{ secrets.SALES_RESEARCH_DEPLOY_KEY }}
+          META_ADS_DEPLOY_KEY: ${{ secrets.META_ADS_DEPLOY_KEY }}
         run: |
           chmod +x scripts/setup-ssh-keys.sh
           scripts/setup-ssh-keys.sh

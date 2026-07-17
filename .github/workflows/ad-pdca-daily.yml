@@ -46,7 +46,7 @@ jobs:
         with:
           node-version: "20"
 
-      - name: Install deps (meta-ads: pull-data.js/fetch-placements.js/apply-*.js need facebook-nodejs-business-sdk)
+      - name: "Install deps (meta-ads: pull-data.js/fetch-placements.js/apply-*.js need facebook-nodejs-business-sdk)"
         run: |
           if [ -f "${AI_BUSINESS_DIR}/meta-ads/package.json" ]; then
             (cd "${AI_BUSINESS_DIR}/meta-ads" && (npm ci --no-audit --no-fund || npm install --no-audit --no-fund))

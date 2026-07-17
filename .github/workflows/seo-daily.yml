@@ -79,18 +79,7 @@ jobs:
         run: |
           chmod +x scripts/sync-ai-business.sh
           scripts/sync-ai-business.sh
-
-      - name: Notify LINE on failure
-        if: failure()
-        env:
-          LINE_CHANNEL_TOKEN: ${{ secrets.LINE_CHANNEL_TOKEN }}
-          LINE_USER_ID: ${{ secrets.LINE_USER_ID }}
-        run: |
-          if [ -z "${LINE_CHANNEL_TOKEN:-}" ] || [ -z "${LINE_USER_ID:-}" ]; then
-            echo "LINE secrets not set, skipping notification."
-            exit 0
-          fi
-          curl -sS -X POST https://api.line.me/v2/bot/message/push \
-            -H "Authorization: Bearer ${LINE_CHANNEL_TOKEN}" \
-            -H "Content-Type: application/json" \
-            -d "{\"to\":\"${LINE_USER_ID}\",\"messages\":[{\"type\":\"text\",\"text\":\"[ai-ops-orchestrator] seo-daily failed. Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}]}"
+# Note (2026-07-17): no LINE-on-failure step here by design. Owner rule
+# (~/.claude/CLAUDE.md "LINE通知ルール"): LINE is reserved for money-approval
+# requests only. Failure visibility lives in the Actions run history /
+# dashboard "稼働状況" tab instead.

@@ -2,8 +2,13 @@ name: health-summary
 
 # P2: 毎朝8:00 JSTに全ループ(team-learning-loop / ad-lp-daily-learning /
 # ad-lp-apply-daily / research-team-learning / seo-daily / ad-pdca-daily)の
-# 直近実行状況 + ops-dashboard(spend/売上)を1通のLINEメッセージにまとめる。
-# Claude不要のNode/shellのみ(トークン節約)。
+# 直近実行状況 + ops-dashboard(spend/売上)をまとめる。Claude不要のNode/shellのみ。
+#
+# 2026-07-17 (オーナー新ルール, ~/.claude/CLAUDE.md「LINE通知ルール」):
+# LINEは金銭承認依頼専用。ヘルスサマリ等の進捗通知は一切送らない。
+# 代わりに ai-business-ops の台帳ファイルへ書き込み、ダッシュボードの
+# 「稼働状況」はそちら(+ gh run list 相当)から生成する運用に変更。
+#
 # JST 8:00 = UTC 23:00(前日)
 on:
   schedule:
@@ -22,11 +27,39 @@ jobs:
       - name: Checkout orchestrator (public, scripts only)
         uses: actions/checkout@v7
 
-      - name: Send health summary
+      - name: Setup SSH deploy key (ai-business-ops)
+        env:
+          AI_BUSINESS_OPS_DEPLOY_KEY: ${{ secrets.AI_BUSINESS_OPS_DEPLOY_KEY }}
+        run: |
+          chmod +x scripts/setup-ssh-keys.sh
+          scripts/setup-ssh-keys.sh
+
+      - name: Checkout ai-business-ops
+        run: |
+          git clone --depth 1 --branch main git@ai-business-ops-gh:yusuken10121990-hub/ai-business-ops.git ai-business-ops
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: "20"
+
+      - name: Generate health summary ledger
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
-          LINE_CHANNEL_TOKEN: ${{ secrets.LINE_CHANNEL_TOKEN }}
-          LINE_USER_ID: ${{ secrets.LINE_USER_ID }}
           OPS_DASHBOARD_KEY: ${{ secrets.OPS_DASHBOARD_KEY }}
+          OUTPUT_FILE: ai-business-ops/.claude/memory/loop-health-summary.md
         run: node scripts/health-summary.mjs
+
+      - name: Commit & push ledger to ai-business-ops
+        working-directory: ai-business-ops
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "no changes to commit"
+          else
+            git commit -m "chore: health-summary ledger update ($(TZ=Asia/Tokyo date '+%Y-%m-%d %H:%M JST'))"
+            bash ../scripts/git-push-retry.sh git@ai-business-ops-gh:yusuken10121990-hub/ai-business-ops.git main
+          fi

@@ -3,19 +3,26 @@
 //
 // Daily (JST 8:00) health check for the 24h unmanned-ops loops running on
 // GitHub Actions. Pure shell/node -- deliberately does NOT invoke Claude, to
-// save tokens (per task instruction). Two data sources:
+// save tokens. Two data sources:
 //   1. GitHub Actions run history for this repo (via REST API + GITHUB_TOKEN)
 //      -> success/failure of each loop's most recent run in the last ~26h.
 //   2. The ops-dashboard API (Netlify function on sales-research-tool) for
 //      spend/revenue, if OPS_DASHBOARD_KEY is set.
-// Sends one summary LINE push message. Never touches money.
+//
+// 2026-07-17 (owner rule, ~/.claude/CLAUDE.md "LINE通知ルール"): LINE is
+// reserved for money-approval requests only. Health/progress summaries must
+// NOT be pushed to LINE (a prior version of this script did, and it spammed
+// the owner). Instead this writes a markdown ledger file that dashboard-sync
+// picks up, per "ダッシュボード更新ルール" (dashboard is generated from
+// ledger files, never hand-edited). Never touches money.
 import { setTimeout as sleep } from 'node:timers/promises';
+import { writeFileSync, mkdirSync } from 'node:fs';
+import { dirname } from 'node:path';
 
 const REPO = process.env.GITHUB_REPOSITORY || 'yusuken10121990-hub/ai-ops-orchestrator';
 const GH_TOKEN = process.env.GITHUB_TOKEN;
-const LINE_TOKEN = process.env.LINE_CHANNEL_TOKEN;
-const LINE_USER_ID = process.env.LINE_USER_ID;
 const OPS_DASHBOARD_KEY = process.env.OPS_DASHBOARD_KEY;
+const OUTPUT_FILE = process.env.OUTPUT_FILE; // required: path to write the ledger markdown to
 
 const LOOPS = [
   'team-learning-loop',
@@ -88,6 +95,12 @@ function fmtYen(n) {
 }
 
 async function main() {
+  if (!OUTPUT_FILE) {
+    console.error('ERROR: OUTPUT_FILE env var not set (path to write the ledger markdown to)');
+    process.exitCode = 1;
+    return;
+  }
+
   const statuses = [];
   for (const loop of LOOPS) {
     statuses.push(await loopStatus(loop));
@@ -97,15 +110,17 @@ async function main() {
   const ops = await fetchOpsDashboard();
 
   const lines = [];
-  lines.push(`[24h無人運用 朝サマリ] ${jstNow()} JST`);
+  lines.push(`# 24h無人運用 ヘルスサマリ`);
   lines.push('');
-  lines.push('■ 学習/運用ループ稼働状況');
+  lines.push(`最終更新: ${jstNow()} JST（毎朝8:00自動更新・ダッシュボードのソース）`);
+  lines.push('');
+  lines.push('## 学習/運用ループ稼働状況');
   for (const s of statuses) {
-    lines.push(`- ${s.name}: ${s.status}`);
+    lines.push(`- ${s.name}: ${s.status}${s.url ? ` ([run](${s.url}))` : ''}`);
   }
   lines.push('');
   if (ops && !ops.error) {
-    lines.push('■ 実績(ops-dashboard, ZEROSYSリサーチMeta広告 + Stripe全社)');
+    lines.push('## 実績(ops-dashboard, ZEROSYSリサーチMeta広告 + Stripe全社)');
     try {
       // Shape matches netlify/functions/ops-dashboard-data.js in sales-research-tool:
       //   { meta: { campaignToday, campaignMax, ads: [...] } | { error },
@@ -128,35 +143,22 @@ async function main() {
       lines.push('- 集計整形に失敗(生データはActionsログ参照)');
     }
   } else if (ops && ops.error) {
-    lines.push(`■ 実績: ops-dashboard取得失敗 (${ops.error})`);
+    lines.push(`## 実績: ops-dashboard取得失敗 (${ops.error})`);
   } else {
-    lines.push('■ 実績: OPS_DASHBOARD_KEY未設定のためスキップ');
+    lines.push('## 実績: OPS_DASHBOARD_KEY未設定のためスキップ');
   }
+  lines.push('');
+  lines.push('_このファイルは health-summary workflow (毎朝8:00 JST) が自動生成。手で編集しない。_');
 
-  const message = lines.join('\n').slice(0, 4900); // LINE push text limit ~5000 chars
+  const content = lines.join('\n') + '\n';
 
   console.log('---- summary ----');
-  console.log(message);
+  console.log(content);
   console.log('------------------');
 
-  if (!LINE_TOKEN || !LINE_USER_ID) {
-    console.log('LINE secrets not set, skipping push.');
-    return;
-  }
-  const res = await fetch('https://api.line.me/v2/bot/message/push', {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${LINE_TOKEN}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({ to: LINE_USER_ID, messages: [{ type: 'text', text: message }] }),
-  });
-  if (!res.ok) {
-    console.error(`LINE push failed: HTTP ${res.status} ${await res.text()}`);
-    process.exitCode = 1;
-  } else {
-    console.log('LINE push sent.');
-  }
+  mkdirSync(dirname(OUTPUT_FILE), { recursive: true });
+  writeFileSync(OUTPUT_FILE, content, 'utf8');
+  console.log(`Written to ${OUTPUT_FILE}`);
 }
 
 main().catch((e) => {

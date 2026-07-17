@@ -19,6 +19,14 @@ set -euo pipefail
 LOOP_NAME="${1:?usage: run-loop.sh <loop-name>}"
 CONFIG_DIR="${CONFIG_DIR:-${GITHUB_WORKSPACE:-$(pwd)}/config}"
 HOME_CLAUDE="${HOME}/.claude"
+# P2: some loops (ad-lp-*, seo-daily, ad-pdca-daily) reference absolute
+# Windows paths under C:\Users\user\ai-business\... (a separate tree from
+# C:\Users\user\.claude). If the workflow checked out those repos and
+# assembled them at $AI_BUSINESS_DIR (default: $GITHUB_WORKSPACE/ai-business),
+# we also translate that prefix. Loops that don't need it (team-learning-loop,
+# research-team-learning) simply leave AI_BUSINESS_DIR unset/empty, in which
+# case this is a no-op and behavior is unchanged from the P0 PoC.
+AI_BUSINESS_DIR="${AI_BUSINESS_DIR:-}"
 
 echo "== run-loop: ${LOOP_NAME} =="
 echo "config dir: ${CONFIG_DIR}"
@@ -48,13 +56,23 @@ if [ -z "${BODY}" ]; then
   BODY="$(cat "${SKILL_FILE}")"
 fi
 
-# 3. Translate owner's Windows absolute paths -> runner's $HOME/.claude path,
-#    and normalize any remaining backslashes to forward slashes.
+# 3. Translate owner's Windows absolute paths -> runner's $HOME/.claude path
+#    (and, if set, $AI_BUSINESS_DIR for the ai-business tree), then normalize
+#    any remaining backslashes to forward slashes.
 ESCAPED_HOME_CLAUDE=$(printf '%s' "${HOME_CLAUDE}" | sed 's/[&/\]/\\&/g')
 TRANSLATED="$(printf '%s' "${BODY}" \
   | sed -E "s#C:\\\\Users\\\\user\\\\\.claude\\\\#${ESCAPED_HOME_CLAUDE}/#g" \
-  | sed -E "s#C:/Users/user/\.claude/#${ESCAPED_HOME_CLAUDE}/#g" \
-  | sed -E 's#\\#/#g')"
+  | sed -E "s#C:/Users/user/\.claude/#${ESCAPED_HOME_CLAUDE}/#g")"
+
+if [ -n "${AI_BUSINESS_DIR}" ]; then
+  echo "ai-business dir: ${AI_BUSINESS_DIR}"
+  ESCAPED_AI_BUSINESS=$(printf '%s' "${AI_BUSINESS_DIR}" | sed 's/[&/\]/\\&/g')
+  TRANSLATED="$(printf '%s' "${TRANSLATED}" \
+    | sed -E "s#C:\\\\Users\\\\user\\\\ai-business\\\\#${ESCAPED_AI_BUSINESS}/#g" \
+    | sed -E "s#C:/Users/user/ai-business/#${ESCAPED_AI_BUSINESS}/#g")"
+fi
+
+TRANSLATED="$(printf '%s' "${TRANSLATED}" | sed -E 's#\\#/#g')"
 
 # 4. Inject current JST wall-clock time explicitly. SKILL.md logic branches
 #    on "現在の時刻" (JST, since this is a Japan-based business) — a Linux

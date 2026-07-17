@@ -1,0 +1,134 @@
+name: ad-pdca-daily
+
+# P2: 24h無人運用の横展開。ZEROSYSリサーチ Meta広告の日次PDCA(毎朝10:00 JST)。
+# JST 10:00 = UTC 1:00
+on:
+  schedule:
+    - cron: "0 1 * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ad-pdca-daily
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout orchestrator (public, scripts only)
+        uses: actions/checkout@v7
+
+      - name: Setup SSH deploy keys (config + ai-business-ops + sales-research-tool + meta-ads)
+        uses: webfactory/ssh-agent@v0.10.0
+        with:
+          ssh-private-key: |
+            ${{ secrets.CONFIG_DEPLOY_KEY }}
+            ${{ secrets.AI_BUSINESS_OPS_DEPLOY_KEY }}
+            ${{ secrets.SALES_RESEARCH_DEPLOY_KEY }}
+            ${{ secrets.META_ADS_DEPLOY_KEY }}
+
+      - name: Add github.com to known_hosts
+        run: |
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          ssh-keyscan -H github.com >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: Checkout private config repo via deploy key (SSH)
+        run: |
+          git clone --depth 1 --branch main git@github.com:yusuken10121990-hub/ai-ops-config.git config
+
+      - name: Checkout ai-business (ai-business-ops + sales-research-tool + meta-ads)
+        run: |
+          chmod +x scripts/checkout-ai-business.sh
+          scripts/checkout-ai-business.sh
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: "20"
+
+      - name: Install deps (meta-ads: pull-data.js/fetch-placements.js/apply-*.js need facebook-nodejs-business-sdk)
+        run: |
+          if [ -f "${AI_BUSINESS_DIR}/meta-ads/package.json" ]; then
+            (cd "${AI_BUSINESS_DIR}/meta-ads" && (npm ci --no-audit --no-fund || npm install --no-audit --no-fund))
+          fi
+
+      - name: Run ad-pdca-daily
+        env:
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GATE_URL: ${{ secrets.GATE_URL }}
+          GATE_AGENT_KEY: ${{ secrets.GATE_AGENT_KEY }}
+          NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
+          # Meta Ads API credentials (ai-business/meta-ads/.env locally). Set via:
+          #   gh secret set META_APP_ID -R yusuken10121990-hub/ai-ops-orchestrator
+          #   gh secret set META_APP_SECRET -R yusuken10121990-hub/ai-ops-orchestrator
+          #   gh secret set META_SYSTEM_USER_TOKEN -R yusuken10121990-hub/ai-ops-orchestrator
+          #   gh secret set META_AD_ACCOUNT_ID -R yusuken10121990-hub/ai-ops-orchestrator
+          #   gh secret set META_API_VERSION -R yusuken10121990-hub/ai-ops-orchestrator   (optional, defaults to v21.0)
+          META_APP_ID: ${{ secrets.META_APP_ID }}
+          META_APP_SECRET: ${{ secrets.META_APP_SECRET }}
+          META_SYSTEM_USER_TOKEN: ${{ secrets.META_SYSTEM_USER_TOKEN }}
+          META_AD_ACCOUNT_ID: ${{ secrets.META_AD_ACCOUNT_ID }}
+          META_API_VERSION: ${{ secrets.META_API_VERSION }}
+          META_PAGE_ID: ${{ secrets.META_PAGE_ID }}
+          META_IG_ACCOUNT_ID: ${{ secrets.META_IG_ACCOUNT_ID }}
+          META_PIXEL_ID: ${{ secrets.META_PIXEL_ID }}
+        run: |
+          chmod +x scripts/run-loop.sh
+          # meta-ads scripts load .env via `import 'dotenv/config'`; since CI has no
+          # .env file (gitignored, never pushed), write one from the secrets above so
+          # pull-data.js/apply-*.js work unmodified. Values are secrets — this file
+          # lives only on the ephemeral runner and is never committed (gitignored).
+          if [ -n "${META_SYSTEM_USER_TOKEN:-}" ]; then
+            cat > "${AI_BUSINESS_DIR}/meta-ads/.env" <<EOF
+          META_APP_ID=${META_APP_ID}
+          META_APP_SECRET=${META_APP_SECRET}
+          META_SYSTEM_USER_TOKEN=${META_SYSTEM_USER_TOKEN}
+          META_AD_ACCOUNT_ID=${META_AD_ACCOUNT_ID}
+          META_API_VERSION=${META_API_VERSION:-v21.0}
+          META_PAGE_ID=${META_PAGE_ID}
+          META_IG_ACCOUNT_ID=${META_IG_ACCOUNT_ID}
+          META_PIXEL_ID=${META_PIXEL_ID}
+          EOF
+          else
+            echo "WARN: META_SYSTEM_USER_TOKEN secret not set -- meta-ads data collection step will fail. Loop will still run and record 'continue observing' / gate items where possible."
+          fi
+          bash scripts/run-loop.sh ad-pdca-daily
+
+      - name: Commit & push generated learnings to private config repo (SSH)
+        working-directory: config
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "no changes to commit"
+          else
+            git commit -m "chore: ad-pdca-daily auto update ($(TZ=Asia/Tokyo date '+%Y-%m-%d %H:%M JST'))"
+            git push git@github.com:yusuken10121990-hub/ai-ops-config.git HEAD:main
+          fi
+
+      - name: Sync ai-business changes back (ai-business-ops / sales-research-tool / meta-ads)
+        run: |
+          chmod +x scripts/sync-ai-business.sh
+          scripts/sync-ai-business.sh
+
+      - name: Notify LINE on failure
+        if: failure()
+        env:
+          LINE_CHANNEL_TOKEN: ${{ secrets.LINE_CHANNEL_TOKEN }}
+          LINE_USER_ID: ${{ secrets.LINE_USER_ID }}
+        run: |
+          if [ -z "${LINE_CHANNEL_TOKEN:-}" ] || [ -z "${LINE_USER_ID:-}" ]; then
+            echo "LINE secrets not set, skipping notification."
+            exit 0
+          fi
+          curl -sS -X POST https://api.line.me/v2/bot/message/push \
+            -H "Authorization: Bearer ${LINE_CHANNEL_TOKEN}" \
+            -H "Content-Type: application/json" \
+            -d "{\"to\":\"${LINE_USER_ID}\",\"messages\":[{\"type\":\"text\",\"text\":\"[ai-ops-orchestrator] ad-pdca-daily failed. Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}]}"

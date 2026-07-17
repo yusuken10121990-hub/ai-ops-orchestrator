@@ -1,0 +1,79 @@
+name: research-team-learning
+
+# P2: 24h無人運用の横展開。企業リサーチパイプライン11体の日次学習(毎朝5:30 JST・並列)。
+# JST 5:30 = UTC 20:30 (前日)
+on:
+  schedule:
+    - cron: "30 20 * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: research-team-learning
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout orchestrator (public, scripts only)
+        uses: actions/checkout@v7
+
+      - name: Setup SSH deploy key for private config repo
+        uses: webfactory/ssh-agent@v0.10.0
+        with:
+          ssh-private-key: ${{ secrets.CONFIG_DEPLOY_KEY }}
+
+      - name: Add github.com to known_hosts
+        run: |
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          ssh-keyscan -H github.com >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: Checkout private config repo via deploy key (SSH)
+        run: |
+          git clone --depth 1 --branch main git@github.com:yusuken10121990-hub/ai-ops-config.git config
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: "20"
+
+      - name: Run research-team-learning
+        env:
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          chmod +x scripts/run-loop.sh
+          bash scripts/run-loop.sh research-team-learning
+
+      - name: Commit & push generated learnings to private config repo (SSH)
+        working-directory: config
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "no changes to commit"
+          else
+            git commit -m "chore: research-team-learning auto update ($(TZ=Asia/Tokyo date '+%Y-%m-%d %H:%M JST'))"
+            git push git@github.com:yusuken10121990-hub/ai-ops-config.git HEAD:main
+          fi
+
+      - name: Notify LINE on failure
+        if: failure()
+        env:
+          LINE_CHANNEL_TOKEN: ${{ secrets.LINE_CHANNEL_TOKEN }}
+          LINE_USER_ID: ${{ secrets.LINE_USER_ID }}
+        run: |
+          if [ -z "${LINE_CHANNEL_TOKEN:-}" ] || [ -z "${LINE_USER_ID:-}" ]; then
+            echo "LINE secrets not set, skipping notification."
+            exit 0
+          fi
+          curl -sS -X POST https://api.line.me/v2/bot/message/push \
+            -H "Authorization: Bearer ${LINE_CHANNEL_TOKEN}" \
+            -H "Content-Type: application/json" \
+            -d "{\"to\":\"${LINE_USER_ID}\",\"messages\":[{\"type\":\"text\",\"text\":\"[ai-ops-orchestrator] research-team-learning failed. Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}]}"

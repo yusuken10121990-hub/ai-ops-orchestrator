@@ -1,0 +1,32 @@
+name: health-summary
+
+# P2: 毎朝8:00 JSTに全ループ(team-learning-loop / ad-lp-daily-learning /
+# ad-lp-apply-daily / research-team-learning / seo-daily / ad-pdca-daily)の
+# 直近実行状況 + ops-dashboard(spend/売上)を1通のLINEメッセージにまとめる。
+# Claude不要のNode/shellのみ(トークン節約)。
+# JST 8:00 = UTC 23:00(前日)
+on:
+  schedule:
+    - cron: "0 23 * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  summarize:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout orchestrator (public, scripts only)
+        uses: actions/checkout@v7
+
+      - name: Send health summary
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          LINE_CHANNEL_TOKEN: ${{ secrets.LINE_CHANNEL_TOKEN }}
+          LINE_USER_ID: ${{ secrets.LINE_USER_ID }}
+          OPS_DASHBOARD_KEY: ${{ secrets.OPS_DASHBOARD_KEY }}
+        run: node scripts/health-summary.mjs

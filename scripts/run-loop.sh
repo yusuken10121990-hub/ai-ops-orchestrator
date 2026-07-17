@@ -89,8 +89,15 @@ echo "auth mode: ${AUTH_MODE}"
 
 cd "${HOME_CLAUDE}"
 
+# NOTE: --dangerously-skip-permissions (bypass all permission checks) instead
+# of --permission-mode acceptEdits. acceptEdits only auto-approves file
+# edits; it still prompts for WebSearch/WebFetch/etc, which hangs forever in
+# headless CI (no human to approve) and made the loop's actual research step
+# a silent no-op. This is a disposable GitHub Actions runner touching only
+# the config/ checkout (no other credentials/business systems reachable), so
+# bypassing the prompt is low-risk here — see decisions.md 2026-07-16 entry.
 npx -y @anthropic-ai/claude-code@latest -p "${PROMPT}" \
-  --permission-mode acceptEdits \
+  --dangerously-skip-permissions \
   --model "${CLAUDE_MODEL:-sonnet}"
 
 echo "== claude run finished, syncing generated changes back to config checkout =="

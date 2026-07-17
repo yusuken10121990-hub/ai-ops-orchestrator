@@ -41,8 +41,8 @@ commit_and_push() {
   )
 }
 
-commit_and_push "${AI_BUSINESS_OPS_DIR}" "git@github.com:yusuken10121990-hub/ai-business-ops.git" "ai-business-ops"
-commit_and_push "${AI_BUSINESS_DIR}/sales-research-tool" "git@github.com:yusuken10121990-hub/sales-research-tool.git" "sales-research-tool"
-commit_and_push "${AI_BUSINESS_DIR}/meta-ads" "git@github.com:yusuken10121990-hub/meta-ads.git" "meta-ads"
+commit_and_push "${AI_BUSINESS_OPS_DIR}" "git@ai-business-ops-gh:yusuken10121990-hub/ai-business-ops.git" "ai-business-ops"
+commit_and_push "${AI_BUSINESS_DIR}/sales-research-tool" "git@sales-research-gh:yusuken10121990-hub/sales-research-tool.git" "sales-research-tool"
+commit_and_push "${AI_BUSINESS_DIR}/meta-ads" "git@meta-ads-gh:yusuken10121990-hub/meta-ads.git" "meta-ads"
 
 echo "== sync-ai-business: done =="

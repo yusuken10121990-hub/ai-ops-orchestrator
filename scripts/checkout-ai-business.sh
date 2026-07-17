@@ -16,8 +16,9 @@
 # (C:\Users\user\ai-business\... -> $AI_BUSINESS_DIR/...) resolves correctly,
 # mirroring the owner's real directory layout.
 #
-# Requires: SSH deploy keys for all 3 repos already loaded via webfactory/ssh-agent
-# (secrets AI_BUSINESS_OPS_DEPLOY_KEY / SALES_RESEARCH_DEPLOY_KEY / META_ADS_DEPLOY_KEY).
+# Requires: scripts/setup-ssh-keys.sh already run (writes per-repo SSH host
+# aliases config-gh / ai-business-ops-gh / sales-research-gh / meta-ads-gh),
+# from secrets AI_BUSINESS_OPS_DEPLOY_KEY / SALES_RESEARCH_DEPLOY_KEY / META_ADS_DEPLOY_KEY.
 set -euo pipefail
 
 WORKSPACE="${GITHUB_WORKSPACE:-$(pwd)}"
@@ -26,9 +27,9 @@ AI_BUSINESS_DIR="${WORKSPACE}/ai-business"
 
 echo "== checkout-ai-business: cloning 3 repos =="
 
-git clone --depth 1 --branch main git@github.com:yusuken10121990-hub/ai-business-ops.git "${AI_BUSINESS_OPS_DIR}"
-git clone --depth 1 --branch main git@github.com:yusuken10121990-hub/sales-research-tool.git "${AI_BUSINESS_DIR}/sales-research-tool"
-git clone --depth 1 --branch main git@github.com:yusuken10121990-hub/meta-ads.git "${AI_BUSINESS_DIR}/meta-ads"
+git clone --depth 1 --branch main git@ai-business-ops-gh:yusuken10121990-hub/ai-business-ops.git "${AI_BUSINESS_OPS_DIR}"
+git clone --depth 1 --branch main git@sales-research-gh:yusuken10121990-hub/sales-research-tool.git "${AI_BUSINESS_DIR}/sales-research-tool"
+git clone --depth 1 --branch main git@meta-ads-gh:yusuken10121990-hub/meta-ads.git "${AI_BUSINESS_DIR}/meta-ads"
 
 mkdir -p "${AI_BUSINESS_DIR}/.claude"
 cp -r "${AI_BUSINESS_OPS_DIR}/marketing" "${AI_BUSINESS_DIR}/marketing"

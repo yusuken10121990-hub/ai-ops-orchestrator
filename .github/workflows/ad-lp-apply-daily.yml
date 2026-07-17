@@ -22,24 +22,19 @@ jobs:
       - name: Checkout orchestrator (public, scripts only)
         uses: actions/checkout@v7
 
-      - name: Setup SSH deploy keys (config + ai-business-ops + sales-research-tool + meta-ads)
-        uses: webfactory/ssh-agent@v0.10.0
-        with:
-          ssh-private-key: |
-            ${{ secrets.CONFIG_DEPLOY_KEY }}
-            ${{ secrets.AI_BUSINESS_OPS_DEPLOY_KEY }}
-            ${{ secrets.SALES_RESEARCH_DEPLOY_KEY }}
-            ${{ secrets.META_ADS_DEPLOY_KEY }}
-
-      - name: Add github.com to known_hosts
+      - name: Setup SSH deploy keys (config + ai-business-ops + sales-research-tool + meta-ads, one host-alias per repo)
+        env:
+          CONFIG_DEPLOY_KEY: ${{ secrets.CONFIG_DEPLOY_KEY }}
+          AI_BUSINESS_OPS_DEPLOY_KEY: ${{ secrets.AI_BUSINESS_OPS_DEPLOY_KEY }}
+          SALES_RESEARCH_DEPLOY_KEY: ${{ secrets.SALES_RESEARCH_DEPLOY_KEY }}
+          META_ADS_DEPLOY_KEY: ${{ secrets.META_ADS_DEPLOY_KEY }}
         run: |
-          mkdir -p ~/.ssh
-          chmod 700 ~/.ssh
-          ssh-keyscan -H github.com >> ~/.ssh/known_hosts 2>/dev/null
+          chmod +x scripts/setup-ssh-keys.sh
+          scripts/setup-ssh-keys.sh
 
       - name: Checkout private config repo via deploy key (SSH)
         run: |
-          git clone --depth 1 --branch main git@github.com:yusuken10121990-hub/ai-ops-config.git config
+          git clone --depth 1 --branch main git@config-gh:yusuken10121990-hub/ai-ops-config.git config
 
       - name: Checkout ai-business (ai-business-ops + sales-research-tool + meta-ads)
         run: |
@@ -81,7 +76,7 @@ jobs:
             echo "no changes to commit"
           else
             git commit -m "chore: ad-lp-apply-daily auto update ($(TZ=Asia/Tokyo date '+%Y-%m-%d %H:%M JST'))"
-            git push git@github.com:yusuken10121990-hub/ai-ops-config.git HEAD:main
+            git push git@config-gh:yusuken10121990-hub/ai-ops-config.git HEAD:main
           fi
 
       - name: Sync ai-business changes back (ai-business-ops / sales-research-tool / meta-ads)

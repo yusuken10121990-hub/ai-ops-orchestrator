@@ -22,24 +22,19 @@ jobs:
       - name: Checkout orchestrator (public, scripts only)
         uses: actions/checkout@v7
 
-      - name: Setup SSH deploy keys (config + ai-business-ops + sales-research-tool + meta-ads)
-        uses: webfactory/ssh-agent@v0.10.0
-        with:
-          ssh-private-key: |
-            ${{ secrets.CONFIG_DEPLOY_KEY }}
-            ${{ secrets.AI_BUSINESS_OPS_DEPLOY_KEY }}
-            ${{ secrets.SALES_RESEARCH_DEPLOY_KEY }}
-            ${{ secrets.META_ADS_DEPLOY_KEY }}
-
-      - name: Add github.com to known_hosts
+      - name: Setup SSH deploy keys (config + ai-business-ops + sales-research-tool + meta-ads, one host-alias per repo)
+        env:
+          CONFIG_DEPLOY_KEY: ${{ secrets.CONFIG_DEPLOY_KEY }}
+          AI_BUSINESS_OPS_DEPLOY_KEY: ${{ secrets.AI_BUSINESS_OPS_DEPLOY_KEY }}
+          SALES_RESEARCH_DEPLOY_KEY: ${{ secrets.SALES_RESEARCH_DEPLOY_KEY }}
+          META_ADS_DEPLOY_KEY: ${{ secrets.META_ADS_DEPLOY_KEY }}
         run: |
-          mkdir -p ~/.ssh
-          chmod 700 ~/.ssh
-          ssh-keyscan -H github.com >> ~/.ssh/known_hosts 2>/dev/null
+          chmod +x scripts/setup-ssh-keys.sh
+          scripts/setup-ssh-keys.sh
 
       - name: Checkout private config repo via deploy key (SSH)
         run: |
-          git clone --depth 1 --branch main git@github.com:yusuken10121990-hub/ai-ops-config.git config
+          git clone --depth 1 --branch main git@config-gh:yusuken10121990-hub/ai-ops-config.git config
 
       - name: Checkout ai-business (ai-business-ops + sales-research-tool + meta-ads)
         run: |
@@ -85,16 +80,16 @@ jobs:
           # pull-data.js/apply-*.js work unmodified. Values are secrets — this file
           # lives only on the ephemeral runner and is never committed (gitignored).
           if [ -n "${META_SYSTEM_USER_TOKEN:-}" ]; then
-            cat > "${AI_BUSINESS_DIR}/meta-ads/.env" <<EOF
-          META_APP_ID=${META_APP_ID}
-          META_APP_SECRET=${META_APP_SECRET}
-          META_SYSTEM_USER_TOKEN=${META_SYSTEM_USER_TOKEN}
-          META_AD_ACCOUNT_ID=${META_AD_ACCOUNT_ID}
-          META_API_VERSION=${META_API_VERSION:-v21.0}
-          META_PAGE_ID=${META_PAGE_ID}
-          META_IG_ACCOUNT_ID=${META_IG_ACCOUNT_ID}
-          META_PIXEL_ID=${META_PIXEL_ID}
-          EOF
+            ENV_FILE="${AI_BUSINESS_DIR}/meta-ads/.env"
+            : > "${ENV_FILE}"
+            printf 'META_APP_ID=%s\n' "${META_APP_ID}" >> "${ENV_FILE}"
+            printf 'META_APP_SECRET=%s\n' "${META_APP_SECRET}" >> "${ENV_FILE}"
+            printf 'META_SYSTEM_USER_TOKEN=%s\n' "${META_SYSTEM_USER_TOKEN}" >> "${ENV_FILE}"
+            printf 'META_AD_ACCOUNT_ID=%s\n' "${META_AD_ACCOUNT_ID}" >> "${ENV_FILE}"
+            printf 'META_API_VERSION=%s\n' "${META_API_VERSION:-v21.0}" >> "${ENV_FILE}"
+            printf 'META_PAGE_ID=%s\n' "${META_PAGE_ID}" >> "${ENV_FILE}"
+            printf 'META_IG_ACCOUNT_ID=%s\n' "${META_IG_ACCOUNT_ID}" >> "${ENV_FILE}"
+            printf 'META_PIXEL_ID=%s\n' "${META_PIXEL_ID}" >> "${ENV_FILE}"
           else
             echo "WARN: META_SYSTEM_USER_TOKEN secret not set -- meta-ads data collection step will fail. Loop will still run and record 'continue observing' / gate items where possible."
           fi
@@ -110,7 +105,7 @@ jobs:
             echo "no changes to commit"
           else
             git commit -m "chore: ad-pdca-daily auto update ($(TZ=Asia/Tokyo date '+%Y-%m-%d %H:%M JST'))"
-            git push git@github.com:yusuken10121990-hub/ai-ops-config.git HEAD:main
+            git push git@config-gh:yusuken10121990-hub/ai-ops-config.git HEAD:main
           fi
 
       - name: Sync ai-business changes back (ai-business-ops / sales-research-tool / meta-ads)

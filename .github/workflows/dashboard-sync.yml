@@ -1,0 +1,99 @@
+name: dashboard-sync
+
+# クラウド化(2026-07-18): aiwill-ops-dashboard / aiwill-ai-campus の再生成が
+# ローカルの毎時タスク(旧 owner-todo-dashboard-sync)依存だったため、オーナーPCを
+# 閉じている間は「表示が古いまま」になっていた問題を解消する。build-dashboard.mjs /
+# build-campus.mjs をこのワークフローが毎時ビルド&Netlifyデプロイし、PCの起動状態に
+# 依存させない。学習ループ(team-learning-loop等)の成果(ai-ops-config)は既にクラウド
+# 常時最新なので、このワークフローが回ればダッシュボードも常時最新になる。
+# JST毎時7分 = UTC毎時7分(JSTはUTC+9なので時境界は変わらない)
+on:
+  schedule:
+    - cron: "7 * * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: dashboard-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout orchestrator (public, scripts only)
+        uses: actions/checkout@v7
+
+      - name: Setup SSH deploy keys (config + ai-business-ops)
+        env:
+          CONFIG_DEPLOY_KEY: ${{ secrets.CONFIG_DEPLOY_KEY }}
+          AI_BUSINESS_OPS_DEPLOY_KEY: ${{ secrets.AI_BUSINESS_OPS_DEPLOY_KEY }}
+        run: |
+          chmod +x scripts/setup-ssh-keys.sh
+          scripts/setup-ssh-keys.sh
+
+      - name: Checkout private config repo via deploy key (SSH)
+        run: |
+          git clone --branch main git@config-gh:yusuken10121990-hub/ai-ops-config.git config
+
+      - name: Checkout ai-business-ops via deploy key (SSH)
+        run: |
+          git clone --depth 1 --branch main git@ai-business-ops-gh:yusuken10121990-hub/ai-business-ops.git ai-business-ops
+
+      - name: Mirror config repo as a $HOME/.claude-equivalent tree
+        # build-dashboard.mjs / build-campus.mjs read paths under
+        # `${DASHBOARD_HOME}/.claude/{agents,memory,scheduled-tasks}` (env override of the
+        # owner-PC default 'C:/Users/user'). Symlink (not cp) so files stay inside the
+        # `config/` git working tree -- this lets the scripts' git-log-based freshness
+        # check (added alongside this workflow) find `config/.git` via realpath and use
+        # real commit dates instead of the checkout-time mtime every file gets after `git
+        # clone` (which would otherwise make every agent look freshly-updated).
+        run: |
+          mkdir -p mirror/.claude
+          ln -s "$(pwd)/config/agents" mirror/.claude/agents
+          ln -s "$(pwd)/config/memory" mirror/.claude/memory
+          ln -s "$(pwd)/config/scheduled-tasks" mirror/.claude/scheduled-tasks
+          echo "DASHBOARD_HOME=$(pwd)/mirror" >> "$GITHUB_ENV"
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: "20"
+
+      - name: Build + deploy ops-dashboard (aiwill-ops-dashboard)
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
+        run: |
+          cd ai-business-ops/campaigns/ops-dashboard-site
+          node build-dashboard.mjs
+          npx --yes netlify-cli@17 deploy --prod --dir . --site 7fdc2c4b-7fe1-4270-8b47-01846a2edcf2
+
+      - name: Build + deploy ai-campus (aiwill-ai-campus)
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
+          OPS_DASHBOARD_KEY: ${{ secrets.OPS_DASHBOARD_KEY }}
+        run: |
+          cd ai-business-ops/campaigns/ai-campus-site
+          node build-campus.mjs
+          npx --yes netlify-cli@17 deploy --prod --dir . --site 2bc30fa4-e822-4061-847d-b5fd5829b67d
+
+      - name: Commit & push regenerated site output back to ai-business-ops
+        working-directory: ai-business-ops
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "no changes to commit"
+          else
+            git commit -m "chore: dashboard-sync auto update ($(TZ=Asia/Tokyo date '+%Y-%m-%d %H:%M JST'))"
+            bash ../scripts/git-push-retry.sh git@ai-business-ops-gh:yusuken10121990-hub/ai-business-ops.git main
+          fi
+# Note (LINE通知ルール): このワークフローはダッシュボード生成のみで金銭も承認も絡まないため
+# 失敗時LINE通知は付けない(既存ループと同じ方針)。失敗はActionsの実行履歴で確認する。

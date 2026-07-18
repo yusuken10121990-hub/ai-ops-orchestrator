@@ -9,7 +9,7 @@ name: dashboard-sync
 # JST毎時7分 = UTC毎時7分(JSTはUTC+9なので時境界は変わらない)
 on:
   schedule:
-    - cron: "7 * * * *"
+    - cron: "23 * * * *"
   workflow_dispatch: {}
 
 permissions:

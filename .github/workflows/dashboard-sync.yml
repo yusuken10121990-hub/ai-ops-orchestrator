@@ -68,6 +68,11 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
+          # 2026-07-18追加: 広告タブ「キャンペーン一覧」詳細モーダル用。ZEROSYSリサーチの
+          # Meta広告別内訳(A2/B2/C2)をresearch.zerosys.jp/api/ops-dashboard-dataからビルド時
+          # に取得するため(既存のai-campus-siteビルドと同じ鍵を流用。未設定でもビルドは失敗
+          # せず「広告別内訳は未取得」表示にフォールバックする)。
+          OPS_DASHBOARD_KEY: ${{ secrets.OPS_DASHBOARD_KEY }}
         run: |
           cd ai-business-ops/campaigns/ops-dashboard-site
           node build-dashboard.mjs

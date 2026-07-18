@@ -1,0 +1,116 @@
+name: system-health-cloud
+
+# P0-1/P0-2 (2026-07-18, CTO設計「保守運用組織の24/7/365拡張」):
+# 死活監視(system-health-monitor)のクラウド化。旧版はローカルPC依存の
+# scheduled-task(system-health-monitor)だったため、PCオフ時に守りが止まっていた。
+# LLM(Claude)は使わない決定論スクリプト(scripts/health-check.mjs)。
+#
+# 30分おき。既存の他ワークフロー(dashboard-sync=毎時23分, health-summary=毎日23:00UTC等)
+# と時刻がぶつからないよう分:13/43に配置(混雑分を避ける)。
+on:
+  schedule:
+    - cron: "13,43 * * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: system-health-cloud
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout orchestrator (public, scripts only)
+        uses: actions/checkout@v7
+
+      - name: Setup SSH deploy key (config)
+        env:
+          CONFIG_DEPLOY_KEY: ${{ secrets.CONFIG_DEPLOY_KEY }}
+        run: |
+          chmod +x scripts/setup-ssh-keys.sh
+          scripts/setup-ssh-keys.sh
+
+      - name: Checkout private config repo via deploy key (SSH)
+        run: |
+          git clone --branch main git@config-gh:yusuken10121990-hub/ai-ops-config.git config
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: "20"
+
+      - name: Run health-check (decision-only, no Claude)
+        id: healthcheck
+        env:
+          SYSTEMS_JSON: config/memory/systems.json
+          HEALTH_STATUS_JSON: config/memory/health-status.json
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: node scripts/health-check.mjs | tee health-check.log
+
+      - name: Night-time first-response (safe-remediate, whitelisted systems only)
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          RAILWAY_TOKEN_FUU: ${{ secrets.RAILWAY_TOKEN_FUU }}
+          RAILWAY_TOKEN_JOBQUEUE_GATE: ${{ secrets.RAILWAY_TOKEN_JOBQUEUE_GATE }}
+          RAILWAY_TOKEN_ADS_OPS_BACKEND: ${{ secrets.RAILWAY_TOKEN_ADS_OPS_BACKEND }}
+        run: |
+          set -uo pipefail
+          chmod +x scripts/safe-remediate.sh
+          IDS=$(grep '^SHOULD_REMEDIATE=' health-check.log | cut -d= -f2 || true)
+          if [ -z "${IDS}" ]; then
+            echo "no P1 candidates this run"
+            exit 0
+          fi
+          for id in ${IDS}; do
+            echo "=== remediating ${id} ==="
+            OUT=$(bash scripts/safe-remediate.sh "${id}" 2>&1) || true
+            echo "${OUT}"
+            RESULT=$(echo "${OUT}" | grep '^REMEDIATE_RESULT=' | tail -1 | cut -d= -f2)
+            RESULT="${RESULT:-unknown}"
+            NOW_JST=$(TZ=Asia/Tokyo date '+%Y-%m-%d %H:%M JST')
+
+            # health-status.json に last_remediate_at / last_remediate_result を記録
+            node -e "
+              const fs = require('fs');
+              const path = 'config/memory/health-status.json';
+              const j = JSON.parse(fs.readFileSync(path, 'utf8'));
+              j.systems = j.systems || {};
+              j.systems['${id}'] = j.systems['${id}'] || {};
+              j.systems['${id}'].last_remediate_at = '${NOW_JST}';
+              j.systems['${id}'].last_remediate_result = '${RESULT}';
+              fs.writeFileSync(path, JSON.stringify(j, null, 2) + '\n');
+            "
+
+            # decisions.md へ1行記録(可逆な運用ログ・金銭操作ではない)
+            printf -- '- %s [system-health-cloud] safe-remediate: %s -> %s (whitelist: fuu/jobqueue-gate/ads-ops-backend)\n' \
+              "${NOW_JST}" "${id}" "${RESULT}" >> config/memory/decisions.md
+          done
+
+          echo "waiting 60s before recheck..."
+          sleep 60
+
+          echo "=== recheck after remediation ==="
+          SYSTEMS_JSON=config/memory/systems.json HEALTH_STATUS_JSON=config/memory/health-status.json \
+            node scripts/health-check.mjs
+
+      - name: Commit & push health-status.json (+ remediate log) to config repo
+        working-directory: config
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "no changes to commit"
+          else
+            git commit -m "chore: system-health-cloud update ($(TZ=Asia/Tokyo date '+%Y-%m-%d %H:%M JST'))"
+            bash ../scripts/git-push-retry.sh git@config-gh:yusuken10121990-hub/ai-ops-config.git main
+          fi
+# Note (LINE通知ルール): このワークフローはLINE通知を一切行わない
+# (~/.claude/CLAUDE.md「LINEは金銭承認依頼専用」)。結果は health-status.json 経由で
+# ダッシュボード(次回dashboard-sync)に反映される。safe-remediateはRailway再デプロイの
+# みを行い、削除・課金系の操作は一切実行しない(scripts/safe-remediate.sh参照)。

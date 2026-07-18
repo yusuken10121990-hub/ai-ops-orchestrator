@@ -1,0 +1,73 @@
+name: backup-daily
+
+# P0-3 (2026-07-18, CTO設計「保守運用組織の24/7/365拡張」): 本番データの
+# 日次暗号化バックアップ。PCの起動状態に依存させず、public repoの
+# GitHub Actions無料枠(無制限)で実行する。
+#
+# secrets(GATE_DATABASE_URL / SUPABASE_DATABASE_URL / BACKUP_GPG_PASSPHRASE /
+# GH_BACKUP_TOKEN)が未投入の間は scripts/backup.sh が
+# "skipped(no-secrets)" / "skipped(no-gh-token)" を記録して正常終了(green)する
+# 設計。オーナー作業は owner-todos.md (id: backup-secrets-provision) 参照。
+#
+# JST深夜帯(バックアップは翌日未明扱い) 03:20 JST = 前日18:20 UTC
+on:
+  schedule:
+    - cron: "20 18 * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: backup-daily
+  cancel-in-progress: false
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout orchestrator (public, scripts only)
+        uses: actions/checkout@v7
+
+      - name: Install postgresql-client (pg_dump)
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client
+
+      - name: Setup SSH deploy key (config)
+        env:
+          CONFIG_DEPLOY_KEY: ${{ secrets.CONFIG_DEPLOY_KEY }}
+        run: |
+          chmod +x scripts/setup-ssh-keys.sh
+          scripts/setup-ssh-keys.sh
+
+      - name: Checkout private config repo via deploy key (SSH)
+        run: |
+          git clone --branch main git@config-gh:yusuken10121990-hub/ai-ops-config.git config
+
+      - name: Run backup.sh (dump -> gzip -> gpg AES256 -> ai-ops-backups release)
+        env:
+          GATE_DATABASE_URL: ${{ secrets.GATE_DATABASE_URL }}
+          SUPABASE_DATABASE_URL: ${{ secrets.SUPABASE_DATABASE_URL }}
+          BACKUP_GPG_PASSPHRASE: ${{ secrets.BACKUP_GPG_PASSPHRASE }}
+          GH_BACKUP_TOKEN: ${{ secrets.GH_BACKUP_TOKEN }}
+          BACKUP_STATUS_JSON: config/memory/backup-status.json
+        run: |
+          chmod +x scripts/backup.sh
+          bash scripts/backup.sh
+
+      - name: Commit & push backup-status.json to config repo
+        working-directory: config
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "no changes to commit"
+          else
+            git commit -m "chore: backup-daily status update ($(TZ=Asia/Tokyo date '+%Y-%m-%d %H:%M JST'))"
+            bash ../scripts/git-push-retry.sh git@config-gh:yusuken10121990-hub/ai-ops-config.git main
+          fi
+# Note (LINE通知ルール): 失敗してもLINE通知しない(~/.claude/CLAUDE.md「LINEは金銭承認依頼専用」)。
+# backup-status.json経由でダッシュボードに反映される。復元(本番への書き戻し)はこの
+# ワークフローには一切実装しない(scripts/backup.sh参照。復元はスクラッチ環境限定・
+# ai-ops-backups/README.mdのrunbook参照)。

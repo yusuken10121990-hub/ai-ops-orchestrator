@@ -14,9 +14,9 @@
 #
 # secrets(全て未投入でも green終了する設計 = "skipped(no-secrets)"):
 #   GATE_DATABASE_URL       : Railwayゲート用Postgres接続文字列
-#   SUPABASE_DATABASE_URL   : Supabase用Postgres接続文字列(pg_dump用、SERVICE_ROLE_KEYとは別物)
+#   SUPABASE_DB_URL   : Supabase用Postgres接続文字列(pg_dump用、SERVICE_ROLE_KEYとは別物)
 #   BACKUP_GPG_PASSPHRASE   : gpg暗号化パスフレーズ(オーナーが生成・保管。AIは生成しない)
-#   GH_BACKUP_TOKEN         : ai-ops-backups(private repo)にrelease作成できるトークン
+#   BACKUPS_REPO_TOKEN         : ai-ops-backups(private repo)にrelease作成できるトークン
 #                             (fine-grained PAT, contents:write on ai-ops-backups推奨。
 #                              自動投入はAuto Mode classifierがブロックしたためオーナー作業=owner-todos.md参照)
 #
@@ -41,9 +41,9 @@ SHA_SUPABASE=""
 UPLOADED_ANY=0
 
 have_gh_token=0
-if [ -n "${GH_BACKUP_TOKEN:-}" ]; then
+if [ -n "${BACKUPS_REPO_TOKEN:-}" ]; then
   have_gh_token=1
-  export GH_TOKEN="${GH_BACKUP_TOKEN}"
+  export GH_TOKEN="${BACKUPS_REPO_TOKEN}"
 fi
 
 dump_and_encrypt() {
@@ -79,7 +79,7 @@ if dump_and_encrypt "gate" "${GATE_DATABASE_URL:-}" "gate-${DATE_JST}"; then
 fi
 
 # --- (b) Supabase ---
-if dump_and_encrypt "supabase" "${SUPABASE_DATABASE_URL:-}" "supabase-${DATE_JST}"; then
+if dump_and_encrypt "supabase" "${SUPABASE_DB_URL:-}" "supabase-${DATE_JST}"; then
   STATUS_SUPABASE="ok"
   SIZE_SUPABASE=$(stat -c%s "${WORKDIR}/supabase-${DATE_JST}.sql.gz.gpg" 2>/dev/null || echo "")
   SHA_SUPABASE=$(sha256sum "${WORKDIR}/supabase-${DATE_JST}.sql.gz.gpg" 2>/dev/null | cut -d' ' -f1)
@@ -88,7 +88,7 @@ fi
 
 if [ "${UPLOADED_ANY}" -eq 1 ]; then
   if [ "${have_gh_token}" -eq 0 ]; then
-    echo "[backup] GH_BACKUP_TOKEN not set: dumps were created+encrypted but cannot be uploaded to ${BACKUP_REPO}. Discarding (never persisted unencrypted, never committed)."
+    echo "[backup] BACKUPS_REPO_TOKEN not set: dumps were created+encrypted but cannot be uploaded to ${BACKUP_REPO}. Discarding (never persisted unencrypted, never committed)."
     STATUS_GATE="skipped(no-gh-token)"
     STATUS_SUPABASE="skipped(no-gh-token)"
   else

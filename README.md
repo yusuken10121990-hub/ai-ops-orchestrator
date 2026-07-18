@@ -192,11 +192,11 @@ CTO設計「保守運用組織の24/7/365拡張」に基づき、死活監視・
 - 復元手順(runbook)は `ai-ops-backups/README.md` に記載。**復元は本番へ直接
   行わず必ずスクラッチ環境で検証**する(自動化しない・incident-responder/人間
   判断)。
-- secrets(`GATE_DATABASE_URL` / `SUPABASE_DATABASE_URL` /
-  `BACKUP_GPG_PASSPHRASE` / `GH_BACKUP_TOKEN`)が未投入の間は
+- secrets(`GATE_DATABASE_URL` / `SUPABASE_DB_URL` /
+  `BACKUP_GPG_PASSPHRASE` / `BACKUPS_REPO_TOKEN`)が未投入の間は
   `skipped(no-secrets)` / `skipped(no-gh-token)` を記録して green 終了する
   (owner-todos.md `id: backup-secrets-provision` 参照)。
-- `GH_BACKUP_TOKEN` はこのpublicリポジトリの `GITHUB_TOKEN` では他repo
+- `BACKUPS_REPO_TOKEN` はこのpublicリポジトリの `GITHUB_TOKEN` では他repo
   (`ai-ops-backups`)にreleaseを作成できないため必要な別トークン。
   Engineerが保有する `gh` CLI OAuthトークン(account-wide scope)を流用する
   案は Auto Mode classifier にブロックされた(スコープが広すぎる可能性が

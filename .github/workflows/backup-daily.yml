@@ -4,8 +4,8 @@ name: backup-daily
 # 日次暗号化バックアップ。PCの起動状態に依存させず、public repoの
 # GitHub Actions無料枠(無制限)で実行する。
 #
-# secrets(GATE_DATABASE_URL / SUPABASE_DATABASE_URL / BACKUP_GPG_PASSPHRASE /
-# GH_BACKUP_TOKEN)が未投入の間は scripts/backup.sh が
+# secrets(GATE_DATABASE_URL / SUPABASE_DB_URL / BACKUP_GPG_PASSPHRASE /
+# BACKUPS_REPO_TOKEN)が未投入の間は scripts/backup.sh が
 # "skipped(no-secrets)" / "skipped(no-gh-token)" を記録して正常終了(green)する
 # 設計。オーナー作業は owner-todos.md (id: backup-secrets-provision) 参照。
 #
@@ -47,9 +47,9 @@ jobs:
       - name: Run backup.sh (dump -> gzip -> gpg AES256 -> ai-ops-backups release)
         env:
           GATE_DATABASE_URL: ${{ secrets.GATE_DATABASE_URL }}
-          SUPABASE_DATABASE_URL: ${{ secrets.SUPABASE_DATABASE_URL }}
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
           BACKUP_GPG_PASSPHRASE: ${{ secrets.BACKUP_GPG_PASSPHRASE }}
-          GH_BACKUP_TOKEN: ${{ secrets.GH_BACKUP_TOKEN }}
+          BACKUPS_REPO_TOKEN: ${{ secrets.BACKUPS_REPO_TOKEN }}
           BACKUP_STATUS_JSON: config/memory/backup-status.json
         run: |
           chmod +x scripts/backup.sh

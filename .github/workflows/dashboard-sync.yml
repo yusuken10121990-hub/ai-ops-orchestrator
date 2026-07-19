@@ -73,6 +73,11 @@ jobs:
           # に取得するため(既存のai-campus-siteビルドと同じ鍵を流用。未設定でもビルドは失敗
           # せず「広告別内訳は未取得」表示にフォールバックする)。
           OPS_DASHBOARD_KEY: ${{ secrets.OPS_DASHBOARD_KEY }}
+          # 2026-07-19追加: myfuu.jpポストモーテム対策T5(承認ゲートのdead金銭ジョブ表示)。
+          # 承認ゲート(jobqueue-gate)の GET /jobs?status=dead 認証用。既にこのリポジトリの
+          # secretsに登録済み(他ワークフローで実績あり)のものを流用。未設定でもビルドは失敗
+          # せず「dead確認不可」表示にフォールバックする。
+          GATE_AGENT_KEY: ${{ secrets.GATE_AGENT_KEY }}
         run: |
           cd ai-business-ops/campaigns/ops-dashboard-site
           node build-dashboard.mjs

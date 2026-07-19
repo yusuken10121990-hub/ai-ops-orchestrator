@@ -1,0 +1,90 @@
+name: rules-propagate
+
+# 共通ルールの正典(ai-ops-config/SHARED_RULES.md)を全リポジトリのCLAUDE.mdへ配布する。
+# PC/クラウドどちらの環境からでも SHARED_RULES.md を編集すればよい、という運用を成立させるための
+# 主エンジン(PC非依存)。ローカルの rules-propagate-daily はこれの補助(PC起動時のみの保険)。
+#
+# 認証: 20以上の他リポジトリへcloneして push するため、単一リポジトリ用のdeploy鍵方式ではなく
+# repoスコープのPAT(RULES_PROPAGATE_TOKEN)を使う。未設定の間は skipped(no-token) で正常終了(green)
+# する設計。オーナー作業は owner-todos.md (id: rules-propagate-token-provision) 参照。
+on:
+  schedule:
+    - cron: "0 22 * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rules-propagate
+  cancel-in-progress: false
+
+jobs:
+  propagate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout orchestrator (scripts only, not used directly but keeps parity with other workflows)
+        uses: actions/checkout@v7
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: "20"
+
+      - name: Setup SSH deploy key for ai-ops-config (read canonical SHARED_RULES.md + script)
+        env:
+          CONFIG_DEPLOY_KEY: ${{ secrets.CONFIG_DEPLOY_KEY }}
+        run: |
+          chmod +x scripts/setup-ssh-keys.sh
+          scripts/setup-ssh-keys.sh
+
+      - name: Checkout ai-ops-config via deploy key (SSH) - this is the canonical source
+        run: |
+          git clone --branch main git@config-gh:yusuken10121990-hub/ai-ops-config.git config
+
+      - name: Check for propagation token
+        id: token_check
+        env:
+          RULES_PROPAGATE_TOKEN: ${{ secrets.RULES_PROPAGATE_TOKEN }}
+        run: |
+          if [ -z "$RULES_PROPAGATE_TOKEN" ]; then
+            echo "has_token=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::RULES_PROPAGATE_TOKEN not set - skipping propagation (see owner-todos.md: rules-propagate-token-provision)"
+          else
+            echo "has_token=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Authenticate gh CLI with propagation token
+        if: steps.token_check.outputs.has_token == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.RULES_PROPAGATE_TOKEN }}
+        run: |
+          echo "$GH_TOKEN" | gh auth login --with-token
+          gh auth setup-git
+          git config --global user.name "yusuken10121990-hub"
+          git config --global user.email "yusuken10121990-hub@users.noreply.github.com"
+
+      - name: Run propagation (writes CLAUDE.md marker blocks across all repos)
+        if: steps.token_check.outputs.has_token == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.RULES_PROPAGATE_TOKEN }}
+        run: |
+          cd config
+          node scripts/propagate-rules.mjs
+
+      - name: Commit + push updated propagate state back to ai-ops-config
+        if: steps.token_check.outputs.has_token == 'true'
+        working-directory: config
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add memory/rules-propagate-state.json memory/rules-propagate-last-run.json 2>/dev/null || true
+          if git diff --cached --quiet; then
+            echo "no state changes to commit"
+          else
+            git commit -m "chore: rules-propagate cloud run state update"
+            bash ../scripts/git-push-retry.sh git@config-gh:yusuken10121990-hub/ai-ops-config.git main
+          fi
+# Note (LINE通知ルール): このワークフローは共通ルールの配布のみで金銭も承認も絡まないため
+# 失敗時LINE通知は付けない。失敗/未設定はActionsの実行履歴とownerタスク台帳で確認する。

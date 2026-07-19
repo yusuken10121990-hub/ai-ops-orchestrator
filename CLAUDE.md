@@ -1,5 +1,4 @@
 <!-- BEGIN shared-rules (auto) -->
-<!-- BEGIN shared-rules (auto) -->
 # 共通ルール（AI組織・自動同期・手で編集しないでください）
 
 このブロックは `ai-ops-config` リポジトリの `SHARED_RULES.md`（正典）から自動生成されています。

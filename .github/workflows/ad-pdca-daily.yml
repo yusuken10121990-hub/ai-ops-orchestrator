@@ -52,6 +52,17 @@ jobs:
             (cd "${AI_BUSINESS_DIR}/meta-ads" && (npm ci --no-audit --no-fund || npm install --no-audit --no-fund))
           fi
 
+      # 2026-07-19: cv-forensics (新設・広告CV鑑識官) がSKILL.md (2)分析4者委任と
+      # (3.6)3日毎フル監査(Google Ads CID 7357396296含む全数調査)の対象に追加された。
+      # Google Ads側の認証情報(secrets)はこのワークフローにはまだ無いため、依存だけ
+      # 入れておきスクリプト自体はGoogle Ads分を認証情報未設定として自己スキップする
+      # (SKILL.md (3.6)節参照)。ad-lp-apply-daily.yml と同じ導入パターンを踏襲。
+      - name: "Install deps (google-ads: cv-forensicsの3日毎フル監査がGoogle Ads分も参照するため)"
+        run: |
+          if [ -f "${AI_BUSINESS_DIR}/google-ads/package.json" ]; then
+            (cd "${AI_BUSINESS_DIR}/google-ads" && (npm ci --no-audit --no-fund || npm install --no-audit --no-fund))
+          fi
+
       - name: Run ad-pdca-daily
         env:
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}

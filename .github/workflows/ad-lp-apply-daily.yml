@@ -62,8 +62,61 @@ jobs:
           GATE_URL: ${{ secrets.GATE_URL }}
           GATE_AGENT_KEY: ${{ secrets.GATE_AGENT_KEY }}
           NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
+          # 2026-07-19 owner-todos.md google-ads-secrets-and-workflow-fix: this step previously
+          # had no META_*/GOOGLE_ADS_* wiring at all, so meta-ads/google-ads scripts silently
+          # ran with no credentials (0 items applied, 3 days straight). Same pattern as
+          # ad-pdca-daily.yml below.
+          META_APP_ID: ${{ secrets.META_APP_ID }}
+          META_APP_SECRET: ${{ secrets.META_APP_SECRET }}
+          META_SYSTEM_USER_TOKEN: ${{ secrets.META_SYSTEM_USER_TOKEN }}
+          META_AD_ACCOUNT_ID: ${{ secrets.META_AD_ACCOUNT_ID }}
+          META_API_VERSION: ${{ secrets.META_API_VERSION }}
+          META_PAGE_ID: ${{ secrets.META_PAGE_ID }}
+          META_IG_ACCOUNT_ID: ${{ secrets.META_IG_ACCOUNT_ID }}
+          META_PIXEL_ID: ${{ secrets.META_PIXEL_ID }}
+          # Google Ads API credentials (ai-business/google-ads/.env locally). Set via:
+          #   gh secret set GOOGLE_ADS_DEVELOPER_TOKEN -R yusuken10121990-hub/ai-ops-orchestrator
+          #   gh secret set GOOGLE_ADS_CLIENT_ID -R yusuken10121990-hub/ai-ops-orchestrator
+          #   gh secret set GOOGLE_ADS_CLIENT_SECRET -R yusuken10121990-hub/ai-ops-orchestrator
+          #   gh secret set GOOGLE_ADS_REFRESH_TOKEN -R yusuken10121990-hub/ai-ops-orchestrator
+          #   gh secret set GOOGLE_ADS_LOGIN_CUSTOMER_ID -R yusuken10121990-hub/ai-ops-orchestrator
+          #   gh secret set GOOGLE_ADS_CUSTOMER_ID -R yusuken10121990-hub/ai-ops-orchestrator
+          GOOGLE_ADS_DEVELOPER_TOKEN: ${{ secrets.GOOGLE_ADS_DEVELOPER_TOKEN }}
+          GOOGLE_ADS_CLIENT_ID: ${{ secrets.GOOGLE_ADS_CLIENT_ID }}
+          GOOGLE_ADS_CLIENT_SECRET: ${{ secrets.GOOGLE_ADS_CLIENT_SECRET }}
+          GOOGLE_ADS_REFRESH_TOKEN: ${{ secrets.GOOGLE_ADS_REFRESH_TOKEN }}
+          GOOGLE_ADS_LOGIN_CUSTOMER_ID: ${{ secrets.GOOGLE_ADS_LOGIN_CUSTOMER_ID }}
+          GOOGLE_ADS_CUSTOMER_ID: ${{ secrets.GOOGLE_ADS_CUSTOMER_ID }}
         run: |
           chmod +x scripts/run-loop.sh
+          # meta-ads/google-ads scripts load .env via dotenv; CI has no .env file (gitignored),
+          # so write one from the secrets above (same approach as ad-pdca-daily.yml).
+          if [ -n "${META_SYSTEM_USER_TOKEN:-}" ]; then
+            ENV_FILE="${AI_BUSINESS_DIR}/meta-ads/.env"
+            : > "${ENV_FILE}"
+            printf 'META_APP_ID=%s\n' "${META_APP_ID}" >> "${ENV_FILE}"
+            printf 'META_APP_SECRET=%s\n' "${META_APP_SECRET}" >> "${ENV_FILE}"
+            printf 'META_SYSTEM_USER_TOKEN=%s\n' "${META_SYSTEM_USER_TOKEN}" >> "${ENV_FILE}"
+            printf 'META_AD_ACCOUNT_ID=%s\n' "${META_AD_ACCOUNT_ID}" >> "${ENV_FILE}"
+            printf 'META_API_VERSION=%s\n' "${META_API_VERSION:-v21.0}" >> "${ENV_FILE}"
+            printf 'META_PAGE_ID=%s\n' "${META_PAGE_ID}" >> "${ENV_FILE}"
+            printf 'META_IG_ACCOUNT_ID=%s\n' "${META_IG_ACCOUNT_ID}" >> "${ENV_FILE}"
+            printf 'META_PIXEL_ID=%s\n' "${META_PIXEL_ID}" >> "${ENV_FILE}"
+          else
+            echo "WARN: META_SYSTEM_USER_TOKEN secret not set -- meta-ads steps will fail."
+          fi
+          if [ -n "${GOOGLE_ADS_DEVELOPER_TOKEN:-}" ]; then
+            GENV_FILE="${AI_BUSINESS_DIR}/google-ads/.env"
+            : > "${GENV_FILE}"
+            printf 'GOOGLE_ADS_DEVELOPER_TOKEN=%s\n' "${GOOGLE_ADS_DEVELOPER_TOKEN}" >> "${GENV_FILE}"
+            printf 'GOOGLE_ADS_CLIENT_ID=%s\n' "${GOOGLE_ADS_CLIENT_ID}" >> "${GENV_FILE}"
+            printf 'GOOGLE_ADS_CLIENT_SECRET=%s\n' "${GOOGLE_ADS_CLIENT_SECRET}" >> "${GENV_FILE}"
+            printf 'GOOGLE_ADS_REFRESH_TOKEN=%s\n' "${GOOGLE_ADS_REFRESH_TOKEN}" >> "${GENV_FILE}"
+            printf 'GOOGLE_ADS_LOGIN_CUSTOMER_ID=%s\n' "${GOOGLE_ADS_LOGIN_CUSTOMER_ID}" >> "${GENV_FILE}"
+            printf 'GOOGLE_ADS_CUSTOMER_ID=%s\n' "${GOOGLE_ADS_CUSTOMER_ID}" >> "${GENV_FILE}"
+          else
+            echo "WARN: GOOGLE_ADS_DEVELOPER_TOKEN secret not set -- google-ads steps will fail."
+          fi
           bash scripts/run-loop.sh ad-lp-apply-daily
 
       - name: Commit & push generated learnings to private config repo (SSH)

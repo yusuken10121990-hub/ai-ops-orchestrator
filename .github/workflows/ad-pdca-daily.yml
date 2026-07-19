@@ -84,6 +84,22 @@ jobs:
           META_PAGE_ID: ${{ secrets.META_PAGE_ID }}
           META_IG_ACCOUNT_ID: ${{ secrets.META_IG_ACCOUNT_ID }}
           META_PIXEL_ID: ${{ secrets.META_PIXEL_ID }}
+          # Google Ads API credentials (ai-business/google-ads/.env locally). 2026-07-19
+          # owner-todos.md google-ads-secrets-and-workflow-fix: this workflow never wired
+          # GOOGLE_ADS_* through, so ad-pdca-daily's Google Ads collection silently no-op'd.
+          # Set via:
+          #   gh secret set GOOGLE_ADS_DEVELOPER_TOKEN -R yusuken10121990-hub/ai-ops-orchestrator
+          #   gh secret set GOOGLE_ADS_CLIENT_ID -R yusuken10121990-hub/ai-ops-orchestrator
+          #   gh secret set GOOGLE_ADS_CLIENT_SECRET -R yusuken10121990-hub/ai-ops-orchestrator
+          #   gh secret set GOOGLE_ADS_REFRESH_TOKEN -R yusuken10121990-hub/ai-ops-orchestrator
+          #   gh secret set GOOGLE_ADS_LOGIN_CUSTOMER_ID -R yusuken10121990-hub/ai-ops-orchestrator
+          #   gh secret set GOOGLE_ADS_CUSTOMER_ID -R yusuken10121990-hub/ai-ops-orchestrator
+          GOOGLE_ADS_DEVELOPER_TOKEN: ${{ secrets.GOOGLE_ADS_DEVELOPER_TOKEN }}
+          GOOGLE_ADS_CLIENT_ID: ${{ secrets.GOOGLE_ADS_CLIENT_ID }}
+          GOOGLE_ADS_CLIENT_SECRET: ${{ secrets.GOOGLE_ADS_CLIENT_SECRET }}
+          GOOGLE_ADS_REFRESH_TOKEN: ${{ secrets.GOOGLE_ADS_REFRESH_TOKEN }}
+          GOOGLE_ADS_LOGIN_CUSTOMER_ID: ${{ secrets.GOOGLE_ADS_LOGIN_CUSTOMER_ID }}
+          GOOGLE_ADS_CUSTOMER_ID: ${{ secrets.GOOGLE_ADS_CUSTOMER_ID }}
         run: |
           chmod +x scripts/run-loop.sh
           # meta-ads scripts load .env via `import 'dotenv/config'`; since CI has no
@@ -103,6 +119,18 @@ jobs:
             printf 'META_PIXEL_ID=%s\n' "${META_PIXEL_ID}" >> "${ENV_FILE}"
           else
             echo "WARN: META_SYSTEM_USER_TOKEN secret not set -- meta-ads data collection step will fail. Loop will still run and record 'continue observing' / gate items where possible."
+          fi
+          if [ -n "${GOOGLE_ADS_DEVELOPER_TOKEN:-}" ]; then
+            GENV_FILE="${AI_BUSINESS_DIR}/google-ads/.env"
+            : > "${GENV_FILE}"
+            printf 'GOOGLE_ADS_DEVELOPER_TOKEN=%s\n' "${GOOGLE_ADS_DEVELOPER_TOKEN}" >> "${GENV_FILE}"
+            printf 'GOOGLE_ADS_CLIENT_ID=%s\n' "${GOOGLE_ADS_CLIENT_ID}" >> "${GENV_FILE}"
+            printf 'GOOGLE_ADS_CLIENT_SECRET=%s\n' "${GOOGLE_ADS_CLIENT_SECRET}" >> "${GENV_FILE}"
+            printf 'GOOGLE_ADS_REFRESH_TOKEN=%s\n' "${GOOGLE_ADS_REFRESH_TOKEN}" >> "${GENV_FILE}"
+            printf 'GOOGLE_ADS_LOGIN_CUSTOMER_ID=%s\n' "${GOOGLE_ADS_LOGIN_CUSTOMER_ID}" >> "${GENV_FILE}"
+            printf 'GOOGLE_ADS_CUSTOMER_ID=%s\n' "${GOOGLE_ADS_CUSTOMER_ID}" >> "${GENV_FILE}"
+          else
+            echo "WARN: GOOGLE_ADS_DEVELOPER_TOKEN secret not set -- google-ads data collection step will fail. Loop will still run and record 'continue observing' / gate items where possible."
           fi
           bash scripts/run-loop.sh ad-pdca-daily
 

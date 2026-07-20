@@ -22,6 +22,7 @@ import { dirname } from 'node:path';
 const REPO = process.env.GITHUB_REPOSITORY || 'yusuken10121990-hub/ai-ops-orchestrator';
 const GH_TOKEN = process.env.GITHUB_TOKEN;
 const OPS_DASHBOARD_KEY = process.env.OPS_DASHBOARD_KEY;
+const NETLIFY_AUTH_TOKEN = process.env.NETLIFY_AUTH_TOKEN;
 const OUTPUT_FILE = process.env.OUTPUT_FILE; // required: path to write the ledger markdown to
 
 // { display name, actual .github/workflows/<file>.yml filename (they differ
@@ -97,6 +98,51 @@ function fmtYen(n) {
   return Math.round(n).toLocaleString('ja-JP');
 }
 
+// 2026-07-20 P1対策(Netlify全サイト503・原因=production deploy 266回/12日で
+// Pro枠3,000クレジットを枯渇ペース)。日次で残クレジットと消費ペースを見て、
+// 期末までに危険水準(80%)を超えそうなら早期警告する。account.capabilities.credits
+// (used/included)とcurrent_billing_period_start/next_billing_period_startを使う
+// (netlify api listAccountsForUserで実測確認済み。専用のusage APIは無いためaccount
+// オブジェクトから算出する)。金銭操作はしない(読み取りのみ)。
+async function fetchNetlifyCredits() {
+  if (!NETLIFY_AUTH_TOKEN) return null;
+  try {
+    const res = await fetch('https://api.netlify.com/api/v1/accounts', {
+      headers: { Authorization: `Bearer ${NETLIFY_AUTH_TOKEN}` },
+      signal: AbortSignal.timeout(15000),
+    });
+    if (!res.ok) return { error: `HTTP ${res.status}` };
+    const accounts = await res.json();
+    const a = Array.isArray(accounts) ? accounts[0] : null;
+    if (!a) return { error: 'no-account-returned' };
+    const used = a.capabilities?.credits?.used;
+    const included = a.capabilities?.credits?.included ?? a.plan_credits;
+    const periodStart = a.current_billing_period_start ? new Date(a.current_billing_period_start) : null;
+    const periodEnd = a.next_billing_period_start ? new Date(a.next_billing_period_start) : null;
+    if (typeof used !== 'number' || typeof included !== 'number' || !periodStart || !periodEnd) {
+      return { error: 'missing-fields-in-account-response' };
+    }
+    const now = new Date();
+    const elapsedDays = Math.max(0.1, (now - periodStart) / 86400000);
+    const remainingDays = Math.max(0, (periodEnd - now) / 86400000);
+    const pacePerDay = used / elapsedDays;
+    const projectedTotal = used + pacePerDay * remainingDays;
+    const projectedPct = included > 0 ? (projectedTotal / included) * 100 : null;
+    return {
+      used,
+      included,
+      periodStart,
+      periodEnd,
+      pacePerDay,
+      projectedTotal,
+      projectedPct,
+      warn: projectedPct !== null && projectedPct >= 80,
+    };
+  } catch (e) {
+    return { error: e.message };
+  }
+}
+
 async function main() {
   if (!OUTPUT_FILE) {
     console.error('ERROR: OUTPUT_FILE env var not set (path to write the ledger markdown to)');
@@ -149,6 +195,30 @@ async function main() {
     lines.push(`## 実績: ops-dashboard取得失敗 (${ops.error})`);
   } else {
     lines.push('## 実績: OPS_DASHBOARD_KEY未設定のためスキップ');
+  }
+  lines.push('');
+
+  const credits = await fetchNetlifyCredits();
+  lines.push('## Netlifyクレジット消費状況(Pro枠・2026-07-20 P1対策で新設)');
+  if (!NETLIFY_AUTH_TOKEN) {
+    lines.push('- NETLIFY_AUTH_TOKEN未設定のためスキップ');
+  } else if (credits?.error) {
+    lines.push(`- 取得失敗: ${credits.error}`);
+  } else if (credits) {
+    const pctUsed = credits.included > 0 ? ((credits.used / credits.included) * 100).toFixed(1) : '?';
+    const fmtDate = (d) => d.toISOString().slice(0, 10);
+    lines.push(`- 当期間: ${fmtDate(credits.periodStart)} 〜 ${fmtDate(credits.periodEnd)}`);
+    lines.push(`- 使用済み: ${Math.round(credits.used).toLocaleString('ja-JP')} / ${credits.included.toLocaleString('ja-JP')} クレジット (${pctUsed}%)`);
+    lines.push(
+      `- 消費ペース: ${credits.pacePerDay.toFixed(1)}/日 → 期末予測 ${Math.round(credits.projectedTotal).toLocaleString('ja-JP')} (${credits.projectedPct.toFixed(0)}%)`
+    );
+    if (credits.warn) {
+      lines.push(
+        `- ⚠️ 枯渇警告: このペースだと期末までにplan枠(${credits.included.toLocaleString('ja-JP')})の80%超を消費する見込み。dashboard-sync等のproduction deploy頻度を確認してください。`
+      );
+    } else {
+      lines.push('- 正常ペース(期末予測80%未満)');
+    }
   }
   lines.push('');
   lines.push('_このファイルは health-summary workflow (毎朝8:00 JST) が自動生成。手で編集しない。_');

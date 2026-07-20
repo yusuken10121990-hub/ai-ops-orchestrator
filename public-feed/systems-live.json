@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-07-20T14:23:05.353Z",
+  "generated_at": "2026-07-20T14:27:15.531Z",
   "note": "systems.json(非公開)のうちstatus:liveの監視に必要な安全なフィールドのみを公開したサブセット。哨戒B(Netlify Scheduled Function)が認証なしで参照する。",
   "systems": [
     {
@@ -160,6 +160,16 @@
       "healthPath": "/factory/health",
       "marker": "AI SHORT VIDEO FACTORY",
       "deploy": "railway-up",
+      "status": "live"
+    },
+    {
+      "id": "sentinel-b",
+      "name": "哨戒B(監視チームPhase1・Netlify Scheduled Function)",
+      "url": "https://research.zerosys.jp/.netlify/functions/sentinel-status",
+      "kind": "backend",
+      "healthPath": "",
+      "marker": "",
+      "deploy": "netlify",
       "status": "live"
     }
   ]

@@ -4,6 +4,19 @@
 Claude Code で `team-learning-loop` を1本だけ動かし、オーナーのPCが落ちていても
 学習ループが回り続けることを実証する。
 
+> **重要: このリポジトリの default branch は `master`。**
+> ワークフローファイル（`.github/workflows/*.yml`）は必ず `master` へ push すること。
+> GitHub Actions は default branch 上にある workflow ファイルしか
+> schedule / `workflow_dispatch` に登録しない。`main` ブランチも存在する
+> （他ツールが push している可能性があるため削除しない）が、**そちらへ
+> push しても cron は動かず `gh workflow run` は 404 になり、しかもエラー以外の
+> 警告が出ないため気づきにくい**（2026-07-20、`rules-propagate.yml` が
+> `main` にのみ push されて9日間無登録だった事故の教訓）。
+> `.github/workflows/rules-propagate.yml` に、default branch 上のworkflow
+> ファイル一覧とGitHub API上の登録済みworkflow一覧を突合する検証ジョブ
+> (`verify-workflow-registration`) を追加済み。不一致があればそのジョブが
+> fail するので、他のワークフロー追加時もこの仕組みで検知できる。
+
 ## アーキテクチャ
 
 - **このリポジトリ（public, `ai-ops-orchestrator`）**: ワークフローYAMLと

@@ -6,6 +6,17 @@
 // トークンを使うのはコスト/信頼性(モデルのブレ)の両面で無駄。health-summary.mjs
 // と同じ「Claude不使用でNode/shellのみ」の方針を踏襲する。
 //
+// P1-② (2026-07-20, 監視チーム再設計「誤検知対策」design-monitoring-team-20260720.md):
+//   1. リトライ間隔を2秒→20-30秒(ランダム)に拡大。ok判定は初回成功で確定、ng判定は
+//      「初回失敗→20-30秒後の2回目も失敗」の場合のみ(瞬断を拾わない)。
+//   2. プロバイダ一斉失敗ヒューリスティック: systems.jsonのdeploy値(railway-up/
+//      railway-gitは"railway"に集約)でグルーピングし、同一プロバイダで2件以上ng
+//      かつ他の全プロバイダが全okの場合、そのプロバイダ側の一時的な問題(プローブ
+//      からの経路障害等)を疑い、30秒待って3回目の確認を行う。3回目も失敗した
+//      システムのみ status:"ng" のまま suspect:"provider-wide" を付与する
+//      (誤検知ではなく「個別障害ではなさそう」という注記。アラート抑制は§4の
+//      ポリシー側で行う想定でここでは判定のみ)。
+//
 // やること:
 //   1. ai-ops-config(private, checkout済み)の memory/systems.json から
 //      status:"live" を全件読み、localhost系(kind:gate含む)は監視対象外として除外。
@@ -40,6 +51,19 @@ const HEALTH_STATUS_JSON = process.env.HEALTH_STATUS_JSON || 'config/memory/heal
 const GITHUB_TOKEN = process.env.GITHUB_TOKEN; // optional, raises GH API rate limit
 const REMEDIATE_COOLDOWN_MS = 60 * 60 * 1000; // 1時間1回まで(P0-2要件)
 const FETCH_TIMEOUT_MS = 15000;
+const PROVIDER_WIDE_RECHECK_WAIT_MS = 30000; // 3回目確認前の待機(30秒)
+
+// 20-30秒のランダム間隔(2連続失敗のみngにするための再確認待ち)
+function retryWaitMs() {
+  return 20000 + Math.floor(Math.random() * 10000);
+}
+
+// systems.jsonのdeploy値からプロバイダを抽出(railway-up/railway-gitは同一プロバイダとして集約)
+function mapProvider(deploy) {
+  if (!deploy) return 'unknown';
+  if (deploy.startsWith('railway')) return 'railway';
+  return deploy;
+}
 
 // P0-2: 夜間自動一次対応の対象(Railway系のみ・safe-remediate.shのwhitelistと一致させること)
 const REMEDIATE_WHITELIST = new Set(['fuu', 'jobqueue-gate', 'ads-ops-backend']);
@@ -90,7 +114,9 @@ async function httpCheckOnce(url, marker) {
 async function httpCheckWithRetry(url, marker) {
   let result = await httpCheckOnce(url, marker);
   if (!result.ok) {
-    await new Promise((r) => setTimeout(r, 2000));
+    // 誤検知対策①: 瞬断を拾わないよう20-30秒空けてから2回目を確認。
+    // 2回目も失敗した場合のみ最終的にngとなる(初回成功はここに来ない=即ok確定)。
+    await new Promise((r) => setTimeout(r, retryWaitMs()));
     result = await httpCheckOnce(url, marker);
   }
   return result;
@@ -200,6 +226,47 @@ async function main() {
         remediateCandidates.push(sys.id);
       } else {
         console.log(`[health-check] ${sys.id}: P1条件に該当だがクールダウン中のためskip`);
+      }
+    }
+  }
+
+  // 誤検知対策②: プロバイダ一斉失敗ヒューリスティック
+  // (method:'http'のシステムのみ対象。gh-actions判定のものは除く)
+  const providerGroups = {};
+  for (const sys of targets) {
+    if (!sys.healthPath) continue;
+    const provider = mapProvider(sys.deploy);
+    providerGroups[provider] = providerGroups[provider] || { ids: [] };
+    providerGroups[provider].ids.push(sys.id);
+  }
+  const providerNames = Object.keys(providerGroups);
+  const suspectIds = [];
+  if (providerNames.length > 1) {
+    for (const provider of providerNames) {
+      const ngIdsInProvider = providerGroups[provider].ids.filter((id) => out[id].status === 'ng');
+      if (ngIdsInProvider.length < 2) continue;
+      const othersAllOk = providerNames
+        .filter((p) => p !== provider)
+        .every((p) => providerGroups[p].ids.every((id) => out[id].status !== 'ng'));
+      if (othersAllOk) suspectIds.push(...ngIdsInProvider);
+    }
+  }
+  if (suspectIds.length > 0) {
+    console.log(
+      `[health-check] provider-wide suspect検知(${suspectIds.join(',')}): ${PROVIDER_WIDE_RECHECK_WAIT_MS / 1000}秒後に3回目確認`
+    );
+    await new Promise((r) => setTimeout(r, PROVIDER_WIDE_RECHECK_WAIT_MS));
+    for (const id of suspectIds) {
+      const sys = targets.find((s) => s.id === id);
+      if (!sys) continue;
+      const url = targetUrl(sys);
+      const recheck = await httpCheckOnce(url, sys.marker);
+      if (recheck.ok) {
+        out[id].status = 'ok';
+        out[id].note = 'recovered-on-3rd-check(provider-wide-suspect)';
+        delete out[id].reason;
+      } else {
+        out[id].suspect = 'provider-wide';
       }
     }
   }

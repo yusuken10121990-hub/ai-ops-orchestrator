@@ -14,12 +14,46 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 concurrency:
   group: rules-propagate
   cancel-in-progress: false
 
 jobs:
+  verify-workflow-registration:
+    # 再発防止(2026-07-20): default branchが`master`なのに`main`へ
+    # workflowを push すると、GitHub Actionsは無言でcron/dispatch登録を
+    # せず404になるだけで気づけない事故があった。default branch上の
+    # .github/workflows/*.yml と、GitHub APIの登録済みworkflow一覧を
+    # 突合し、片方にしか無いファイルがあればfailさせる。
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout (default branch)
+        uses: actions/checkout@v7
+
+      - name: Diff local workflow files vs registered workflows
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -eu
+          echo "default branch (this checkout) workflow files:"
+          local_files=$(ls .github/workflows/*.yml .github/workflows/*.yaml 2>/dev/null | xargs -n1 basename | sort -u)
+          echo "$local_files"
+
+          echo ""
+          echo "registered workflows (GitHub API, gh workflow list --all):"
+          registered_files=$(gh workflow list -R "$GITHUB_REPOSITORY" --all --json path -q '.[].path' | xargs -n1 basename | sort -u)
+          echo "$registered_files"
+
+          missing=$(comm -23 <(echo "$local_files") <(echo "$registered_files") || true)
+          if [ -n "$missing" ]; then
+            echo "::error::Workflow file(s) present on default branch but NOT registered in GitHub Actions (likely pushed to a non-default branch, or newly added and not yet picked up): $missing"
+            exit 1
+          fi
+          echo "OK: all default-branch workflow files are registered."
+
   propagate:
     runs-on: ubuntu-latest
     timeout-minutes: 20

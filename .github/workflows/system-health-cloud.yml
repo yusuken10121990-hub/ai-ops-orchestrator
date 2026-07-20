@@ -15,6 +15,7 @@ on:
 permissions:
   contents: write
   actions: read
+  issues: write
 
 concurrency:
   group: system-health-cloud
@@ -135,6 +136,75 @@ jobs:
           fi
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # 監視チーム再設計Phase2-④(2026-07-20)。哨戒A(このワークフロー)が哨戒B(Netlify
+      # Scheduled Function, sales-research-toolリポジトリのsentinel-scheduled.mjs)の生存を見る。
+      # design-monitoring-team-20260720.md §1「AがBを見てBがAを見る」の片方向。GITHUB_TOKENのみで
+      # 完結させる(新規secret投入なし)。重複起票防止=タイトル完全一致のopen Issueが既にあれば
+      # スキップ。復旧を検知したら同Issueへコメントの上クローズする(手動運用不要にする)。
+      - name: Check sentinel B (Netlify) freshness -> file/close GitHub Issue
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -uo pipefail
+          SENTINEL_URL="https://research.zerosys.jp/.netlify/functions/sentinel-status"
+          ISSUE_TITLE="[監視] 哨戒B(Netlify Scheduled Function)が90分以上応答/更新なし"
+          STALE_THRESHOLD_MIN=90
+
+          RESP=$(curl -sS --max-time 15 "$SENTINEL_URL" 2>/dev/null || true)
+
+          AGE=$(node -e "
+            let d=process.argv[1] || '';
+            try {
+              const j = JSON.parse(d);
+              console.log(typeof j.age_minutes === 'number' ? j.age_minutes : '');
+            } catch (e) { console.log(''); }
+          " "$RESP")
+
+          STALE="false"
+          REASON=""
+          if [ -z "$RESP" ]; then
+            STALE="true"
+            REASON="sentinel-statusの取得自体に失敗しました(fetch error/timeout)。URL: ${SENTINEL_URL}"
+          elif [ -z "$AGE" ]; then
+            STALE="true"
+            SNIPPET=$(printf '%s' "$RESP" | head -c 300)
+            REASON="sentinel-statusのage_minutesが取得できません(未実行 or 解析失敗)。応答冒頭: ${SNIPPET}"
+          else
+            IS_OVER=$(node -e "console.log(${AGE} > ${STALE_THRESHOLD_MIN} ? 'true' : 'false')")
+            if [ "$IS_OVER" = "true" ]; then
+              STALE="true"
+              REASON="age_minutes=${AGE}(しきい値${STALE_THRESHOLD_MIN}分超)"
+            fi
+          fi
+
+          EXISTING=$(gh issue list -R "$GITHUB_REPOSITORY" --state open --json number,title \
+            -q ".[] | select(.title==\"${ISSUE_TITLE}\") | .number" | head -1 || true)
+
+          if [ "$STALE" = "true" ]; then
+            echo "哨戒B stale検知: ${REASON}"
+            if [ -z "$EXISTING" ]; then
+              {
+                echo "哨戒A(system-health-cloud.yml)がsentinel-statusを確認したところ異常を検知しました。"
+                echo ""
+                echo "- 理由: ${REASON}"
+                echo "- 確認URL: ${SENTINEL_URL}"
+                echo "- 検知時刻(UTC): $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+                echo ""
+                echo "このIssueは復旧を検知すると自動クローズされます(同ワークフローの次回実行時)。"
+              } > /tmp/sentinel-b-issue-body.md
+              gh issue create -R "$GITHUB_REPOSITORY" --title "$ISSUE_TITLE" --body-file /tmp/sentinel-b-issue-body.md
+            else
+              echo "既存のopen Issue #${EXISTING} があるため重複起票をスキップ"
+            fi
+          else
+            echo "哨戒B正常(age_minutes=${AGE:-unknown})"
+            if [ -n "$EXISTING" ]; then
+              gh issue comment -R "$GITHUB_REPOSITORY" "$EXISTING" \
+                --body "哨戒Bの応答が復旧しました(age_minutes=${AGE})。自動クローズします。"
+              gh issue close -R "$GITHUB_REPOSITORY" "$EXISTING"
+            fi
+          fi
 # Note (LINE通知ルール): このワークフローはLINE通知を一切行わない
 # (~/.claude/CLAUDE.md「LINEは金銭承認依頼専用」)。結果は health-status.json 経由で
 # ダッシュボード(次回dashboard-sync)に反映される。safe-remediateはRailway再デプロイの

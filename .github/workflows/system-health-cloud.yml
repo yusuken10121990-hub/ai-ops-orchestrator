@@ -13,7 +13,7 @@ on:
   workflow_dispatch: {}
 
 permissions:
-  contents: read
+  contents: write
   actions: read
 
 concurrency:
@@ -110,6 +110,31 @@ jobs:
             git commit -m "chore: system-health-cloud update ($(TZ=Asia/Tokyo date '+%Y-%m-%d %H:%M JST'))"
             bash ../scripts/git-push-retry.sh git@config-gh:yusuken10121990-hub/ai-ops-config.git main
           fi
+
+      # 監視チーム再設計Phase1-①(2026-07-20)。哨戒B(Netlify Scheduled Function、
+      # sales-research-toolリポジトリのsentinel-scheduled.mjs)はsystems.jsonの
+      # status:live全システムをHTTP+markerで独立監視するが、systems.jsonの実体
+      # (ai-ops-config)は非公開リポジトリのため哨戒B側から認証なしでは読めない。
+      # 哨戒Bに新規secretを投入せず解決するため、ここ(既にai-ops-configへの
+      # 認証済みアクセスを持つジョブ)で安全なサブセットだけをpublicリポジトリ
+      # (このリポジトリ自身)へ書き出す。詳細はscripts/publish-public-feed.mjsのコメント参照。
+      - name: Publish public-safe systems feed (for 哨戒B, no new secrets)
+        run: |
+          SYSTEMS_JSON=config/memory/systems.json node scripts/publish-public-feed.mjs
+
+      - name: Commit & push public-feed/systems-live.json (this repo, public)
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add public-feed/systems-live.json
+          if git diff --cached --quiet; then
+            echo "no changes to commit"
+          else
+            git commit -m "chore: refresh public systems feed for sentinel B ($(TZ=Asia/Tokyo date '+%Y-%m-%d %H:%M JST'))"
+            bash scripts/git-push-retry.sh "https://x-access-token:${GITHUB_TOKEN}@github.com/yusuken10121990-hub/ai-ops-orchestrator.git" master
+          fi
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 # Note (LINE通知ルール): このワークフローはLINE通知を一切行わない
 # (~/.claude/CLAUDE.md「LINEは金銭承認依頼専用」)。結果は health-status.json 経由で
 # ダッシュボード(次回dashboard-sync)に反映される。safe-remediateはRailway再デプロイの

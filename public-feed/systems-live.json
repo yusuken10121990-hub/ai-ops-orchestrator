@@ -1,0 +1,22 @@
+{
+  "generated_at": "2026-07-20T13:30:00.000Z",
+  "note": "systems.json(非公開)のうちstatus:liveの監視に必要な安全なフィールドのみを公開したサブセット。哨戒B(Netlify Scheduled Function)が認証なしで参照する。次回system-health-cloud.ymlの実行(30分毎)でscripts/publish-public-feed.mjsにより自動再生成される。",
+  "systems": [
+    { "id": "zerosys-research", "name": "ZEROSYSリサーチ(商談前リサーチAI)", "url": "https://research.zerosys.jp", "kind": "site", "healthPath": "/", "marker": "商談前リサーチ", "deploy": "netlify", "status": "live" },
+    { "id": "zerosys-main", "name": "ZEROSYS本体サイト", "url": "https://zerosys.jp", "kind": "site", "healthPath": "/", "marker": "", "deploy": "netlify", "status": "live" },
+    { "id": "fuu", "name": "Fuu(AI風水診断)", "url": "https://myfuu.jp", "kind": "site", "healthPath": "/health", "marker": "stripe", "deploy": "railway-up", "status": "live" },
+    { "id": "omakase-meo-lp", "name": "OMAKASEクチコミ返信/MEO LP", "url": "https://ai-camp-c7faa7c45e.netlify.app", "kind": "site", "healthPath": "/", "marker": "", "deploy": "netlify", "status": "live" },
+    { "id": "ops-dashboard", "name": "AI組織 稼働ダッシュボード", "url": "https://aiwill-ops-dashboard.netlify.app", "kind": "dashboard", "healthPath": "/", "marker": "稼働ダッシュボード", "deploy": "netlify", "status": "live" },
+    { "id": "ai-campus", "name": "AI CAMPUS(稼働可視化)", "url": "https://aiwill-ai-campus.netlify.app", "kind": "dashboard", "healthPath": "/", "marker": "AI", "deploy": "netlify", "status": "live" },
+    { "id": "ads-revenue-ops", "name": "広告×売上リアルタイム(/ops)", "url": "https://research.zerosys.jp/ops/", "kind": "dashboard", "healthPath": "/ops/", "marker": "", "deploy": "netlify", "status": "live" },
+    { "id": "jobqueue-gate", "name": "承認ゲート(jobqueue/Railway)", "url": "https://jobqueue-gate-production.up.railway.app", "kind": "gate", "healthPath": "/health", "marker": "", "deploy": "railway-git", "status": "live" },
+    { "id": "ads-ops-backend", "name": "広告運用バックエンド(Railway)", "url": "https://ads-ops-backend-production.up.railway.app", "kind": "backend", "healthPath": "/health", "marker": "", "deploy": "railway-up", "status": "live" },
+    { "id": "sales-tool", "name": "営業リサーチツール(社内)", "url": "https://aiwill-sales-tool-2607.netlify.app", "kind": "site", "healthPath": "/", "marker": "", "deploy": "netlify", "status": "live" },
+    { "id": "local-gate", "name": "承認ゲート(ローカルpglocal)", "url": "http://localhost:8000", "kind": "gate", "healthPath": "/health", "marker": "", "deploy": "local", "status": "live" },
+    { "id": "ai-ops-orchestrator", "name": "24h無人ランナー(GitHub Actions)", "url": "https://github.com/yusuken10121990-hub/ai-ops-orchestrator/actions", "kind": "backend", "healthPath": "", "marker": "", "deploy": "gh-actions", "status": "live" },
+    { "id": "creative-studio", "name": "クリエイティブスタジオ(広告/LP編集ツール)", "url": "https://creative-studio-aiwill.netlify.app", "kind": "site", "healthPath": "/", "marker": "クリエイティブスタジオ", "deploy": "netlify", "status": "live" },
+    { "id": "shifuraku", "name": "シフラク(シフト管理SaaS)", "url": "https://shifuraku.jp", "kind": "site", "healthPath": "/", "marker": "シフラク", "deploy": "netlify", "status": "live" },
+    { "id": "snack-web", "name": "スナック「コレカラ」運営管理(POS/シフト/給与)", "url": "https://snack-web-production.up.railway.app", "kind": "site", "healthPath": "/health", "marker": "snack-korekara-web", "deploy": "railway-git", "status": "live" },
+    { "id": "video-factory", "name": "AI SHORT VIDEO FACTORY(TikTok動画工場)", "url": "https://myfuu.jp/factory", "kind": "dashboard", "healthPath": "/factory/health", "marker": "AI SHORT VIDEO FACTORY", "deploy": "railway-up", "status": "live" }
+  ]
+}

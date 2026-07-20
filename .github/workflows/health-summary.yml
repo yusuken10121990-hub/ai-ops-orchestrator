@@ -9,6 +9,11 @@ name: health-summary
 # 代わりに ai-business-ops の台帳ファイルへ書き込み、ダッシュボードの
 # 「稼働状況」はそちら(+ gh run list 相当)から生成する運用に変更。
 #
+# 2026-07-20追加(P1対策・全サイト503のポストモーテム): Netlify productionデプロイ
+# クレジット(Pro枠3,000/月)の残量と消費ペースを日次チェックし、期末までに枯渇しそうな
+# ペースなら早期警告する(health-summary.mjs内 fetchNetlifyCredits)。読み取りのみ・
+# 金銭操作なし。
+#
 # JST 8:00 = UTC 23:00(前日)
 on:
   schedule:
@@ -48,6 +53,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           OPS_DASHBOARD_KEY: ${{ secrets.OPS_DASHBOARD_KEY }}
+          NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
           OUTPUT_FILE: ai-business-ops/.claude/memory/loop-health-summary.md
         run: node scripts/health-summary.mjs
 

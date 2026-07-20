@@ -64,10 +64,9 @@ jobs:
         with:
           node-version: "20"
 
-      - name: Build + deploy ops-dashboard (aiwill-ops-dashboard)
+      - name: Build ops-dashboard (aiwill-ops-dashboard)
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
           # 2026-07-18追加: 広告タブ「キャンペーン一覧」詳細モーダル用。ZEROSYSリサーチの
           # Meta広告別内訳(A2/B2/C2)をresearch.zerosys.jp/api/ops-dashboard-dataからビルド時
           # に取得するため(既存のai-campus-siteビルドと同じ鍵を流用。未設定でもビルドは失敗
@@ -81,17 +80,56 @@ jobs:
         run: |
           cd ai-business-ops/campaigns/ops-dashboard-site
           node build-dashboard.mjs
-          npx --yes netlify-cli@17 deploy --prod --dir . --site 7fdc2c4b-7fe1-4270-8b47-01846a2edcf2
 
-      - name: Build + deploy ai-campus (aiwill-ai-campus)
+      # 2026-07-20 P1対策(Netlifyクレジット266deploy/12日で全サイト503):
+      # dashboard-syncは毎時cron+多数のworkflow_dispatch(エージェント各自が
+      # 「大きな変更後に1回叩いてよい」ルールで頻繁に叩く)により1日20回超起動されており、
+      # 中身が変わっていなくても毎回2サイトへ本番deployしていたためNetlifyのproduction
+      # deployクレジットを食い尽くした。index.html中の「as of HH:mm JST」/
+      # data-generated="ISO時刻" はbuildの度に必ず変わる無関係なタイムスタンプなので、
+      # それだけを固定文字列に正規化してhashを取り、前回deploy時のhashと同じなら
+      # 「実データは無変更」と判断してnetlify deploy自体をスキップする(=クレジット消費ゼロ)。
+      # 実データ(TODO/エージェント/システム/決定ログ/売上等)が変わっていれば通常通りhashが
+      # 変わり毎時deployされるので、鮮度SLA(2時間以内に反映)は実質維持される。
+      - name: Deploy ops-dashboard if changed (idempotent, credit-saving)
+        env:
+          NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
+        run: |
+          cd ai-business-ops/campaigns/ops-dashboard-site
+          NEW_HASH=$(sed -E 's#data-generated="[^"]*"#data-generated="STATIC"#g; s#as of [^<]*JST#as of STATIC JST#g' index.html | sha256sum | cut -d" " -f1)
+          PREV_HASH=$(cat .last-deploy-hash 2>/dev/null || echo "none")
+          echo "prev=$PREV_HASH new=$NEW_HASH"
+          if [ "$NEW_HASH" = "$PREV_HASH" ]; then
+            echo "[dashboard-sync] ops-dashboard: no meaningful content change, skipping netlify deploy (credit saved)"
+          else
+            npx --yes netlify-cli@17 deploy --prod --dir . --site 7fdc2c4b-7fe1-4270-8b47-01846a2edcf2
+            echo "$NEW_HASH" > .last-deploy-hash
+          fi
+
+      - name: Build ai-campus (aiwill-ai-campus)
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
           OPS_DASHBOARD_KEY: ${{ secrets.OPS_DASHBOARD_KEY }}
         run: |
           cd ai-business-ops/campaigns/ai-campus-site
           node build-campus.mjs
-          npx --yes netlify-cli@17 deploy --prod --dir . --site 2bc30fa4-e822-4061-847d-b5fd5829b67d
+
+      # 同上(ops-dashboardと同じ理由)。data.js内の generatedAtIso/generatedAtLabel のみ
+      # 正規化してhash比較する。
+      - name: Deploy ai-campus if changed (idempotent, credit-saving)
+        env:
+          NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
+        run: |
+          cd ai-business-ops/campaigns/ai-campus-site
+          NEW_HASH=$(sed -E 's#"generatedAtIso": "[^"]*"#"generatedAtIso": "STATIC"#g; s#"generatedAtLabel": "[^"]*"#"generatedAtLabel": "STATIC"#g' data.js | sha256sum | cut -d" " -f1)
+          PREV_HASH=$(cat .last-deploy-hash 2>/dev/null || echo "none")
+          echo "prev=$PREV_HASH new=$NEW_HASH"
+          if [ "$NEW_HASH" = "$PREV_HASH" ]; then
+            echo "[dashboard-sync] ai-campus: no meaningful content change, skipping netlify deploy (credit saved)"
+          else
+            npx --yes netlify-cli@17 deploy --prod --dir . --site 2bc30fa4-e822-4061-847d-b5fd5829b67d
+            echo "$NEW_HASH" > .last-deploy-hash
+          fi
 
       - name: Commit & push regenerated site output back to ai-business-ops
         working-directory: ai-business-ops

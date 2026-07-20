@@ -91,12 +91,21 @@ jobs:
       # 「実データは無変更」と判断してnetlify deploy自体をスキップする(=クレジット消費ゼロ)。
       # 実データ(TODO/エージェント/システム/決定ログ/売上等)が変わっていれば通常通りhashが
       # 変わり毎時deployされるので、鮮度SLA(2時間以内に反映)は実質維持される。
+      # 2026-07-20 監視チーム再設計Phase1-③(design-monitoring-team-20260720.md)追記:
+      # heartbeat.json(哨戒Aの最終実行時刻checked_at)もハッシュに含める。heartbeat.jsonは
+      # 哨戒Bが鮮度(60分以内)を見て哨戒Aの生死を判定する仕組みのため、index.html側の実データが
+      # 無変更でもheartbeat.json単体の変化(health-check.mjsは30分毎に走るのでdashboard-syncの
+      # 毎時cronの度にほぼ必ず異なるchecked_atになる)でdeployされる必要がある。これにより
+      # このサイトの実効デプロイ頻度は概ね毎時cron相当(既存の credit-saving 導入前と同程度)に
+      # 戻るが、監視の生命線(heartbeat)を欠かすより優先する判断(engineerの裁量・可逆設定)。
       - name: Deploy ops-dashboard if changed (idempotent, credit-saving)
         env:
           NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
         run: |
           cd ai-business-ops/campaigns/ops-dashboard-site
-          NEW_HASH=$(sed -E 's#data-generated="[^"]*"#data-generated="STATIC"#g; s#as of [^<]*JST#as of STATIC JST#g' index.html | sha256sum | cut -d" " -f1)
+          NORMALIZED_INDEX=$(sed -E 's#data-generated="[^"]*"#data-generated="STATIC"#g; s#as of [^<]*JST#as of STATIC JST#g' index.html)
+          HEARTBEAT_CONTENT=$(cat heartbeat.json 2>/dev/null || echo "")
+          NEW_HASH=$(printf '%s\n%s' "$NORMALIZED_INDEX" "$HEARTBEAT_CONTENT" | sha256sum | cut -d" " -f1)
           PREV_HASH=$(cat .last-deploy-hash 2>/dev/null || echo "none")
           echo "prev=$PREV_HASH new=$NEW_HASH"
           if [ "$NEW_HASH" = "$PREV_HASH" ]; then

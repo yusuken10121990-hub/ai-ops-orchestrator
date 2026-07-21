@@ -128,6 +128,36 @@ function extractGhRepoSlug(sys) {
   return m ? m[1] : null;
 }
 
+// 2026-07-21 fix: 哨戒B(sentinel-b)誤検知対策。
+// 従来は「healthPathが空」を一律ghActionsCheckに流していたため、healthPathが空だが
+// HTTPで叩ける哨戒Bのsentinel-status(JSON)まで誤ってGitHub Actions実行履歴判定に
+// 回してしまい、対象repoがsales-research-tool(private/gh-actionsを使っていない)のため
+// gh-api-404 -> status:"skipped" になりダッシュボードで異常表示される誤検知が発生した。
+// 恒久対策: systems.jsonにhealthMethodフィールドを明示させ、"sentinel-json"の場合は
+// そのURLをGETしてJSON本文のwired/age_minutesで生死判定する専用チェックに分岐する。
+async function sentinelJsonCheck(sys) {
+  const staleMinutes = typeof sys.healthStaleMinutes === 'number' ? sys.healthStaleMinutes : 20;
+  try {
+    const res = await fetch(sys.url, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
+    if (!res.ok) {
+      return { status: 'ng', reason: `http-${res.status}` };
+    }
+    const body = await res.json();
+    if (body.wired !== true) {
+      return { status: 'ng', reason: 'wired-false-or-missing' };
+    }
+    if (typeof body.age_minutes !== 'number') {
+      return { status: 'ng', reason: 'age_minutes-missing' };
+    }
+    if (body.age_minutes > staleMinutes) {
+      return { status: 'ng', reason: `age_minutes=${body.age_minutes}(しきい値${staleMinutes}分超)` };
+    }
+    return { status: 'ok', age_minutes: body.age_minutes, checked_count: body.checked_count };
+  } catch (e) {
+    return { status: 'ng', reason: `error:${e.message}` };
+  }
+}
+
 async function ghActionsCheck(sys) {
   const slug = extractGhRepoSlug(sys);
   if (!slug) {
@@ -182,7 +212,20 @@ async function main() {
     const prevEntry = prev[sys.id] || {};
     let entry;
 
-    if (!sys.healthPath) {
+    if (sys.healthMethod === 'sentinel-json') {
+      // 2026-07-21 fix: 哨戒B等、healthPathは空だがHTTPでJSON取得しage_minutes/wiredで
+      // 判定すべきシステム専用の分岐(誤ってgh-actions判定に落ちないよう明示的に先に処理する)
+      const r = await sentinelJsonCheck(sys);
+      entry = {
+        status: r.status,
+        method: 'sentinel-json',
+        reason: r.reason,
+        age_minutes: r.age_minutes,
+        checked_count: r.checked_count,
+        url: sys.url,
+        checked_at: jstNow(),
+      };
+    } else if (!sys.healthPath) {
       // HTTPで叩けないシステム(gh-actions駆動のバックエンド等)はGH Actions実行履歴で代替判定
       const r = await ghActionsCheck(sys);
       entry = {

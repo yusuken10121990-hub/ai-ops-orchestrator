@@ -1,0 +1,76 @@
+name: automation-health-cloud
+
+# P0 (2026-07-23, dev-devops設計「自動化(定期ループ)自体のヘルス監視」):
+# system-health-cloud.yml(Webサイト/アプリの死活)とは別に、"定期ループそのもの"の
+# 生死を監視する。ローカルscheduled-tasks(約15本)が2026-07-20〜23にPCの`claude`CLI
+# ログアウトで3日間無言で停止した事故(decisions.md 2026-07-23参照)を受け、この
+# ワークフロー自体はローカルPCの起動状態に一切依存せず、クラウドcronだけで完結する。
+#
+# 他ワークフロー(system-health-cloud=13,43分、dashboard-sync=23分、health-summary=
+# 23:00UTC日次)と衝突しない分に配置(:08,:38)。
+on:
+  schedule:
+    - cron: "8,38 * * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+  actions: read
+  issues: write
+
+concurrency:
+  group: automation-health-cloud
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout orchestrator (public, scripts only)
+        uses: actions/checkout@v7
+
+      - name: Setup SSH deploy key (config)
+        env:
+          CONFIG_DEPLOY_KEY: ${{ secrets.CONFIG_DEPLOY_KEY }}
+        run: |
+          chmod +x scripts/setup-ssh-keys.sh
+          scripts/setup-ssh-keys.sh
+
+      - name: Checkout private config repo via deploy key (SSH)
+        run: |
+          git clone --branch main git@config-gh:yusuken10121990-hub/ai-ops-config.git config
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: "20"
+
+      - name: Run automation-health-check (decision-only, no Claude)
+        env:
+          CONFIG_DIR: config
+          HEARTBEAT_JSON: config/memory/automation-heartbeat.json
+          OUTPUT_JSON: config/memory/automation-health-status.json
+          SCHEDULED_TASKS_DIR: config/scheduled-tasks
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: node scripts/automation-health-check.mjs
+
+      - name: Commit & push automation-health-status.json to config repo
+        working-directory: config
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "no changes to commit"
+          else
+            git commit -m "chore: automation-health-cloud update ($(TZ=Asia/Tokyo date '+%Y-%m-%d %H:%M JST'))"
+            bash ../scripts/git-push-retry.sh git@config-gh:yusuken10121990-hub/ai-ops-config.git main
+          fi
+# Note (LINE通知ルール): このワークフローはLINE通知を一切行わない
+# (~/.claude/CLAUDE.md「LINEは金銭承認依頼専用」)。異常検知はGitHub Issue(自動起票/自動クローズ)
+# とautomation-health-status.json経由でダッシュボード(次回dashboard-sync)に反映される。
+# PushNotification(デスクトップ/スマホ通知)はクラウドから直接呼び出せないツールのため、
+# GitHub Issueの起票がこのループにおける「オーナー呼び出し」チャネルの代替となる
+# (GitHub通知設定でメール/モバイルアプリ通知が有効なら実質同等の役割を果たす)。

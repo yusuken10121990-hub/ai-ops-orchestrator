@@ -1,0 +1,107 @@
+name: jobqueue-runner
+
+# Tier-0 PC-off migration (2026-07-23, pc-off-migration-plan.md section 1.A /
+# decisions.md same day). This is the cloud port of the owner's local
+# execution engine (runner.ps1 + runner-service.ps1,
+# C:\Users\user\Desktop\開発フォルダ\jobqueue\jobqueue). Without this workflow,
+# approved jobs and self-build jobs are recorded by jobqueue-gate (Railway,
+# already PC-independent) but never actually EXECUTED while the owner's PC
+# is off -- "承認は記録されるが誰も実行しない" (see pc-off-migration-plan.md
+# section 0, "最大の発見").
+#
+# All actual job logic lives in scripts/jobqueue-runner-loop.sh (see that
+# file's header comment for the full type-by-type cloud-readiness table and
+# every translation note vs. the PowerShell original). This workflow is
+# deliberately thin: checkout, secrets -> env, run the script once, sync
+# state back.
+#
+# 5-minute cron, same rationale as creative-studio-apply-runner.yml (this
+# queue is the money-adjacent one -- approved buy_domain/budget_change/
+# activate_ad_campaign jobs and self-build jobs both flow through it).
+# concurrency.group + cancel-in-progress:false serializes cloud runs of THIS
+# workflow; the backend additionally enforces running_runner_count()<1
+# server-side (app/db.py lease_for_runner), so a local runner.ps1 running at
+# the same time as this workflow can never double-process the same job.
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: jobqueue-runner
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout orchestrator (public, scripts only)
+        uses: actions/checkout@v7
+
+      - name: Setup SSH deploy keys (config + jobqueue-backend + meo-backend + ai-business trio)
+        env:
+          CONFIG_DEPLOY_KEY: ${{ secrets.CONFIG_DEPLOY_KEY }}
+          AI_BUSINESS_OPS_DEPLOY_KEY: ${{ secrets.AI_BUSINESS_OPS_DEPLOY_KEY }}
+          SALES_RESEARCH_DEPLOY_KEY: ${{ secrets.SALES_RESEARCH_DEPLOY_KEY }}
+          META_ADS_DEPLOY_KEY: ${{ secrets.META_ADS_DEPLOY_KEY }}
+          JOBQUEUE_BACKEND_DEPLOY_KEY: ${{ secrets.JOBQUEUE_BACKEND_DEPLOY_KEY }}
+          MEO_BACKEND_DEPLOY_KEY: ${{ secrets.MEO_BACKEND_DEPLOY_KEY }}
+        run: |
+          chmod +x scripts/setup-ssh-keys.sh
+          scripts/setup-ssh-keys.sh
+
+      - name: Checkout private config repo via deploy key (SSH)
+        run: |
+          git clone --depth 1 --branch main git@config-gh:yusuken10121990-hub/ai-ops-config.git config
+
+      - name: Checkout ai-business (freeform/research/existing_service job types read/write this tree)
+        run: |
+          chmod +x scripts/checkout-ai-business.sh
+          scripts/checkout-ai-business.sh
+
+      - name: Configure git identity for jobqueue-backend/meo-backend commits made by the loop
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Run jobqueue-runner-loop (lease at most 1 job, execute, complete/fail)
+        env:
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GATE_URL: ${{ secrets.GATE_URL }}
+          GATE_AGENT_KEY: ${{ secrets.GATE_AGENT_KEY }}
+          RUNNER_API_KEY: ${{ secrets.RUNNER_API_KEY }}
+        run: |
+          chmod +x scripts/jobqueue-runner-loop.sh
+          scripts/jobqueue-runner-loop.sh
+
+      - name: Commit & push generated memory/agents changes to private config repo (SSH)
+        working-directory: config
+        run: |
+          # jobqueue-runner-loop.sh mirrors config/ into $HOME/.claude and writes
+          # worklog.md / new agent files / research updates there directly (same
+          # convention as scripts/run-loop.sh). Copy those back before pushing.
+          for d in memory agents scheduled-tasks; do
+            mkdir -p "$d"
+            cp -r "$HOME/.claude/$d/." "$d/" 2>/dev/null || true
+          done
+          git add -A
+          if git diff --cached --quiet; then
+            echo "no changes to commit"
+          else
+            git commit -m "chore: jobqueue-runner auto update ($(TZ=Asia/Tokyo date '+%Y-%m-%d %H:%M JST'))"
+            bash ../scripts/git-push-retry.sh git@config-gh:yusuken10121990-hub/ai-ops-config.git main
+          fi
+
+      - name: Sync ai-business changes back (ai-business-ops / sales-research-tool / meta-ads)
+        run: |
+          chmod +x scripts/sync-ai-business.sh
+          scripts/sync-ai-business.sh
+# Note: no LINE-on-failure step here by design. app/api.py's /runner/fail and
+# /runner/complete handlers already own all LINE/Slack notification decisions
+# server-side (requires_approval gating, circuit breaker, etc.) -- this
+# workflow must not add a second notification path (see LINE通知ルール).

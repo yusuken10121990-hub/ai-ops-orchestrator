@@ -60,3 +60,12 @@ add_key "meta-ads" "${META_ADS_DEPLOY_KEY:-}"
 # Skips cleanly (see add_key) until CRUDTEST1_DEPLOY_KEY is provisioned --
 # see owner-todos.md video-narration-learning-cloud-secrets.
 add_key "crudtest1" "${CRUDTEST1_DEPLOY_KEY:-}"
+# Tier0 (2026-07-23, pc-off-migration-plan.md): jobqueue-runner.yml (the
+# cloud port of runner.ps1/Run-Build and Run-MeoApply) needs push access to
+# the two repos the local runner self-modifies: jobqueue-backend itself
+# (build_plan/build_apply -- Railway auto-rebuilds jobqueue-gate on push to
+# master) and meo-backend (meo_plan/meo_apply -- Railway auto-rebuilds on
+# push to main). Both skip cleanly until their *_DEPLOY_KEY secrets are
+# provisioned -- see owner-todos.md jobqueue-runner-cloud-secrets.
+add_key "jobqueue-backend" "${JOBQUEUE_BACKEND_DEPLOY_KEY:-}"
+add_key "meo-backend" "${MEO_BACKEND_DEPLOY_KEY:-}"

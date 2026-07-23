@@ -30,6 +30,12 @@ jobs:
   run:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    env:
+      # GitHub Actions does not allow the `secrets` context inside step-level
+      # `if:` conditions ("Unrecognized named-value: 'secrets'", confirmed via
+      # `gh workflow run` dry validation 2026-07-23) -- only `env`/`vars` are
+      # readable there. Route the presence check through env instead.
+      HAS_CRUDTEST1_KEY: ${{ secrets.CRUDTEST1_DEPLOY_KEY != '' }}
     steps:
       - name: Checkout orchestrator (public, scripts only)
         uses: actions/checkout@v7
@@ -47,13 +53,13 @@ jobs:
           git clone --depth 1 --branch main git@config-gh:yusuken10121990-hub/ai-ops-config.git config
 
       - name: Checkout crudtest1 (video_factory) via deploy key (SSH)
-        if: ${{ secrets.CRUDTEST1_DEPLOY_KEY != '' }}
+        if: ${{ env.HAS_CRUDTEST1_KEY == 'true' }}
         run: |
           git clone --depth 1 --branch main git@crudtest1-gh:yusuken10121990-hub/crudtest1.git crudtest1
           echo "CRUDTEST1_DIR=$(pwd)/crudtest1" >> "$GITHUB_ENV"
 
       - name: Skip notice (crudtest1 deploy key not yet provisioned)
-        if: ${{ secrets.CRUDTEST1_DEPLOY_KEY == '' }}
+        if: ${{ env.HAS_CRUDTEST1_KEY != 'true' }}
         run: |
           echo "CRUDTEST1_DEPLOY_KEY is not set -- skipping this run."
           echo "See owner-todos.md: video-narration-learning-cloud-secrets"
@@ -61,19 +67,19 @@ jobs:
           echo "The local scheduled-tasks copy of this loop stays enabled until then (see decisions.md 2026-07-23)."
 
       - name: Setup Python
-        if: ${{ secrets.CRUDTEST1_DEPLOY_KEY != '' }}
+        if: ${{ env.HAS_CRUDTEST1_KEY == 'true' }}
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
       - name: Install video_factory deps
-        if: ${{ secrets.CRUDTEST1_DEPLOY_KEY != '' }}
+        if: ${{ env.HAS_CRUDTEST1_KEY == 'true' }}
         run: |
           cd "${CRUDTEST1_DIR}/video_factory"
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
 
       - name: Run video-narration-learning
-        if: ${{ secrets.CRUDTEST1_DEPLOY_KEY != '' }}
+        if: ${{ env.HAS_CRUDTEST1_KEY == 'true' }}
         env:
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
@@ -84,7 +90,7 @@ jobs:
           bash scripts/run-loop.sh video-narration-learning
 
       - name: Commit & push generated learnings to private config repo (SSH)
-        if: ${{ secrets.CRUDTEST1_DEPLOY_KEY != '' }}
+        if: ${{ env.HAS_CRUDTEST1_KEY == 'true' }}
         working-directory: config
         run: |
           git config user.name "github-actions[bot]"
@@ -98,7 +104,7 @@ jobs:
           fi
 
       - name: Sync crudtest1 changes back (dictionary/config/tests)
-        if: ${{ secrets.CRUDTEST1_DEPLOY_KEY != '' }}
+        if: ${{ env.HAS_CRUDTEST1_KEY == 'true' }}
         working-directory: crudtest1
         run: |
           git config user.name "github-actions[bot]"

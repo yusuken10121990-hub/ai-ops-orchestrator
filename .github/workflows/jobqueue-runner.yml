@@ -38,48 +38,76 @@ jobs:
   run:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    env:
+      RUNNER_API_KEY: ${{ secrets.RUNNER_API_KEY }}
+      JOBQUEUE_BACKEND_DEPLOY_KEY: ${{ secrets.JOBQUEUE_BACKEND_DEPLOY_KEY }}
+      MEO_BACKEND_DEPLOY_KEY: ${{ secrets.MEO_BACKEND_DEPLOY_KEY }}
     steps:
+      # 2026-07-23 fix: while the 3 required secrets are still owner-todo
+      # (owner-todos.md jobqueue-runner-cloud-secrets, p1, can take a few
+      # days), this workflow was running the full lease attempt every 5
+      # minutes and dying at RUNNER_API_KEY's `:?` guard -- GitHub emails the
+      # actor on every failed scheduled run, i.e. up to 288 failure emails/day
+      # (通知の出しすぎ禁止/失敗ゼロトレランス違反). Gate on secret presence
+      # FIRST, before any checkout, so an unprovisioned run ends green
+      # (no-op) in a few seconds instead of red. No re-enable step needed:
+      # secret provisioning is itself the trigger -- the very next 5-min cron
+      # tick after secrets land will see ready=true and run for real.
+      - name: Preflight - check required secrets are provisioned
+        id: preflight
+        run: |
+          if [ -z "${RUNNER_API_KEY}" ] || [ -z "${JOBQUEUE_BACKEND_DEPLOY_KEY}" ] || [ -z "${MEO_BACKEND_DEPLOY_KEY}" ]; then
+            echo "::notice::jobqueue-runner: skipping this run (secrets not yet provisioned: RUNNER_API_KEY / JOBQUEUE_BACKEND_DEPLOY_KEY / MEO_BACKEND_DEPLOY_KEY). This is expected and ends green by design -- see owner-todos.md 'jobqueue-runner-cloud-secrets'. No action needed here; once those secrets are set, the very next scheduled run picks up automatically."
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Checkout orchestrator (public, scripts only)
+        if: steps.preflight.outputs.ready == 'true'
         uses: actions/checkout@v7
 
       - name: Setup SSH deploy keys (config + jobqueue-backend + meo-backend + ai-business trio)
+        if: steps.preflight.outputs.ready == 'true'
         env:
           CONFIG_DEPLOY_KEY: ${{ secrets.CONFIG_DEPLOY_KEY }}
           AI_BUSINESS_OPS_DEPLOY_KEY: ${{ secrets.AI_BUSINESS_OPS_DEPLOY_KEY }}
           SALES_RESEARCH_DEPLOY_KEY: ${{ secrets.SALES_RESEARCH_DEPLOY_KEY }}
           META_ADS_DEPLOY_KEY: ${{ secrets.META_ADS_DEPLOY_KEY }}
-          JOBQUEUE_BACKEND_DEPLOY_KEY: ${{ secrets.JOBQUEUE_BACKEND_DEPLOY_KEY }}
-          MEO_BACKEND_DEPLOY_KEY: ${{ secrets.MEO_BACKEND_DEPLOY_KEY }}
         run: |
           chmod +x scripts/setup-ssh-keys.sh
           scripts/setup-ssh-keys.sh
 
       - name: Checkout private config repo via deploy key (SSH)
+        if: steps.preflight.outputs.ready == 'true'
         run: |
           git clone --depth 1 --branch main git@config-gh:yusuken10121990-hub/ai-ops-config.git config
 
       - name: Checkout ai-business (freeform/research/existing_service job types read/write this tree)
+        if: steps.preflight.outputs.ready == 'true'
         run: |
           chmod +x scripts/checkout-ai-business.sh
           scripts/checkout-ai-business.sh
 
       - name: Configure git identity for jobqueue-backend/meo-backend commits made by the loop
+        if: steps.preflight.outputs.ready == 'true'
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
       - name: Run jobqueue-runner-loop (lease at most 1 job, execute, complete/fail)
+        if: steps.preflight.outputs.ready == 'true'
         env:
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           GATE_URL: ${{ secrets.GATE_URL }}
           GATE_AGENT_KEY: ${{ secrets.GATE_AGENT_KEY }}
-          RUNNER_API_KEY: ${{ secrets.RUNNER_API_KEY }}
         run: |
           chmod +x scripts/jobqueue-runner-loop.sh
           scripts/jobqueue-runner-loop.sh
 
       - name: Commit & push generated memory/agents changes to private config repo (SSH)
+        if: steps.preflight.outputs.ready == 'true'
         working-directory: config
         run: |
           # jobqueue-runner-loop.sh mirrors config/ into $HOME/.claude and writes
@@ -98,6 +126,7 @@ jobs:
           fi
 
       - name: Sync ai-business changes back (ai-business-ops / sales-research-tool / meta-ads)
+        if: steps.preflight.outputs.ready == 'true'
         run: |
           chmod +x scripts/sync-ai-business.sh
           scripts/sync-ai-business.sh

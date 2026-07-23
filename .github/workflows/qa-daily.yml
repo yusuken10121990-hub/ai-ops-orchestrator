@@ -1,0 +1,78 @@
+name: qa-daily
+
+# PC-off migration (2026-07-23, pc-off-migration-plan.md Tier1): qa-daily was
+# previously a local-only .claude/scheduled-tasks entry (SKILL.md already
+# mirrored into ai-ops-config). This workflow runs the same SKILL headlessly
+# on GitHub Actions so E2E smoke checks continue even when the owner's PC is
+# off. claude-in-chrome (browser) is not available in this headless runner --
+# qa-daily's SKILL.md already documents a curl+HTTP-marker fallback for that
+# case ("claude-in-chromeが使えない環境では...未検証(ブラウザ不可)"), so this
+# is a safe degrade, not a silent gap.
+# JST 8:00 = UTC 23:00 (previous day)
+on:
+  schedule:
+    - cron: "0 23 * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: qa-daily
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout orchestrator (public, scripts only)
+        uses: actions/checkout@v7
+
+      - name: Setup SSH deploy key for private config repo
+        uses: webfactory/ssh-agent@v0.10.0
+        with:
+          ssh-private-key: ${{ secrets.CONFIG_DEPLOY_KEY }}
+
+      - name: Add github.com to known_hosts
+        run: |
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          ssh-keyscan -H github.com >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: Checkout private config repo via deploy key (SSH)
+        run: |
+          git clone --depth 1 --branch main git@github.com:yusuken10121990-hub/ai-ops-config.git config
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: "20"
+
+      - name: Run qa-daily
+        env:
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GATE_URL: ${{ secrets.GATE_URL }}
+          GATE_AGENT_KEY: ${{ secrets.GATE_AGENT_KEY }}
+          OPS_DASHBOARD_KEY: ${{ secrets.OPS_DASHBOARD_KEY }}
+          STUDIO_KEY: ${{ secrets.STUDIO_KEY }}
+          META_SYSTEM_USER_TOKEN: ${{ secrets.META_SYSTEM_USER_TOKEN }}
+        run: |
+          chmod +x scripts/run-loop.sh
+          bash scripts/run-loop.sh qa-daily
+
+      - name: Commit & push generated status/learnings to private config repo (SSH)
+        working-directory: config
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "no changes to commit"
+          else
+            git commit -m "chore: qa-daily auto update ($(TZ=Asia/Tokyo date '+%Y-%m-%d %H:%M JST'))"
+            bash ../scripts/git-push-retry.sh git@github.com:yusuken10121990-hub/ai-ops-config.git main
+          fi
+# Note: no LINE-on-failure step by design (LINE通知ルール: 金銭承認依頼専用).
+# Failure visibility lives in the Actions run history / dashboard instead.

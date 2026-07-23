@@ -1,0 +1,74 @@
+name: owner-todo-autoresolver
+
+# PC-off migration (2026-07-23, pc-off-migration-plan.md Tier1): daily sweep
+# over owner-todos.md open items, retrying the 4-check (credential reuse /
+# API substitute / design change / browser automation) resolution path.
+# Some checks (gh secret list on OTHER repos, DNS, HTTP/API GET) work fine
+# headlessly; browser-only checks degrade the same way they would on a PC
+# with no claude-in-chrome session -- items stay open with a note, nothing
+# breaks.
+# JST 8:30 = UTC 23:30 (previous day).
+on:
+  schedule:
+    - cron: "30 23 * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: owner-todo-autoresolver
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout orchestrator (public, scripts only)
+        uses: actions/checkout@v7
+
+      - name: Setup SSH deploy key for private config repo
+        uses: webfactory/ssh-agent@v0.10.0
+        with:
+          ssh-private-key: ${{ secrets.CONFIG_DEPLOY_KEY }}
+
+      - name: Add github.com to known_hosts
+        run: |
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          ssh-keyscan -H github.com >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: Checkout private config repo via deploy key (SSH)
+        run: |
+          git clone --depth 1 --branch main git@github.com:yusuken10121990-hub/ai-ops-config.git config
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: "20"
+
+      - name: Run owner-todo-autoresolver
+        env:
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GATE_URL: ${{ secrets.GATE_URL }}
+          GATE_AGENT_KEY: ${{ secrets.GATE_AGENT_KEY }}
+        run: |
+          chmod +x scripts/run-loop.sh
+          bash scripts/run-loop.sh owner-todo-autoresolver
+
+      - name: Commit & push updates to private config repo (SSH)
+        working-directory: config
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "no changes to commit"
+          else
+            git commit -m "chore: owner-todo-autoresolver auto update ($(TZ=Asia/Tokyo date '+%Y-%m-%d %H:%M JST'))"
+            bash ../scripts/git-push-retry.sh git@github.com:yusuken10121990-hub/ai-ops-config.git main
+          fi
+# Note: no LINE-on-failure step by design. This loop never touches money or
+# passwords (see SKILL.md 触らない list) -- pure re-verification + doc update.

@@ -1,0 +1,113 @@
+name: creative-studio-apply-runner
+
+# PC-off migration (2026-07-23, pc-off-migration-plan.md Tier1, highest
+# priority of the 8 "easy" loops per decisions.md -- money-adjacent queue
+# that feeds request_action.ps1). apply-runner.mjs already reads
+# STUDIO_KEY/GATE_URL/GATE_AGENT_KEY from process.env (see
+# ai-business-ops/marketing/creatives/studio/apply-runner.mjs, confirmed
+# 2026-07-23), so no netlify CLI login is needed at runtime -- this loop was
+# already cloud-ready code-wise, only the trigger was missing.
+#
+# concurrency.cancel-in-progress=false + a single serialized group is
+# critical here: the SKILL.md documents a real 2026-07-19 double-submission
+# incident caused by two processors touching the same queue record close
+# together. This workflow's group ensures at most one run executes at a
+# time; if a run is still going when the next tick fires, GitHub queues it
+# instead of running concurrently (never runs two apply-runner.mjs at once).
+# It does NOT by itself prevent overlap with a still-running local
+# scheduled-tasks copy -- see decisions.md 2026-07-23 for the local-task
+# disable step done alongside this workflow.
+#
+# 5-minute cron (GitHub Actions' minimum granularity). Actual cadence may
+# run a few minutes slower under platform load, which is still a large
+# improvement over the pre-existing "nextRunAt advances but lastRunAt never
+# updates" local scheduler bug documented in the SKILL.
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: creative-studio-apply-runner
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Checkout orchestrator (public, scripts only)
+        uses: actions/checkout@v7
+
+      - name: Setup SSH deploy keys (config + ai-business-ops + sales-research-tool + meta-ads)
+        env:
+          CONFIG_DEPLOY_KEY: ${{ secrets.CONFIG_DEPLOY_KEY }}
+          AI_BUSINESS_OPS_DEPLOY_KEY: ${{ secrets.AI_BUSINESS_OPS_DEPLOY_KEY }}
+          SALES_RESEARCH_DEPLOY_KEY: ${{ secrets.SALES_RESEARCH_DEPLOY_KEY }}
+          META_ADS_DEPLOY_KEY: ${{ secrets.META_ADS_DEPLOY_KEY }}
+        run: |
+          chmod +x scripts/setup-ssh-keys.sh
+          scripts/setup-ssh-keys.sh
+
+      - name: Checkout private config repo via deploy key (SSH)
+        run: |
+          git clone --depth 1 --branch main git@config-gh:yusuken10121990-hub/ai-ops-config.git config
+
+      - name: Checkout ai-business (ai-business-ops + sales-research-tool + meta-ads)
+        run: |
+          chmod +x scripts/checkout-ai-business.sh
+          scripts/checkout-ai-business.sh
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: "20"
+
+      - name: Run creative-studio-apply-runner
+        env:
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GATE_URL: ${{ secrets.GATE_URL }}
+          GATE_AGENT_KEY: ${{ secrets.GATE_AGENT_KEY }}
+          STUDIO_KEY: ${{ secrets.STUDIO_KEY }}
+          META_APP_ID: ${{ secrets.META_APP_ID }}
+          META_APP_SECRET: ${{ secrets.META_APP_SECRET }}
+          META_SYSTEM_USER_TOKEN: ${{ secrets.META_SYSTEM_USER_TOKEN }}
+          META_AD_ACCOUNT_ID: ${{ secrets.META_AD_ACCOUNT_ID }}
+          META_API_VERSION: ${{ secrets.META_API_VERSION }}
+        run: |
+          chmod +x scripts/run-loop.sh
+          if [ -n "${META_SYSTEM_USER_TOKEN:-}" ]; then
+            ENV_FILE="${AI_BUSINESS_DIR}/meta-ads/.env"
+            : > "${ENV_FILE}"
+            printf 'META_APP_ID=%s\n' "${META_APP_ID}" >> "${ENV_FILE}"
+            printf 'META_APP_SECRET=%s\n' "${META_APP_SECRET}" >> "${ENV_FILE}"
+            printf 'META_SYSTEM_USER_TOKEN=%s\n' "${META_SYSTEM_USER_TOKEN}" >> "${ENV_FILE}"
+            printf 'META_AD_ACCOUNT_ID=%s\n' "${META_AD_ACCOUNT_ID}" >> "${ENV_FILE}"
+            printf 'META_API_VERSION=%s\n' "${META_API_VERSION:-v21.0}" >> "${ENV_FILE}"
+          fi
+          bash scripts/run-loop.sh creative-studio-apply-runner
+
+      - name: Commit & push generated learnings to private config repo (SSH)
+        working-directory: config
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "no changes to commit"
+          else
+            git commit -m "chore: creative-studio-apply-runner auto update ($(TZ=Asia/Tokyo date '+%Y-%m-%d %H:%M JST'))"
+            bash ../scripts/git-push-retry.sh git@config-gh:yusuken10121990-hub/ai-ops-config.git main
+          fi
+
+      - name: Sync ai-business changes back (ai-business-ops / sales-research-tool / meta-ads)
+        run: |
+          chmod +x scripts/sync-ai-business.sh
+          scripts/sync-ai-business.sh
+# Note: no LINE-on-failure step. This loop itself never executes Meta budget/
+# activation changes directly (see SKILL "禁止事項") -- it only queues
+# request_action.ps1 approvals, same as local execution did.

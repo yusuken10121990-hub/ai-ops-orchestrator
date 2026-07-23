@@ -1,0 +1,121 @@
+name: meo-review-api
+
+# dev-integration (2026-07-23, pc-off-migration-plan.md Tier3 #8)。
+# meo-review-daily(claude-in-chromeでGBP画面を直接操作、PC常時起動が前提)の
+# API版代替。Business Profile API (My Business API v4 reviews) で未返信の
+# テキストレビューを取得(fetch)→店舗トーンに沿った返信文を書く
+# (headless Claude, meo-review-api-reply SKILL)→実際に投稿(post)、の3段構成。
+#
+# 現状(2026-07-23時点)は3つの理由で確実にskipし本番動作しない:
+#   1. GBP_CLIENT_ID/SECRET/REFRESH_TOKEN 未設定(工9=Business Profile API
+#      審査自体がまだ申請前。owner-todos.md gbp-api-mfa-blocker 参照:
+#      Google CloudコンソールでのGCPプロジェクト作成が、2025-10-16以降の
+#      2段階認証(MFA)必須化により現状ブロックされている)。
+#   2. CLIENTS_DEPLOY_KEY 未設定(顧客PIIを含む clients/*.json 用の専用リポジトリ
+#      が未構築。setup-ssh-keys.sh の当該コメント参照)。
+#   3. 上記いずれもGBPコンソール操作を伴わないClaudeのOAuthトークンとは別物。
+#
+# secrets不足時は全ステップが安全にskipし、meo-review-daily(claude-in-chrome)
+# が現行どおりプライマリ経路のまま継続する。
+#
+# JST 7:00 = UTC 22:00(前日)。meo-review-daily(claude-in-chrome, PC起動時)と
+# 同じ朝の巡回タイミングを踏襲。
+on:
+  schedule:
+    - cron: "0 22 * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: meo-review-api
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      HAS_GBP: ${{ (secrets.GBP_CLIENT_ID != '' && secrets.GBP_CLIENT_SECRET != '' && secrets.GBP_REFRESH_TOKEN != '') }}
+      HAS_CLIENTS_KEY: ${{ secrets.CLIENTS_DEPLOY_KEY != '' }}
+    steps:
+      - name: Checkout orchestrator (public, scripts only)
+        uses: actions/checkout@v7
+
+      - name: Skip notice (GBP API not provisioned yet)
+        if: ${{ env.HAS_GBP != 'true' }}
+        run: |
+          echo "GBP_CLIENT_ID/SECRET/REFRESH_TOKEN not set -- skipping this run."
+          echo "工9(Business Profile API審査)は申請前段階(GCPプロジェクト作成が"
+          echo "Google Cloud側の2段階認証必須化でブロック中)。owner-todos.md参照。"
+          echo "meo-review-daily(claude-in-chrome)が現行どおりプライマリ経路。"
+
+      - name: Setup SSH deploy keys
+        if: ${{ env.HAS_GBP == 'true' }}
+        env:
+          CONFIG_DEPLOY_KEY: ${{ secrets.CONFIG_DEPLOY_KEY }}
+          CLIENTS_DEPLOY_KEY: ${{ secrets.CLIENTS_DEPLOY_KEY }}
+        run: |
+          chmod +x scripts/setup-ssh-keys.sh
+          scripts/setup-ssh-keys.sh
+
+      - name: Checkout private config repo via deploy key (SSH)
+        if: ${{ env.HAS_GBP == 'true' }}
+        run: |
+          git clone --depth 1 --branch main git@config-gh:yusuken10121990-hub/ai-ops-config.git config
+
+      - name: Checkout clients repo (customer PII, if provisioned)
+        if: ${{ env.HAS_GBP == 'true' && env.HAS_CLIENTS_KEY == 'true' }}
+        run: |
+          git clone --depth 1 --branch main git@clients-gh:yusuken10121990-hub/ai-business-clients.git clients-repo
+          echo "CLIENTS_DIR=$(pwd)/clients-repo/camp_c7faa7c45e/clients" >> "$GITHUB_ENV"
+
+      - name: Setup Node
+        if: ${{ env.HAS_GBP == 'true' }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Fetch unreplied reviews (Business Profile API)
+        if: ${{ env.HAS_GBP == 'true' }}
+        env:
+          GBP_CLIENT_ID: ${{ secrets.GBP_CLIENT_ID }}
+          GBP_CLIENT_SECRET: ${{ secrets.GBP_CLIENT_SECRET }}
+          GBP_REFRESH_TOKEN: ${{ secrets.GBP_REFRESH_TOKEN }}
+          QUEUE_JSON: ${{ github.workspace }}/config/memory/meo-review-queue.json
+        run: |
+          node scripts/integrations/gbp-fetch-reviews.mjs
+
+      - name: Write reply texts (headless Claude, meo-review-api-reply SKILL)
+        if: ${{ env.HAS_GBP == 'true' }}
+        env:
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          chmod +x scripts/run-loop.sh
+          bash scripts/run-loop.sh meo-review-api-reply
+
+      - name: Post replies (Business Profile API)
+        if: ${{ env.HAS_GBP == 'true' }}
+        env:
+          GBP_CLIENT_ID: ${{ secrets.GBP_CLIENT_ID }}
+          GBP_CLIENT_SECRET: ${{ secrets.GBP_CLIENT_SECRET }}
+          GBP_REFRESH_TOKEN: ${{ secrets.GBP_REFRESH_TOKEN }}
+          QUEUE_JSON: ${{ github.workspace }}/config/memory/meo-review-queue.json
+        run: |
+          node scripts/integrations/gbp-post-reply.mjs
+
+      - name: Commit updates back to config repo
+        if: ${{ env.HAS_GBP == 'true' }}
+        working-directory: config
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A memory/meo-review-queue.json
+          if git diff --cached --quiet; then
+            echo "no changes to commit"
+          else
+            git commit -m "chore: meo-review-api update ($(TZ=Asia/Tokyo date '+%Y-%m-%d %H:%M JST'))"
+            bash ../scripts/git-push-retry.sh git@config-gh:yusuken10121990-hub/ai-ops-config.git main
+          fi

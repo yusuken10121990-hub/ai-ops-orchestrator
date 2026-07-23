@@ -1,0 +1,134 @@
+name: sns-posting-api
+
+# dev-integration (2026-07-23, pc-off-migration-plan.md Tier3 #9)。
+# sns-posting-stock-check(claude-in-chromeでのX/LinkedIn純正予約投稿、PC常時
+# 起動が前提)のAPI版代替。ネイティブ予約機能の代わりに、このワークフロー自体が
+# 8:00/12:00/19:00 JSTに起動しその時点でLinkedIn/X APIへ即時投稿する。
+#
+# 現状(2026-07-23時点)は両方とも未稼働で安全にスキップされる:
+#   - LinkedIn: 無料・審査不要(Share on LinkedIn product)だが、投稿には
+#     アプリに紐づくLinkedIn Page(会社ページ)が必須。本アカウント
+#     (「株式会社アイウィル」個人プロフィール)はページ作成に必要な
+#     つながり数が不足していることを実測確認済み(2026-07-23)。
+#     owner-todos.md linkedin-page-connections-blocker 参照。
+#   - X: 2026-02-06付でAPIの無料枠が廃止されpay-per-use課金
+#     ($0.015〜$0.20/投稿)に統一されたため、有効化自体が「新規の有料契約」
+#     =YESゲート対象。x-post.mjsはX_BILLING_APPROVED=trueが無い限り
+#     二重ガードで投稿を実行しない。
+#
+# secretsが1つも無い間は下のジョブが3ステップとも即skipで終わる
+# (video-narration-learning.ymlと同じ安全側スキップパターン)。
+#
+# JST 8:00 = UTC 23:00(前日) / JST 12:00 = UTC 03:00 / JST 19:00 = UTC 10:00
+on:
+  schedule:
+    - cron: "0 23 * * *"
+    - cron: "0 3 * * *"
+    - cron: "0 10 * * *"
+  workflow_dispatch:
+    inputs:
+      slot:
+        description: "手動実行時のみ: 8:00 / 12:00 / 19:00"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sns-posting-api
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      HAS_LINKEDIN: ${{ (secrets.LINKEDIN_ACCESS_TOKEN != '' || secrets.LINKEDIN_REFRESH_TOKEN != '') }}
+      HAS_X: ${{ (secrets.X_ACCESS_TOKEN != '' || secrets.X_REFRESH_TOKEN != '') }}
+    steps:
+      - name: Checkout orchestrator (public, scripts only)
+        uses: actions/checkout@v7
+
+      - name: Determine slot (schedule) or use manual input
+        id: slot
+        run: |
+          if [ -n "${{ github.event.inputs.slot }}" ]; then
+            echo "value=${{ github.event.inputs.slot }}" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          HOUR_UTC="$(date -u +%H)"
+          case "$HOUR_UTC" in
+            23) SLOT="8:00" ;;
+            03) SLOT="12:00" ;;
+            10) SLOT="19:00" ;;
+            *) echo "unexpected trigger hour ${HOUR_UTC}, defaulting to 8:00"; SLOT="8:00" ;;
+          esac
+          echo "value=${SLOT}" >> "$GITHUB_OUTPUT"
+
+      - name: Skip notice (no SNS API credentials yet)
+        if: ${{ env.HAS_LINKEDIN != 'true' && env.HAS_X != 'true' }}
+        run: |
+          echo "No LinkedIn/X API credentials configured -- skipping this run."
+          echo "Primary posting path remains sns-posting-stock-check (claude-in-chrome, PC-on only)."
+          echo "See owner-todos.md: linkedin-page-connections-blocker / x-api-paid-tier-decision"
+
+      - name: Setup SSH deploy keys (config + ai-business-ops mirror)
+        if: ${{ env.HAS_LINKEDIN == 'true' || env.HAS_X == 'true' }}
+        env:
+          CONFIG_DEPLOY_KEY: ${{ secrets.CONFIG_DEPLOY_KEY }}
+          AI_BUSINESS_OPS_DEPLOY_KEY: ${{ secrets.AI_BUSINESS_OPS_DEPLOY_KEY }}
+          SALES_RESEARCH_DEPLOY_KEY: ${{ secrets.SALES_RESEARCH_DEPLOY_KEY }}
+          META_ADS_DEPLOY_KEY: ${{ secrets.META_ADS_DEPLOY_KEY }}
+        run: |
+          chmod +x scripts/setup-ssh-keys.sh
+          scripts/setup-ssh-keys.sh
+
+      - name: Checkout private config repo via deploy key (SSH)
+        if: ${{ env.HAS_LINKEDIN == 'true' || env.HAS_X == 'true' }}
+        run: |
+          git clone --depth 1 --branch main git@config-gh:yusuken10121990-hub/ai-ops-config.git config
+
+      - name: Checkout ai-business (marketing/ stock files)
+        if: ${{ env.HAS_LINKEDIN == 'true' || env.HAS_X == 'true' }}
+        run: |
+          chmod +x scripts/checkout-ai-business.sh
+          scripts/checkout-ai-business.sh
+
+      - name: Setup Node
+        if: ${{ env.HAS_LINKEDIN == 'true' || env.HAS_X == 'true' }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Post next stock item for this slot
+        if: ${{ env.HAS_LINKEDIN == 'true' || env.HAS_X == 'true' }}
+        env:
+          MARKETING_DIR: ${{ github.workspace }}/ai-business/marketing
+          TRACKER_JSON: ${{ github.workspace }}/config/memory/sns-api-post-tracker.json
+          LINKEDIN_ACCESS_TOKEN: ${{ secrets.LINKEDIN_ACCESS_TOKEN }}
+          LINKEDIN_CLIENT_ID: ${{ secrets.LINKEDIN_CLIENT_ID }}
+          LINKEDIN_CLIENT_SECRET: ${{ secrets.LINKEDIN_CLIENT_SECRET }}
+          LINKEDIN_REFRESH_TOKEN: ${{ secrets.LINKEDIN_REFRESH_TOKEN }}
+          LINKEDIN_PERSON_URN: ${{ secrets.LINKEDIN_PERSON_URN }}
+          X_ACCESS_TOKEN: ${{ secrets.X_ACCESS_TOKEN }}
+          X_CLIENT_ID: ${{ secrets.X_CLIENT_ID }}
+          X_CLIENT_SECRET: ${{ secrets.X_CLIENT_SECRET }}
+          X_REFRESH_TOKEN: ${{ secrets.X_REFRESH_TOKEN }}
+          X_BILLING_APPROVED: ${{ secrets.X_BILLING_APPROVED }}
+        run: |
+          node scripts/integrations/sns-post-next.mjs "${{ steps.slot.outputs.value }}"
+
+      - name: Commit tracker update back to config repo
+        if: ${{ env.HAS_LINKEDIN == 'true' || env.HAS_X == 'true' }}
+        working-directory: config
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A memory/sns-api-post-tracker.json
+          if git diff --cached --quiet; then
+            echo "no changes to commit"
+          else
+            git commit -m "chore: sns-posting-api tracker update ($(TZ=Asia/Tokyo date '+%Y-%m-%d %H:%M JST'))"
+            bash ../scripts/git-push-retry.sh git@config-gh:yusuken10121990-hub/ai-ops-config.git main
+          fi

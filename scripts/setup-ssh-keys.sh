@@ -69,3 +69,14 @@ add_key "crudtest1" "${CRUDTEST1_DEPLOY_KEY:-}"
 # provisioned -- see owner-todos.md jobqueue-runner-cloud-secrets.
 add_key "jobqueue-backend" "${JOBQUEUE_BACKEND_DEPLOY_KEY:-}"
 add_key "meo-backend" "${MEO_BACKEND_DEPLOY_KEY:-}"
+# dev-integration (2026-07-23, pc-off-migration-plan.md Tier3 #8, meo-review-api.yml):
+# campaigns/_internal/camp_c7faa7c45e/clients/*.json (顧客PII: 氏名/メール/
+# Stripe顧客ID/GBPアクセス情報) is currently local-only (no git repo at all --
+# confirmed 2026-07-23, neither ai-business nor ai-business-ops tracks it).
+# This is a real gap (no cloud backup of client contract data either -- flagged
+# to backup-admin separately) as well as the reason meo-review-api.yml cannot
+# yet read the client registry from the cloud. Once a scoped private repo for
+# this data is created (owner/CTO data-handling decision, out of scope for a
+# single dev-integration pass) and CLIENTS_DEPLOY_KEY is provisioned, this
+# skips cleanly until then like every other not-yet-provisioned key here.
+add_key "clients" "${CLIENTS_DEPLOY_KEY:-}"

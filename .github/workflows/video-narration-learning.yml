@@ -1,0 +1,116 @@
+name: video-narration-learning
+
+# PC-off migration (2026-07-23, pc-off-migration-plan.md Tier1). This loop
+# needs 3 things not yet wired into this orchestrator: (1) a deploy key for
+# the crudtest1 repo (video_factory lives at crudtest1/video_factory),
+# (2) ELEVENLABS_API_KEY, (3) RAILWAY_TOKEN (for `railway up --service fuu`).
+# All three are new secrets -- Claude Code's safety classifier blocks the AI
+# from provisioning GitHub secrets/deploy keys itself (see decisions.md
+# 2026-07-23), so this is registered as owner-todos.md
+# video-narration-learning-cloud-secrets (p2, bundled one-sitting commands).
+#
+# Until CRUDTEST1_DEPLOY_KEY is set, the checkout step below is skipped and
+# the run step exits early with a clear message instead of failing the whole
+# workflow -- this file is ready to go live the moment the owner runs the
+# 3 `gh secret set` commands in the owner-todo.
+# JST 6:45 = UTC 21:45 (previous day).
+on:
+  schedule:
+    - cron: "45 21 * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: video-narration-learning
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout orchestrator (public, scripts only)
+        uses: actions/checkout@v7
+
+      - name: Setup SSH deploy keys (config + crudtest1)
+        env:
+          CONFIG_DEPLOY_KEY: ${{ secrets.CONFIG_DEPLOY_KEY }}
+          CRUDTEST1_DEPLOY_KEY: ${{ secrets.CRUDTEST1_DEPLOY_KEY }}
+        run: |
+          chmod +x scripts/setup-ssh-keys.sh
+          scripts/setup-ssh-keys.sh
+
+      - name: Checkout private config repo via deploy key (SSH)
+        run: |
+          git clone --depth 1 --branch main git@config-gh:yusuken10121990-hub/ai-ops-config.git config
+
+      - name: Checkout crudtest1 (video_factory) via deploy key (SSH)
+        if: ${{ secrets.CRUDTEST1_DEPLOY_KEY != '' }}
+        run: |
+          git clone --depth 1 --branch main git@crudtest1-gh:yusuken10121990-hub/crudtest1.git crudtest1
+          echo "CRUDTEST1_DIR=$(pwd)/crudtest1" >> "$GITHUB_ENV"
+
+      - name: Skip notice (crudtest1 deploy key not yet provisioned)
+        if: ${{ secrets.CRUDTEST1_DEPLOY_KEY == '' }}
+        run: |
+          echo "CRUDTEST1_DEPLOY_KEY is not set -- skipping this run."
+          echo "See owner-todos.md: video-narration-learning-cloud-secrets"
+          echo "(needs CRUDTEST1_DEPLOY_KEY + ELEVENLABS_API_KEY + RAILWAY_TOKEN)."
+          echo "The local scheduled-tasks copy of this loop stays enabled until then (see decisions.md 2026-07-23)."
+
+      - name: Setup Python
+        if: ${{ secrets.CRUDTEST1_DEPLOY_KEY != '' }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install video_factory deps
+        if: ${{ secrets.CRUDTEST1_DEPLOY_KEY != '' }}
+        run: |
+          cd "${CRUDTEST1_DIR}/video_factory"
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+
+      - name: Run video-narration-learning
+        if: ${{ secrets.CRUDTEST1_DEPLOY_KEY != '' }}
+        env:
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+        run: |
+          chmod +x scripts/run-loop.sh
+          bash scripts/run-loop.sh video-narration-learning
+
+      - name: Commit & push generated learnings to private config repo (SSH)
+        if: ${{ secrets.CRUDTEST1_DEPLOY_KEY != '' }}
+        working-directory: config
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "no changes to commit"
+          else
+            git commit -m "chore: video-narration-learning auto update ($(TZ=Asia/Tokyo date '+%Y-%m-%d %H:%M JST'))"
+            bash ../scripts/git-push-retry.sh git@config-gh:yusuken10121990-hub/ai-ops-config.git main
+          fi
+
+      - name: Sync crudtest1 changes back (dictionary/config/tests)
+        if: ${{ secrets.CRUDTEST1_DEPLOY_KEY != '' }}
+        working-directory: crudtest1
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A -- video_factory
+          if git diff --cached --quiet; then
+            echo "no changes to commit"
+          else
+            git commit -m "chore: video-narration-learning auto update ($(TZ=Asia/Tokyo date '+%Y-%m-%d %H:%M JST'))"
+            bash ../scripts/git-push-retry.sh git@crudtest1-gh:yusuken10121990-hub/crudtest1.git main
+          fi
+# Note: no LINE-on-failure step. RAILWAY_TOKEN here only redeploys the
+# existing "fuu" service with reversible config/dictionary changes (normal
+# ElevenLabs/Anthropic API usage costs, not a new paid contract) -- same
+# safety profile as the local runner.ps1-driven execution.

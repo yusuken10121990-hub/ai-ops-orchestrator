@@ -55,3 +55,8 @@ add_key "config" "${CONFIG_DEPLOY_KEY:-}"
 add_key "ai-business-ops" "${AI_BUSINESS_OPS_DEPLOY_KEY:-}"
 add_key "sales-research" "${SALES_RESEARCH_DEPLOY_KEY:-}"
 add_key "meta-ads" "${META_ADS_DEPLOY_KEY:-}"
+# P2 (2026-07-23, pc-off-migration-plan.md Tier1): video-narration-learning
+# needs the crudtest1 repo (video_factory lives under crudtest1/video_factory).
+# Skips cleanly (see add_key) until CRUDTEST1_DEPLOY_KEY is provisioned --
+# see owner-todos.md video-narration-learning-cloud-secrets.
+add_key "crudtest1" "${CRUDTEST1_DEPLOY_KEY:-}"

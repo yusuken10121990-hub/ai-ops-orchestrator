@@ -1,0 +1,94 @@
+name: maintenance-weekly
+
+# PC-off migration (2026-07-23, pc-off-migration-plan.md Tier1): weekly
+# maintenance sweep over all systems.json status:live systems. Runs on
+# Sunday so the SKILL's "月初第1日曜" monthly-tier branch lands correctly.
+# Repos without a wired deploy key in this orchestrator (only
+# ai-business-ops / sales-research-tool / meta-ads are checked out here)
+# are handled by the SKILL's own "repoが空/到達不可なら skipped, 異常扱い
+# しない" rule -- this is a safe degrade, not a silent gap. HTTP/TLS/gh-run
+# checks (netlify/railway-git/gh-actions deploy types) do not need a repo
+# checkout at all and work the same as on the owner's PC.
+# JST Sun 09:00 = UTC Sun 00:00.
+on:
+  schedule:
+    - cron: "0 0 * * 0"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: maintenance-weekly
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - name: Checkout orchestrator (public, scripts only)
+        uses: actions/checkout@v7
+
+      - name: Setup SSH deploy keys (config + ai-business-ops + sales-research-tool + meta-ads)
+        env:
+          CONFIG_DEPLOY_KEY: ${{ secrets.CONFIG_DEPLOY_KEY }}
+          AI_BUSINESS_OPS_DEPLOY_KEY: ${{ secrets.AI_BUSINESS_OPS_DEPLOY_KEY }}
+          SALES_RESEARCH_DEPLOY_KEY: ${{ secrets.SALES_RESEARCH_DEPLOY_KEY }}
+          META_ADS_DEPLOY_KEY: ${{ secrets.META_ADS_DEPLOY_KEY }}
+        run: |
+          chmod +x scripts/setup-ssh-keys.sh
+          scripts/setup-ssh-keys.sh
+
+      - name: Checkout private config repo via deploy key (SSH)
+        run: |
+          git clone --depth 1 --branch main git@config-gh:yusuken10121990-hub/ai-ops-config.git config
+
+      - name: Checkout ai-business (ai-business-ops + sales-research-tool + meta-ads)
+        run: |
+          chmod +x scripts/checkout-ai-business.sh
+          scripts/checkout-ai-business.sh
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: "20"
+
+      - name: Install gh + npm audit prerequisites (best-effort)
+        run: |
+          if [ -f "${AI_BUSINESS_DIR}/sales-research-tool/package.json" ]; then
+            (cd "${AI_BUSINESS_DIR}/sales-research-tool" && (npm ci --no-audit --no-fund || npm install --no-audit --no-fund)) || true
+          fi
+
+      - name: Run maintenance-weekly
+        env:
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GATE_URL: ${{ secrets.GATE_URL }}
+          GATE_AGENT_KEY: ${{ secrets.GATE_AGENT_KEY }}
+          NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          chmod +x scripts/run-loop.sh
+          bash scripts/run-loop.sh maintenance-weekly
+
+      - name: Commit & push generated status/learnings to private config repo (SSH)
+        working-directory: config
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "no changes to commit"
+          else
+            git commit -m "chore: maintenance-weekly auto update ($(TZ=Asia/Tokyo date '+%Y-%m-%d %H:%M JST'))"
+            bash ../scripts/git-push-retry.sh git@config-gh:yusuken10121990-hub/ai-ops-config.git main
+          fi
+
+      - name: Sync ai-business changes back (ai-business-ops / sales-research-tool / meta-ads)
+        run: |
+          chmod +x scripts/sync-ai-business.sh
+          scripts/sync-ai-business.sh
+# Note: no LINE-on-failure step by design. Money-touching remediation
+# (plan changes, renewals) is proposal-only via request_action.ps1 as
+# documented in the SKILL -- this workflow never executes those itself.

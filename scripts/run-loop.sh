@@ -72,6 +72,22 @@ if [ -n "${AI_BUSINESS_DIR}" ]; then
     | sed -E "s#C:/Users/user/ai-business/#${ESCAPED_AI_BUSINESS}/#g")"
 fi
 
+# P2 (2026-07-23, pc-off-migration-plan.md Tier1): some loops (creative-
+# studio-apply-runner, geo-daily) reference the FULL ai-business-ops repo
+# checkout directly (C:\Users\user\ai-business-ops\...), which is a
+# different tree from the trimmed AI_BUSINESS_DIR mirror (marketing/ +
+# google-ads/ only, see checkout-ai-business.sh). checkout-ai-business.sh
+# already exports AI_BUSINESS_OPS_DIR to $GITHUB_ENV when it runs, so this
+# is a no-op for loops that don't need it (AI_BUSINESS_OPS_DIR stays unset).
+AI_BUSINESS_OPS_DIR="${AI_BUSINESS_OPS_DIR:-}"
+if [ -n "${AI_BUSINESS_OPS_DIR}" ]; then
+  echo "ai-business-ops dir: ${AI_BUSINESS_OPS_DIR}"
+  ESCAPED_AI_BUSINESS_OPS=$(printf '%s' "${AI_BUSINESS_OPS_DIR}" | sed 's/[&/\]/\\&/g')
+  TRANSLATED="$(printf '%s' "${TRANSLATED}" \
+    | sed -E "s#C:\\\\Users\\\\user\\\\ai-business-ops\\\\#${ESCAPED_AI_BUSINESS_OPS}/#g" \
+    | sed -E "s#C:/Users/user/ai-business-ops/#${ESCAPED_AI_BUSINESS_OPS}/#g")"
+fi
+
 TRANSLATED="$(printf '%s' "${TRANSLATED}" | sed -E 's#\\#/#g')"
 
 # 4. Inject current JST wall-clock time explicitly. SKILL.md logic branches

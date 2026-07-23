@@ -1,0 +1,76 @@
+name: service-assurance-daily
+
+# PC-off migration (2026-07-23, pc-off-migration-plan.md Tier1): read-only
+# audit (payment success x delivery) that only needs config/memory + public
+# HTTPS endpoints (audit-delivery.js on research.zerosys.jp, GBP, Fuu health).
+# No money-moving action is ever taken here (proposals + YES-gate only, per
+# the SKILL itself), so cloud execution carries the same safety profile as
+# local execution.
+# JST 8:15 = UTC 23:15 (previous day) -- offset from qa-daily to reduce
+# concurrent pushes to the same config repo.
+on:
+  schedule:
+    - cron: "15 23 * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: service-assurance-daily
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout orchestrator (public, scripts only)
+        uses: actions/checkout@v7
+
+      - name: Setup SSH deploy key for private config repo
+        uses: webfactory/ssh-agent@v0.10.0
+        with:
+          ssh-private-key: ${{ secrets.CONFIG_DEPLOY_KEY }}
+
+      - name: Add github.com to known_hosts
+        run: |
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          ssh-keyscan -H github.com >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: Checkout private config repo via deploy key (SSH)
+        run: |
+          git clone --depth 1 --branch main git@github.com:yusuken10121990-hub/ai-ops-config.git config
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: "20"
+
+      - name: Run service-assurance-daily
+        env:
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GATE_URL: ${{ secrets.GATE_URL }}
+          GATE_AGENT_KEY: ${{ secrets.GATE_AGENT_KEY }}
+          OPS_DASHBOARD_KEY: ${{ secrets.OPS_DASHBOARD_KEY }}
+        run: |
+          chmod +x scripts/run-loop.sh
+          bash scripts/run-loop.sh service-assurance-daily
+
+      - name: Commit & push generated status/learnings to private config repo (SSH)
+        working-directory: config
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "no changes to commit"
+          else
+            git commit -m "chore: service-assurance-daily auto update ($(TZ=Asia/Tokyo date '+%Y-%m-%d %H:%M JST'))"
+            bash ../scripts/git-push-retry.sh git@github.com:yusuken10121990-hub/ai-ops-config.git main
+          fi
+# Note: no LINE-on-failure step by design (LINE通知ルール: 金銭承認依頼専用).
+# Refund proposals go through request_action.ps1 / YES-gate as documented in
+# the SKILL itself -- this workflow never executes money-moving actions.

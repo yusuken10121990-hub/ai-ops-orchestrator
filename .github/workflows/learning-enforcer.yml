@@ -1,0 +1,181 @@
+name: learning-enforcer
+
+# P0 (2026-07-23, dev-devops「日次学習ルールを仕組みで強制する」対応)
+#
+# 背景: オーナー監査で「94体中12体が自分の学習ノートで毎日学習を満たせていない」と判明。
+# 原因は個々の学習ループ(team-learning-loop/research-team-learning/seo-daily等)の
+# スロット表・共有ファイルへのマッピングに「一度も個体名で呼ばれない」「実体の無い
+# 共有ファイルに紐付いている」穴があったこと。さらに調査の過程で、ダッシュボード側の
+// エージェント一覧スキャン(agent-roster.mjs)がCRLF改行のエージェントファイルを
+# 取りこぼす別バグ(94体中61体が非表示)も見つかり合わせて修正した。
+#
+# このワークフローは「どの既存ループが誰を担当するはずか」を一切前提にしない、
+# 独立した安全網(バックストップ)。毎日、ロスター(agents/*.md)と学習ノート
+# (memory/learnings/**)を機械的に突合し、24〜48h以上更新が無い(または一度も
+# 接続されていない)エージェントを検知したら、そのエージェント自身をAgent委任で
+# 呼び出し追いキャッチアップ学習をさせる。既存ループが正常に機能していれば
+# このワークフローは「対象なし」で毎日ほぼ何もしない(=無害)。既存ループが壊れても、
+# 新しいエージェントが追加されても、このワークフローだけで学習ゼロトレランスが守られる。
+#
+# 1回の実行で処理するのは最大8体(コスト・実行時間の上限)。バックログが多い日は
+# 鮮度が高い(=長く放置されている)順に処理し、翌日以降のループで残りを消化する。
+#
+# JST 6時（UTC 21時, 前日）。dashboard-sync(毎時)より前、他の日次ループより後。
+on:
+  schedule:
+    - cron: "0 21 * * *"
+  workflow_dispatch:
+    inputs:
+      max_agents:
+        description: "1回で処理する最大エージェント数"
+        required: false
+        default: "8"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: learning-enforcer
+  cancel-in-progress: false
+
+jobs:
+  enforce:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout orchestrator (public, scripts only)
+        uses: actions/checkout@v7
+
+      - name: Setup SSH deploy keys (config + ai-business-ops)
+        env:
+          CONFIG_DEPLOY_KEY: ${{ secrets.CONFIG_DEPLOY_KEY }}
+          AI_BUSINESS_OPS_DEPLOY_KEY: ${{ secrets.AI_BUSINESS_OPS_DEPLOY_KEY }}
+        run: |
+          chmod +x scripts/setup-ssh-keys.sh
+          scripts/setup-ssh-keys.sh
+
+      - name: Checkout private config repo via deploy key (SSH)
+        run: git clone --branch main git@config-gh:yusuken10121990-hub/ai-ops-config.git config
+
+      - name: Checkout ai-business-ops via deploy key (SSH, read-only: agent-roster.mjs source of truth)
+        run: git clone --depth 1 --branch main git@ai-business-ops-gh:yusuken10121990-hub/ai-business-ops.git ai-business-ops
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: "20"
+
+      - name: Run learning-heartbeat-check (decision-only, no Claude)
+        id: heartbeat
+        env:
+          CONFIG_DIR: config
+          AI_BUSINESS_OPS_DIR: ai-business-ops
+          AGENTS_DIR: config/agents
+          LEARNINGS_DIR: config/memory/learnings
+          OUTPUT_JSON: config/memory/learning-heartbeat.json
+          STALE_THRESHOLD_HOURS: "36"
+        run: node scripts/learning-heartbeat-check.mjs
+
+      - name: Commit heartbeat.json (always, even if no stale agents)
+        working-directory: config
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add memory/learning-heartbeat.json
+          if git diff --cached --quiet; then
+            echo "no heartbeat change"
+          else
+            git commit -m "chore: learning-heartbeat update ($(TZ=Asia/Tokyo date '+%Y-%m-%d %H:%M JST'))"
+            bash ../scripts/git-push-retry.sh git@config-gh:yusuken10121990-hub/ai-ops-config.git main
+          fi
+
+      - name: Build catch-up prompt for stale agents
+        id: prompt
+        if: steps.heartbeat.outputs.stale_count != '0'
+        env:
+          MAX_AGENTS: ${{ github.event.inputs.max_agents || '8' }}
+        run: |
+          node -e '
+            const fs = require("fs");
+            const j = JSON.parse(fs.readFileSync("config/memory/learning-heartbeat.json", "utf8"));
+            const max = parseInt(process.env.MAX_AGENTS || "8", 10);
+            const batch = j.staleIds.slice(0, max);
+            fs.writeFileSync("stale-batch.json", JSON.stringify(batch));
+            console.log("batch:", batch.join(", "));
+          '
+          echo "count=$(node -e 'console.log(JSON.parse(require("fs").readFileSync("stale-batch.json","utf8")).length)')" >> "$GITHUB_OUTPUT"
+
+      - name: Mirror config repo as $HOME/.claude (headless Claude Code global config)
+        if: steps.heartbeat.outputs.stale_count != '0'
+        run: |
+          mkdir -p "$HOME/.claude"
+          cp -r config/. "$HOME/.claude/"
+
+      - name: Run learning-enforcer catch-up via headless Claude Code
+        if: steps.heartbeat.outputs.stale_count != '0'
+        env:
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          set -euo pipefail
+          BATCH_LIST="$(node -e 'console.log(JSON.parse(require("fs").readFileSync("stale-batch.json","utf8")).join(", "))')"
+          JST_NOW="$(TZ=Asia/Tokyo date '+%Y-%m-%d %H:%M (%a)')"
+          PROMPT="現在の日時（JST）: ${JST_NOW}。
+
+あなたは学習強制ループ(learning-enforcer)の司令塔です。以下のエージェントIDが、
+機械判定(learning-heartbeat-check.mjs)で「学習ノートが24〜48h以上更新されていない、
+または一度も学習ループに接続されていない」= stale と検知されました:
+
+${BATCH_LIST}
+
+Agentツールで上記の各エージェントを**並列で**起動し(subagent_typeにそのままエージェントID
+を指定)、それぞれに以下を1回実行させてください（司令塔自身は調査しない・委任のみ）:
+1. 自分の学習ノート(.claude/memory/learnings/配下。ファイル名は各自の日次学習ルールに従う。
+   見つからない場合は .claude/memory/learnings/<自分のID>.md を新規作成してよい)を読み、
+   学習済みテーマを把握する(直近14日と同テーマ禁止)。.claude/memory/playbook.md と
+   knowledge.md も確認する。
+2. 自分の専門分野から、自社(OMAKASE MEO / ZEROSYS=月10万円〜のオーダーメイド業務システム
+   開発 / ゼロシスリサーチ / Fuu / シフラク / BtoB営業)の成果に直結しそうなテーマを1つ選ぶ。
+3. WebSearchで信頼できるソースを2〜4件調査する(出所不明・煽り系・宣伝目的は不採用。
+   数値は複数ソースで裏取りし、割れたら「諸説あり」と明記)。
+4. 学習ノート末尾にフォーマット通り追記する(日付・テーマ・学び・出典URL・自社への適用)。
+   生コピー禁止、自分の言葉で要約する。
+5. 金銭が動く操作(予算・入札・出稿・決済・新規契約)は絶対に実行しない。提案があれば
+   decisions.mdに1行のみ。
+
+全員完了後、司令塔は「学習完了したエージェント数/対象数」と失敗した場合はエージェント名を
+2〜3行で報告してください。"
+
+          echo "---- prompt (先頭400字) ----"
+          printf '%s\n' "${PROMPT:0:400}"
+          echo "-----------------------------"
+
+          cd "$HOME/.claude"
+          npx -y @anthropic-ai/claude-code@latest -p "${PROMPT}" \
+            --dangerously-skip-permissions \
+            --model "${CLAUDE_MODEL:-sonnet}"
+
+      - name: Sync generated learnings back to config checkout
+        if: steps.heartbeat.outputs.stale_count != '0'
+        run: |
+          for d in memory agents scheduled-tasks; do
+            mkdir -p "config/${d}"
+            cp -r "$HOME/.claude/${d}/." "config/${d}/"
+          done
+
+      - name: Commit & push catch-up learnings to private config repo (SSH)
+        if: steps.heartbeat.outputs.stale_count != '0'
+        working-directory: config
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "no changes to commit"
+          else
+            git commit -m "chore: learning-enforcer catch-up ($(TZ=Asia/Tokyo date '+%Y-%m-%d %H:%M JST'))"
+            bash ../scripts/git-push-retry.sh git@config-gh:yusuken10121990-hub/ai-ops-config.git main
+          fi
+# Note (LINE通知ルール): このワークフローはLINE通知を一切行わない。学習の遅延/未接続は
+# ダッシュボード(次回dashboard-syncで学習heartbeatが反映される想定)とGitHub Actions実行
+# 履歴で可視化する。金銭が動く操作は一切ない(WebSearchによる調査と学習ノート追記のみ)。

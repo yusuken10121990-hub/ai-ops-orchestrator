@@ -6,7 +6,7 @@ name: learning-enforcer
 # 原因は個々の学習ループ(team-learning-loop/research-team-learning/seo-daily等)の
 # スロット表・共有ファイルへのマッピングに「一度も個体名で呼ばれない」「実体の無い
 # 共有ファイルに紐付いている」穴があったこと。さらに調査の過程で、ダッシュボード側の
-// エージェント一覧スキャン(agent-roster.mjs)がCRLF改行のエージェントファイルを
+# エージェント一覧スキャン(agent-roster.mjs)がCRLF改行のエージェントファイルを
 # 取りこぼす別バグ(94体中61体が非表示)も見つかり合わせて修正した。
 #
 # このワークフローは「どの既存ループが誰を担当するはずか」を一切前提にしない、
@@ -57,7 +57,7 @@ jobs:
       - name: Checkout private config repo via deploy key (SSH)
         run: git clone --branch main git@config-gh:yusuken10121990-hub/ai-ops-config.git config
 
-      - name: Checkout ai-business-ops via deploy key (SSH, read-only: agent-roster.mjs source of truth)
+      - name: "Checkout ai-business-ops via deploy key (SSH, read-only: agent-roster.mjs source of truth)"
         run: git clone --depth 1 --branch main git@ai-business-ops-gh:yusuken10121990-hub/ai-business-ops.git ai-business-ops
 
       - name: Setup Node.js
@@ -121,30 +121,26 @@ jobs:
           BATCH_LIST="$(node -e 'console.log(JSON.parse(require("fs").readFileSync("stale-batch.json","utf8")).join(", "))')"
           JST_NOW="$(TZ=Asia/Tokyo date '+%Y-%m-%d %H:%M (%a)')"
           PROMPT="現在の日時（JST）: ${JST_NOW}。
-
-あなたは学習強制ループ(learning-enforcer)の司令塔です。以下のエージェントIDが、
-機械判定(learning-heartbeat-check.mjs)で「学習ノートが24〜48h以上更新されていない、
-または一度も学習ループに接続されていない」= stale と検知されました:
-
-${BATCH_LIST}
-
-Agentツールで上記の各エージェントを**並列で**起動し(subagent_typeにそのままエージェントID
-を指定)、それぞれに以下を1回実行させてください（司令塔自身は調査しない・委任のみ）:
-1. 自分の学習ノート(.claude/memory/learnings/配下。ファイル名は各自の日次学習ルールに従う。
-   見つからない場合は .claude/memory/learnings/<自分のID>.md を新規作成してよい)を読み、
-   学習済みテーマを把握する(直近14日と同テーマ禁止)。.claude/memory/playbook.md と
-   knowledge.md も確認する。
-2. 自分の専門分野から、自社(OMAKASE MEO / ZEROSYS=月10万円〜のオーダーメイド業務システム
-   開発 / ゼロシスリサーチ / Fuu / シフラク / BtoB営業)の成果に直結しそうなテーマを1つ選ぶ。
-3. WebSearchで信頼できるソースを2〜4件調査する(出所不明・煽り系・宣伝目的は不採用。
-   数値は複数ソースで裏取りし、割れたら「諸説あり」と明記)。
-4. 学習ノート末尾にフォーマット通り追記する(日付・テーマ・学び・出典URL・自社への適用)。
-   生コピー禁止、自分の言葉で要約する。
-5. 金銭が動く操作(予算・入札・出稿・決済・新規契約)は絶対に実行しない。提案があれば
-   decisions.mdに1行のみ。
-
-全員完了後、司令塔は「学習完了したエージェント数/対象数」と失敗した場合はエージェント名を
-2〜3行で報告してください。"
+          あなたは学習強制ループ(learning-enforcer)の司令塔です。以下のエージェントIDが、
+          機械判定(learning-heartbeat-check.mjs)で「学習ノートが24〜48h以上更新されていない、
+          または一度も学習ループに接続されていない」= stale と検知されました:
+          ${BATCH_LIST}
+          Agentツールで上記の各エージェントを並列で起動し(subagent_typeにそのままエージェントID
+          を指定)、それぞれに以下を1回実行させてください（司令塔自身は調査しない・委任のみ）:
+          1. 自分の学習ノート(.claude/memory/learnings/配下。ファイル名は各自の日次学習ルールに従う。
+          見つからない場合は .claude/memory/learnings/<自分のID>.md を新規作成してよい)を読み、
+          学習済みテーマを把握する(直近14日と同テーマ禁止)。.claude/memory/playbook.md と
+          knowledge.md も確認する。
+          2. 自分の専門分野から、自社(OMAKASE MEO / ZEROSYS=月10万円〜のオーダーメイド業務システム
+          開発 / ゼロシスリサーチ / Fuu / シフラク / BtoB営業)の成果に直結しそうなテーマを1つ選ぶ。
+          3. WebSearchで信頼できるソースを2〜4件調査する(出所不明・煽り系・宣伝目的は不採用。
+          数値は複数ソースで裏取りし、割れたら「諸説あり」と明記)。
+          4. 学習ノート末尾にフォーマット通り追記する(日付・テーマ・学び・出典URL・自社への適用)。
+          生コピー禁止、自分の言葉で要約する。
+          5. 金銭が動く操作(予算・入札・出稿・決済・新規契約)は絶対に実行しない。提案があれば
+          decisions.mdに1行のみ。
+          全員完了後、司令塔は「学習完了したエージェント数/対象数」と失敗した場合はエージェント名を
+          2〜3行で報告してください。"
 
           echo "---- prompt (先頭400字) ----"
           printf '%s\n' "${PROMPT:0:400}"

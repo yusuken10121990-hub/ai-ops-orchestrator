@@ -4,13 +4,24 @@ name: backup-daily
 # 日次暗号化バックアップ。PCの起動状態に依存させず、public repoの
 # GitHub Actions無料枠(無制限)で実行する。
 #
-# secrets(GATE_DATABASE_URL / SUPABASE_DB_URL / BACKUP_GPG_PASSPHRASE /
-# BACKUPS_REPO_TOKEN)が未投入の間は scripts/backup.sh が
-# "skipped(no-secrets)" / "skipped(no-gh-token)" を記録して正常終了(green)する
-# 設計。オーナー作業は owner-todos.md (id: pcoff-secrets-one-enter) 参照。
+# secrets(GATE_DATABASE_URL / BACKUP_GPG_PASSPHRASE / BACKUPS_REPO_DEPLOY_KEY)
+# が未投入の間は scripts/backup.sh が "skipped(no-secrets)" /
+# "skipped(no-deploy-key)" を記録して正常終了(green)する設計。オーナー作業は
+# owner-todos.md (id: pcoff-secrets-one-enter) 参照。
+#
+# 2026-07-24(pcoff-secrets-one-enter仕上げ, dev-devops): 2点の設計変更でオーナー
+# のタイプ数をさらに削減:
+#   1. SUPABASE_DB_URL(pg_dump直接接続。Supabase Freeプランでは自動バックアップ
+#      が無く、DBパスワードはローカル/CLIソースが存在しないため恒久的に
+#      オーナー手入力が必須だった)を廃止。既にSUPABASE_SERVICE_ROLE_KEY権限で
+#      稼働しているbackup-export.js経由のJSONエクスポート(OPS_DASHBOARD_KEY、
+#      新規secret不要)に統一(scripts/backup-supabase-export.mjs)。
+#   2. BACKUPS_REPO_TOKEN(ai-ops-backupsへのrelease作成用、手動発行の
+#      fine-grained PAT)を廃止。他の*_DEPLOY_KEYと同じ自己生成SSH deploy key
+#      (BACKUPS_REPO_DEPLOY_KEY)によるgit push方式に統一(scripts/backup.sh)。
 #
 # PC完全オフライン化Batch4(2026-07-24追加): Netlify Blobs(jobs/enrich-cache/
-# pending-research)も同じreleaseに追加。OPS_DASHBOARD_KEYは既存secret
+# pending-research)も同じdumps/へ追加。OPS_DASHBOARD_KEYは既存secret
 # (dashboard-sync.yml等で既使用)を再利用するため新規オーナー投入は不要。
 # 未設定でもこの工程だけskipし他の対象は継続する(scripts/backup.sh参照)。
 #
@@ -43,9 +54,10 @@ jobs:
         with:
           node-version: "20"
 
-      - name: Setup SSH deploy key (config)
+      - name: Setup SSH deploy keys (config + ai-ops-backups)
         env:
           CONFIG_DEPLOY_KEY: ${{ secrets.CONFIG_DEPLOY_KEY }}
+          BACKUPS_REPO_DEPLOY_KEY: ${{ secrets.BACKUPS_REPO_DEPLOY_KEY }}
         run: |
           chmod +x scripts/setup-ssh-keys.sh
           scripts/setup-ssh-keys.sh
@@ -54,12 +66,10 @@ jobs:
         run: |
           git clone --branch main git@config-gh:yusuken10121990-hub/ai-ops-config.git config
 
-      - name: Run backup.sh (dump -> gzip -> gpg AES256 -> ai-ops-backups release)
+      - name: Run backup.sh (dump -> gzip -> gpg AES256 -> git push to ai-ops-backups)
         env:
           GATE_DATABASE_URL: ${{ secrets.GATE_DATABASE_URL }}
-          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
           BACKUP_GPG_PASSPHRASE: ${{ secrets.BACKUP_GPG_PASSPHRASE }}
-          BACKUPS_REPO_TOKEN: ${{ secrets.BACKUPS_REPO_TOKEN }}
           OPS_DASHBOARD_KEY: ${{ secrets.OPS_DASHBOARD_KEY }}
           BACKUP_STATUS_JSON: config/memory/backup-status.json
         run: |

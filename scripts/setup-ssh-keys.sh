@@ -69,6 +69,13 @@ add_key "crudtest1" "${CRUDTEST1_DEPLOY_KEY:-}"
 # provisioned -- see owner-todos.md jobqueue-runner-cloud-secrets.
 add_key "jobqueue-backend" "${JOBQUEUE_BACKEND_DEPLOY_KEY:-}"
 add_key "meo-backend" "${MEO_BACKEND_DEPLOY_KEY:-}"
+# pcoff-secrets-one-enter仕上げ (2026-07-24, dev-devops): backup.sh(cloud) needs
+# push access to ai-ops-backups (private repo storing gpg-encrypted daily
+# dumps). Replaces the old BACKUPS_REPO_TOKEN (fine-grained PAT, required a
+# manual mint via GitHub Settings -> now a self-generated SSH deploy key,
+# same pattern as every other *_DEPLOY_KEY here). Skips cleanly until
+# provisioned -- see owner-todos.md pcoff-secrets-one-enter.
+add_key "ai-ops-backups" "${BACKUPS_REPO_DEPLOY_KEY:-}"
 # dev-integration (2026-07-23, pc-off-migration-plan.md Tier3 #8, meo-review-api.yml):
 # campaigns/_internal/camp_c7faa7c45e/clients/*.json (顧客PII: 氏名/メール/
 # Stripe顧客ID/GBPアクセス情報) is currently local-only (no git repo at all --

@@ -7,7 +7,12 @@ name: backup-daily
 # secrets(GATE_DATABASE_URL / SUPABASE_DB_URL / BACKUP_GPG_PASSPHRASE /
 # BACKUPS_REPO_TOKEN)が未投入の間は scripts/backup.sh が
 # "skipped(no-secrets)" / "skipped(no-gh-token)" を記録して正常終了(green)する
-# 設計。オーナー作業は owner-todos.md (id: backup-secrets-provision) 参照。
+# 設計。オーナー作業は owner-todos.md (id: pcoff-secrets-one-enter) 参照。
+#
+# PC完全オフライン化Batch4(2026-07-24追加): Netlify Blobs(jobs/enrich-cache/
+# pending-research)も同じreleaseに追加。OPS_DASHBOARD_KEYは既存secret
+# (dashboard-sync.yml等で既使用)を再利用するため新規オーナー投入は不要。
+# 未設定でもこの工程だけskipし他の対象は継続する(scripts/backup.sh参照)。
 #
 # JST深夜帯(バックアップは翌日未明扱い) 03:20 JST = 前日18:20 UTC
 on:
@@ -33,6 +38,11 @@ jobs:
       - name: Install postgresql-client (pg_dump)
         run: sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client
 
+      - name: Setup Node (for Netlify Blobs export, Batch4 2026-07-24追加)
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
       - name: Setup SSH deploy key (config)
         env:
           CONFIG_DEPLOY_KEY: ${{ secrets.CONFIG_DEPLOY_KEY }}
@@ -50,6 +60,7 @@ jobs:
           SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
           BACKUP_GPG_PASSPHRASE: ${{ secrets.BACKUP_GPG_PASSPHRASE }}
           BACKUPS_REPO_TOKEN: ${{ secrets.BACKUPS_REPO_TOKEN }}
+          OPS_DASHBOARD_KEY: ${{ secrets.OPS_DASHBOARD_KEY }}
           BACKUP_STATUS_JSON: config/memory/backup-status.json
         run: |
           chmod +x scripts/backup.sh

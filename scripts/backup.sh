@@ -2,10 +2,16 @@
 # backup.sh
 #
 # P0-3 (2026-07-18, CTO設計「保守運用組織の24/7/365拡張」): 本番データの
-# 日次暗号化バックアップ。対象は backup-admin.md が定義する最重要2点のみ
-# (P0範囲。Netlify Blobs等は別途P1):
+# 日次暗号化バックアップ。対象は backup-admin.md が定義する最重要2点
 #   (a) Railway Postgres(承認ゲート jobqueue-gate) — pg_dump
 #   (b) Supabase(zerosys-research の認証+クレジット台帳) — pg_dump
+# に加え、PC完全オフライン化Batch4(2026-07-24, dev-integration実装, prior plan
+# P1繰越)で以下を追加:
+#   (c) Netlify Blobs(jobs/enrich-cache/pending-research) — backup-blobs-export.mjs
+#       経由。research.zerosys.jpに既にデプロイ済みのbackup-export.js Function
+#       (ai-business/backup/local-backup.mjsがPC側で叩いているのと同じAPI)を
+#       OPS_DASHBOARD_KEY(既存secret・新規投入不要)で呼び出すだけで、
+#       Netlify Blobsの鍵をこのワークフローが直接扱うことは一切ない。
 #
 # 各dumpは gzip → gpg --symmetric --cipher-algo AES256 で暗号化してから
 # private repo `ai-ops-backups` の Release asset としてアップロードする
@@ -19,6 +25,8 @@
 #   BACKUPS_REPO_TOKEN         : ai-ops-backups(private repo)にrelease作成できるトークン
 #                             (fine-grained PAT, contents:write on ai-ops-backups推奨。
 #                              自動投入はAuto Mode classifierがブロックしたためオーナー作業=owner-todos.md参照)
+#   OPS_DASHBOARD_KEY       : Netlify Blobsエクスポート用(既存secret。dashboard-sync.yml等で
+#                             既に使用中のため新規投入不要。未設定でもこの工程だけskipし他は継続)
 #
 # Usage:
 #   BACKUP_STATUS_JSON=config/memory/backup-status.json bash scripts/backup.sh
@@ -34,10 +42,13 @@ trap 'rm -rf "${WORKDIR}"' EXIT
 
 STATUS_GATE="skipped(no-secrets)"
 STATUS_SUPABASE="skipped(no-secrets)"
+STATUS_BLOBS="skipped(no-secrets)"
 SIZE_GATE=""
 SIZE_SUPABASE=""
+SIZE_BLOBS=""
 SHA_GATE=""
 SHA_SUPABASE=""
+SHA_BLOBS=""
 UPLOADED_ANY=0
 
 have_gh_token=0
@@ -86,15 +97,43 @@ if dump_and_encrypt "supabase" "${SUPABASE_DB_URL:-}" "supabase-${DATE_JST}"; th
   UPLOADED_ANY=1
 fi
 
+# --- (c) Netlify Blobs(jobs/enrich-cache/pending-research, Batch4 2026-07-24追加) ---
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [ -z "${OPS_DASHBOARD_KEY:-}" ]; then
+  echo "[backup] blobs: OPS_DASHBOARD_KEY not set, skipping"
+elif [ -z "${BACKUP_GPG_PASSPHRASE:-}" ]; then
+  echo "[backup] blobs: BACKUP_GPG_PASSPHRASE not set, skipping (cannot encrypt)"
+elif ! command -v node >/dev/null 2>&1; then
+  echo "[backup] blobs: node not available in this runner, skipping"
+else
+  BLOBS_JSON="${WORKDIR}/blobs-${DATE_JST}.json"
+  echo "[backup] blobs: exporting via backup-export.js (research.zerosys.jp)..."
+  if BLOBS_EXPORT_JSON="${BLOBS_JSON}" node "${SCRIPT_DIR}/backup-blobs-export.mjs" && [ -s "${BLOBS_JSON}" ]; then
+    gzip "${BLOBS_JSON}"
+    gpg --batch --yes --symmetric --cipher-algo AES256 \
+      --passphrase "${BACKUP_GPG_PASSPHRASE}" \
+      -o "${WORKDIR}/blobs-${DATE_JST}.json.gz.gpg" "${BLOBS_JSON}.gz"
+    STATUS_BLOBS="ok"
+    SIZE_BLOBS=$(stat -c%s "${WORKDIR}/blobs-${DATE_JST}.json.gz.gpg" 2>/dev/null || echo "")
+    SHA_BLOBS=$(sha256sum "${WORKDIR}/blobs-${DATE_JST}.json.gz.gpg" 2>/dev/null | cut -d' ' -f1)
+    UPLOADED_ANY=1
+  else
+    echo "[backup] blobs: export produced no output (see logs above), skipping"
+    STATUS_BLOBS="skipped(export-empty)"
+  fi
+fi
+
 if [ "${UPLOADED_ANY}" -eq 1 ]; then
   if [ "${have_gh_token}" -eq 0 ]; then
     echo "[backup] BACKUPS_REPO_TOKEN not set: dumps were created+encrypted but cannot be uploaded to ${BACKUP_REPO}. Discarding (never persisted unencrypted, never committed)."
     STATUS_GATE="skipped(no-gh-token)"
     STATUS_SUPABASE="skipped(no-gh-token)"
+    [ "${STATUS_BLOBS}" = "ok" ] && STATUS_BLOBS="skipped(no-gh-token)"
   else
     ASSETS=()
     [ "${STATUS_GATE}" = "ok" ] && ASSETS+=("${WORKDIR}/gate-${DATE_JST}.sql.gz.gpg")
     [ "${STATUS_SUPABASE}" = "ok" ] && ASSETS+=("${WORKDIR}/supabase-${DATE_JST}.sql.gz.gpg")
+    [ "${STATUS_BLOBS}" = "ok" ] && ASSETS+=("${WORKDIR}/blobs-${DATE_JST}.json.gz.gpg")
 
     echo "[backup] creating release backup-${DATE_JST} on ${BACKUP_REPO} with ${#ASSETS[@]} asset(s)..."
     if gh release create "backup-${DATE_JST}" "${ASSETS[@]}" \
@@ -110,6 +149,7 @@ if [ "${UPLOADED_ANY}" -eq 1 ]; then
         echo "[backup] upload also failed" >&2
         [ "${STATUS_GATE}" = "ok" ] && STATUS_GATE="ng(upload-failed)"
         [ "${STATUS_SUPABASE}" = "ok" ] && STATUS_SUPABASE="ng(upload-failed)"
+        [ "${STATUS_BLOBS}" = "ok" ] && STATUS_BLOBS="ng(upload-failed)"
       fi
     fi
 
@@ -137,11 +177,12 @@ cat > "${BACKUP_STATUS_JSON}" <<EOF
   "retention_daily": ${RETENTION_DAILY},
   "targets": {
     "gate": { "status": "${STATUS_GATE}", "size_bytes": "${SIZE_GATE}", "sha256": "${SHA_GATE}", "release": "backup-${DATE_JST}" },
-    "supabase": { "status": "${STATUS_SUPABASE}", "size_bytes": "${SIZE_SUPABASE}", "sha256": "${SHA_SUPABASE}", "release": "backup-${DATE_JST}" }
+    "supabase": { "status": "${STATUS_SUPABASE}", "size_bytes": "${SIZE_SUPABASE}", "sha256": "${SHA_SUPABASE}", "release": "backup-${DATE_JST}" },
+    "blobs": { "status": "${STATUS_BLOBS}", "size_bytes": "${SIZE_BLOBS}", "sha256": "${SHA_BLOBS}", "release": "backup-${DATE_JST}" }
   }
 }
 EOF
 
 echo "[backup] wrote ${BACKUP_STATUS_JSON}"
-echo "[backup] gate=${STATUS_GATE} supabase=${STATUS_SUPABASE}"
+echo "[backup] gate=${STATUS_GATE} supabase=${STATUS_SUPABASE} blobs=${STATUS_BLOBS}"
 exit 0

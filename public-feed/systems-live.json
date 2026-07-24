@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-07-24T07:16:51.174Z",
+  "generated_at": "2026-07-24T10:00:24.515Z",
   "note": "systems.json(非公開)のうちstatus:liveの監視に必要な安全なフィールドのみを公開したサブセット。哨戒B(Netlify Scheduled Function)が認証なしで参照する。",
   "systems": [
     {
@@ -170,6 +170,16 @@
       "healthPath": "",
       "marker": "",
       "deploy": "netlify",
+      "status": "live"
+    },
+    {
+      "id": "autobuild-grow",
+      "name": "Rivet (B2B開発SaaS・旧AutoBuild & Grow)",
+      "url": "https://rivetai.jp",
+      "kind": "site",
+      "healthPath": "/login",
+      "marker": "AutoBuild",
+      "deploy": "railway-up",
       "status": "live"
     }
   ]

@@ -134,6 +134,19 @@ jobs:
           fi
           bash scripts/run-loop.sh ad-pdca-daily
 
+      # P1(2026-07-25、オーナー依頼): LLM(cmo/ad-lp-analyst)分析任せの上のステップとは別に、
+      # 「広告費が実成果(Stripe実決済/Google Ads CV)にまったく結びついていない」「計測
+      # (Pixel/CAPI/Google Ads CV)が死んでいる」を毎回必ず機械的にチェックする決定論スクリプト
+      # (automation-health-check.mjsと同じ設計思想、LLM不使用)。読み取りのみ・金銭操作は一切
+      # 行わない。P1検知時のみGitHub Issueを起票(LINE/Slackには送らない、通知ルール準拠)。
+      - name: Run ad-money-guard (decision-only, no LLM, spend-vs-actual-result guard)
+        env:
+          OPS_DASHBOARD_KEY: ${{ secrets.OPS_DASHBOARD_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CONFIG_DIR: config
+        run: |
+          node scripts/ad-money-guard.mjs
+
       - name: Commit & push generated learnings to private config repo (SSH)
         working-directory: config
         run: |

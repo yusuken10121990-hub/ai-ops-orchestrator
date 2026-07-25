@@ -91,7 +91,7 @@ async function main() {
     generatedAtJst: jstLabel(now),
     thresholdHours: STALE_THRESHOLD_HOURS,
     agents: results.sort((x, y) => (y.hoursSince ?? 1e9) - (x.hoursSince ?? 1e9)),
-    staleIds: stale.map(s => s.id).sort(),
+    staleIds: stale.slice().sort((x, y) => (y.hoursSince ?? 1e9) - (x.hoursSince ?? 1e9)).map(s => s.id),
     summary,
   };
   writeStatus(out);

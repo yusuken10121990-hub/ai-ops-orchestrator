@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-07-24T23:45:33.955Z",
+  "generated_at": "2026-07-25T03:35:38.375Z",
   "note": "systems.json(非公開)のうちstatus:liveの監視に必要な安全なフィールドのみを公開したサブセット。哨戒B(Netlify Scheduled Function)が認証なしで参照する。",
   "systems": [
     {
@@ -178,7 +178,7 @@
       "url": "https://rivetai.jp",
       "kind": "site",
       "healthPath": "/login",
-      "marker": "AutoBuild",
+      "marker": "Rivet",
       "deploy": "railway-up",
       "status": "live"
     }

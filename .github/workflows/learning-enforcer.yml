@@ -17,19 +17,23 @@ name: learning-enforcer
 # このワークフローは「対象なし」で毎日ほぼ何もしない(=無害)。既存ループが壊れても、
 # 新しいエージェントが追加されても、このワークフローだけで学習ゼロトレランスが守られる。
 #
-# 1回の実行で処理するのは最大8体(コスト・実行時間の上限)。バックログが多い日は
-# 鮮度が高い(=長く放置されている)順に処理し、翌日以降のループで残りを消化する。
+# 1回の実行で処理するのは最大12体(コスト・実行時間の上限)。バックログが多い日は
+# 鮮度が高い(=長く放置されている)順に処理し、同日の後続実行で残りを消化する。
 #
-# JST 6時（UTC 21時, 前日）。dashboard-sync(毎時)より前、他の日次ループより後。
+# 2026-07-25 オーナー指示「全員ちゃんと毎日その専門分野学習させて」対応:
+# - 実行を1日1回→4時間毎(1日6回、最大72体/日)に増やし、95体全員が毎日学習できる容量にする
+# - stale閾値を36h→24hに引き下げ(=24h学習が無ければ即キャッチアップ対象)
+# - staleIdsを放置時間の長い順に並べ替え(従来はアルファベット順で古参が後回しになる穴があった)
+# - キャッチアップ後にheartbeatを再生成し、ダッシュボードが実行後の最新状態を反映するようにする
 on:
   schedule:
-    - cron: "0 21 * * *"
+    - cron: "0 1,5,9,13,17,21 * * *"
   workflow_dispatch:
     inputs:
       max_agents:
         description: "1回で処理する最大エージェント数"
         required: false
-        default: "8"
+        default: "12"
 
 permissions:
   contents: read
@@ -41,7 +45,7 @@ concurrency:
 jobs:
   enforce:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 45
     steps:
       - name: Checkout orchestrator (public, scripts only)
         uses: actions/checkout@v7
@@ -73,7 +77,7 @@ jobs:
           AGENTS_DIR: config/agents
           LEARNINGS_DIR: config/memory/learnings
           OUTPUT_JSON: config/memory/learning-heartbeat.json
-          STALE_THRESHOLD_HOURS: "36"
+          STALE_THRESHOLD_HOURS: "24"
         run: node scripts/learning-heartbeat-check.mjs
 
       - name: Commit heartbeat.json (always, even if no stale agents)
@@ -93,7 +97,7 @@ jobs:
         id: prompt
         if: steps.heartbeat.outputs.stale_count != '0'
         env:
-          MAX_AGENTS: ${{ github.event.inputs.max_agents || '8' }}
+          MAX_AGENTS: ${{ github.event.inputs.max_agents || '12' }}
         run: |
           node -e '
             const fs = require("fs");
@@ -170,6 +174,28 @@ jobs:
             echo "no changes to commit"
           else
             git commit -m "chore: learning-enforcer catch-up ($(TZ=Asia/Tokyo date '+%Y-%m-%d %H:%M JST'))"
+            bash ../scripts/git-push-retry.sh git@config-gh:yusuken10121990-hub/ai-ops-config.git main
+          fi
+
+      # 鮮度判定はconfigリポジトリのgit履歴ベースのため、catch-upコミット後に再生成する。
+      # これで学習実行前の古い数字がダッシュボードに残る問題(常に悲観表示)が直る。
+      - name: Re-run heartbeat after catch-up & commit (dashboard reflects post-run state)
+        if: steps.heartbeat.outputs.stale_count != '0'
+        env:
+          CONFIG_DIR: config
+          AI_BUSINESS_OPS_DIR: ai-business-ops
+          AGENTS_DIR: config/agents
+          LEARNINGS_DIR: config/memory/learnings
+          OUTPUT_JSON: config/memory/learning-heartbeat.json
+          STALE_THRESHOLD_HOURS: "24"
+        run: |
+          node scripts/learning-heartbeat-check.mjs
+          cd config
+          git add memory/learning-heartbeat.json
+          if git diff --cached --quiet; then
+            echo "no heartbeat change"
+          else
+            git commit -m "chore: learning-heartbeat update after catch-up ($(TZ=Asia/Tokyo date '+%Y-%m-%d %H:%M JST'))"
             bash ../scripts/git-push-retry.sh git@config-gh:yusuken10121990-hub/ai-ops-config.git main
           fi
 # Note (LINE通知ルール): このワークフローはLINE通知を一切行わない。学習の遅延/未接続は

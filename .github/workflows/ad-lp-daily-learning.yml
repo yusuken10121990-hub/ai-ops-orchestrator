@@ -19,7 +19,10 @@ concurrency:
 jobs:
   run:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    # 2026-07-25: rotation now runs 2 agents (heatmap-analyst -> abtest-designer)
+    # back-to-back in the 21:45 JST slot (see SKILL.md rotation table), so the
+    # old 25min budget (sized for 1 agent) is no longer enough headroom.
+    timeout-minutes: 40
     steps:
       - name: Checkout orchestrator (public, scripts only)
         uses: actions/checkout@v7

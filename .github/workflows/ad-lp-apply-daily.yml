@@ -131,6 +131,22 @@ jobs:
         run: |
           node scripts/ad-money-guard.mjs
 
+      # フェーズ1安全装置(2026-07-25 dev-devops、オーナー承認済み「広告/LP自動改善クローズド
+      # ループ」の予算ハードキャップ+パフォーマンス・サーキットブレーカー)。ad-money-guardの
+      # 直後に実行し、その所見(P1 tracking_dead/spend_no_result)+当月累計spendを見て
+      # チャネル別のOPEN/CLOSED判定を書き出す。この判定はこのワークフロー(=ad-lp-apply-daily、
+      # ad-lp-applier.mjsの唯一の実行元=単一ライター)自身のClaude Codeステップが読み、
+      # OPENなチャネルの自動適用/自動改善起動をブロックする(次回実行分。今回のClaude Codeの
+      # 判断には前回実行時点のstatusが渡る、ad-money-guardと同じ非同期ゲート設計)。
+      # 金銭操作は一切行わない(予算/入札には触れない、決定論・LLM不使用、常にexit 0)。
+      - name: Run ad-circuit-breaker (budget hard cap + performance circuit breaker, no LLM)
+        env:
+          OPS_DASHBOARD_KEY: ${{ secrets.OPS_DASHBOARD_KEY }}
+          CONFIG_DIR: config
+          AI_BUSINESS_DIR: ${{ env.AI_BUSINESS_DIR }}
+        run: |
+          node scripts/ad-circuit-breaker.mjs
+
       - name: Commit & push generated learnings to private config repo (SSH)
         working-directory: config
         run: |

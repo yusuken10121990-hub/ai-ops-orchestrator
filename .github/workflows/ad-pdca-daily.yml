@@ -147,6 +147,19 @@ jobs:
         run: |
           node scripts/ad-money-guard.mjs
 
+      # フェーズ1安全装置(2026-07-25 dev-devops、詳細はad-lp-apply-daily.ymlの同名ステップの
+      # コメント参照)。ad-pdca-dailyとad-lp-apply-dailyは別スケジュールで走るため、両方の
+      # ワークフローで実行しstatusを最新化する(ad-money-guardと同じ考え方、CONFIG_DIR配下の
+      # 状態ファイルはconfig/memory/ad-circuit-breaker-state.jsonの月次アキュムレータで
+      # 二重カウントを防止済み)。
+      - name: Run ad-circuit-breaker (budget hard cap + performance circuit breaker, no LLM)
+        env:
+          OPS_DASHBOARD_KEY: ${{ secrets.OPS_DASHBOARD_KEY }}
+          CONFIG_DIR: config
+          AI_BUSINESS_DIR: ${{ env.AI_BUSINESS_DIR }}
+        run: |
+          node scripts/ad-circuit-breaker.mjs
+
       - name: Commit & push generated learnings to private config repo (SSH)
         working-directory: config
         run: |

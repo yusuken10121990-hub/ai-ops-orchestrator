@@ -89,30 +89,41 @@ jobs:
       # data-generated="ISO時刻" はbuildの度に必ず変わる無関係なタイムスタンプなので、
       # それだけを固定文字列に正規化してhashを取り、前回deploy時のhashと同じなら
       # 「実データは無変更」と判断してnetlify deploy自体をスキップする(=クレジット消費ゼロ)。
-      # 実データ(TODO/エージェント/システム/決定ログ/売上等)が変わっていれば通常通りhashが
-      # 変わり毎時deployされるので、鮮度SLA(2時間以内に反映)は実質維持される。
-      # 2026-07-20 監視チーム再設計Phase1-③(design-monitoring-team-20260720.md)追記:
-      # heartbeat.json(哨戒Aの最終実行時刻checked_at)もハッシュに含める。heartbeat.jsonは
-      # 哨戒Bが鮮度(60分以内)を見て哨戒Aの生死を判定する仕組みのため、index.html側の実データが
-      # 無変更でもheartbeat.json単体の変化(health-check.mjsは30分毎に走るのでdashboard-syncの
-      # 毎時cronの度にほぼ必ず異なるchecked_atになる)でdeployされる必要がある。これにより
-      # このサイトの実効デプロイ頻度は概ね毎時cron相当(既存の credit-saving 導入前と同程度)に
-      # 戻るが、監視の生命線(heartbeat)を欠かすより優先する判断(engineerの裁量・可逆設定)。
+      #
+      # 2026-07-25 credit消費再監査(3000クレジットの75%到達で警告): 上記のhash-skipだけでは
+      # 効果が限定的だったと判明。①2026-07-20に「監視の生命線を欠かさない」ためheartbeat.json
+      # (哨戒Aの最終実行時刻)をこのサイトのhashに含めていたが、health-check.mjsが30分毎に
+      # 走るためdashboard-syncの実行の度にほぼ必ずhashが変わり、skipがほぼ機能していなかった
+      # (実測: 5.4日で113回中111回deploy=98%)。②エージェントが「大きな変更後に1回叩いてよい」
+      # ルールに従い短時間に連打するケース(例: 2026-07-24 12:48〜13:46に7回のworkflow_dispatch)
+      # があり、hashが毎回変わる状況ではそのまま7回deployされていた。
+      # 対策: hashに加えて「前回実際にdeployした時刻」を`.last-deploy-time`に記録し、
+      # (a)hash不変 かつ (b)前回deployから90分未満 の場合のみskipする時間フロアを追加。
+      # 90分は鮮度SLA(as of 2時間以内)に30分の安全マージンを残した値。これにより
+      # ①heartbeatは(哨戒Bの鮮度監視が別経路のpublic-feedを見るため)もうhashに含める必要が
+      # なくなったため除去 ②同じ90分の窓に何回workflow_dispatchが飛んできても実際の
+      # netlify deployは最大1回に制限される(連打の無駄打ちを構造的に吸収)。中身が変わって
+      # いれば90分待たずに即deployされるので実効の鮮度は変わらない。可逆(このガードを消せば
+      # 元の挙動に戻る)。詳細はdecisions.md 2026-07-25参照。
       - name: Deploy ops-dashboard if changed (idempotent, credit-saving)
         env:
           NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
         run: |
           cd ai-business-ops/campaigns/ops-dashboard-site
           NORMALIZED_INDEX=$(sed -E 's#data-generated="[^"]*"#data-generated="STATIC"#g; s#as of [^<]*JST#as of STATIC JST#g' index.html)
-          HEARTBEAT_CONTENT=$(cat heartbeat.json 2>/dev/null || echo "")
-          NEW_HASH=$(printf '%s\n%s' "$NORMALIZED_INDEX" "$HEARTBEAT_CONTENT" | sha256sum | cut -d" " -f1)
+          NEW_HASH=$(printf '%s\n' "$NORMALIZED_INDEX" | sha256sum | cut -d" " -f1)
           PREV_HASH=$(cat .last-deploy-hash 2>/dev/null || echo "none")
-          echo "prev=$PREV_HASH new=$NEW_HASH"
-          if [ "$NEW_HASH" = "$PREV_HASH" ]; then
-            echo "[dashboard-sync] ops-dashboard: no meaningful content change, skipping netlify deploy (credit saved)"
+          PREV_TIME=$(cat .last-deploy-time 2>/dev/null || echo "0")
+          NOW_EPOCH=$(date +%s)
+          AGE=$((NOW_EPOCH - PREV_TIME))
+          FLOOR_SECONDS=5400
+          echo "prev=$PREV_HASH new=$NEW_HASH age=${AGE}s floor=${FLOOR_SECONDS}s"
+          if [ "$NEW_HASH" = "$PREV_HASH" ] && [ "$AGE" -lt "$FLOOR_SECONDS" ]; then
+            echo "[dashboard-sync] ops-dashboard: no meaningful content change and within freshness floor, skipping netlify deploy (credit saved)"
           else
             npx --yes netlify-cli@17 deploy --prod --dir . --site 7fdc2c4b-7fe1-4270-8b47-01846a2edcf2
             echo "$NEW_HASH" > .last-deploy-hash
+            echo "$NOW_EPOCH" > .last-deploy-time
           fi
 
       - name: Build ai-campus (aiwill-ai-campus)
@@ -124,7 +135,10 @@ jobs:
           node build-campus.mjs
 
       # 同上(ops-dashboardと同じ理由)。data.js内の generatedAtIso/generatedAtLabel のみ
-      # 正規化してhash比較する。
+      # 正規化してhash比較する。2026-07-25: ops-dashboardと同じ90分フロアを追加(理由は上の
+      # ops-dashboardデプロイステップのコメント参照。こちらは元々heartbeatを含めていなかった
+      # ため98%deployのような極端な劣化は無かったが、workflow_dispatch連打の無駄打ち吸収の
+      # ためフロアだけ揃える)。
       - name: Deploy ai-campus if changed (idempotent, credit-saving)
         env:
           NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
@@ -132,12 +146,17 @@ jobs:
           cd ai-business-ops/campaigns/ai-campus-site
           NEW_HASH=$(sed -E 's#"generatedAtIso": "[^"]*"#"generatedAtIso": "STATIC"#g; s#"generatedAtLabel": "[^"]*"#"generatedAtLabel": "STATIC"#g' data.js | sha256sum | cut -d" " -f1)
           PREV_HASH=$(cat .last-deploy-hash 2>/dev/null || echo "none")
-          echo "prev=$PREV_HASH new=$NEW_HASH"
-          if [ "$NEW_HASH" = "$PREV_HASH" ]; then
-            echo "[dashboard-sync] ai-campus: no meaningful content change, skipping netlify deploy (credit saved)"
+          PREV_TIME=$(cat .last-deploy-time 2>/dev/null || echo "0")
+          NOW_EPOCH=$(date +%s)
+          AGE=$((NOW_EPOCH - PREV_TIME))
+          FLOOR_SECONDS=5400
+          echo "prev=$PREV_HASH new=$NEW_HASH age=${AGE}s floor=${FLOOR_SECONDS}s"
+          if [ "$NEW_HASH" = "$PREV_HASH" ] && [ "$AGE" -lt "$FLOOR_SECONDS" ]; then
+            echo "[dashboard-sync] ai-campus: no meaningful content change and within freshness floor, skipping netlify deploy (credit saved)"
           else
             npx --yes netlify-cli@17 deploy --prod --dir . --site 2bc30fa4-e822-4061-847d-b5fd5829b67d
             echo "$NEW_HASH" > .last-deploy-hash
+            echo "$NOW_EPOCH" > .last-deploy-time
           fi
 
       - name: Commit & push regenerated site output back to ai-business-ops

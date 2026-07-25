@@ -119,6 +119,18 @@ jobs:
           fi
           bash scripts/run-loop.sh ad-lp-apply-daily
 
+      # P1(2026-07-25、オーナー依頼): ad-pdca-daily.ymlと同じ決定論ガード(LLM不使用)。
+      # このワークフローは別スケジュール(9:05 JST)で走るため、ad-money-guard.mjs側の
+      # state(config/memory/ad-money-guard-state.json)の日付ガードで二重カウントしない
+      # 設計になっている(同一JST暦日内の2回目実行はstreakDaysを加算しない)。
+      - name: Run ad-money-guard (decision-only, no LLM, spend-vs-actual-result guard)
+        env:
+          OPS_DASHBOARD_KEY: ${{ secrets.OPS_DASHBOARD_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CONFIG_DIR: config
+        run: |
+          node scripts/ad-money-guard.mjs
+
       - name: Commit & push generated learnings to private config repo (SSH)
         working-directory: config
         run: |

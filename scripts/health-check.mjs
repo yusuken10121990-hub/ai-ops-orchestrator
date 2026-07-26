@@ -135,7 +135,7 @@ function extractGhRepoSlug(sys) {
 // gh-api-404 -> status:"skipped" になりダッシュボードで異常表示される誤検知が発生した。
 // 恒久対策: systems.jsonにhealthMethodフィールドを明示させ、"sentinel-json"の場合は
 // そのURLをGETしてJSON本文のwired/age_minutesで生死判定する専用チェックに分岐する。
-async function sentinelJsonCheck(sys) {
+async function sentinelJsonCheckOnce(sys) {
   const staleMinutes = typeof sys.healthStaleMinutes === 'number' ? sys.healthStaleMinutes : 20;
   try {
     const res = await fetch(sys.url, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
@@ -156,6 +156,20 @@ async function sentinelJsonCheck(sys) {
   } catch (e) {
     return { status: 'ng', reason: `error:${e.message}` };
   }
+}
+
+// 2026-07-26 fix: sentinel-jsonチェックにhttpCheckWithRetryと同じ瞬断リトライを適用。
+// 従来はリトライ無しのため、ランナーからの一時的な接続失敗(error:fetch failed等)が即ngとなり、
+// 哨戒Bが1日1〜3回フラップ(次回チェックで自然復旧)してoverall=degradedを誘発していた。
+// wired-false / age_minutes超過は決定的な実状態なのでリトライしない。
+async function sentinelJsonCheck(sys) {
+  let result = await sentinelJsonCheckOnce(sys);
+  const transient = result.status === 'ng' && /^(error:|http-5)/.test(result.reason || '');
+  if (transient) {
+    await new Promise((r) => setTimeout(r, retryWaitMs()));
+    result = await sentinelJsonCheckOnce(sys);
+  }
+  return result;
 }
 
 async function ghActionsCheck(sys) {

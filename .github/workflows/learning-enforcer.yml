@@ -151,8 +151,12 @@ jobs:
           echo "-----------------------------"
 
           cd "$HOME/.claude"
+          # --no-session-persistence: 使い捨てランナー上の1回きりの実行なので
+          # セッション保存不要。オーナーの claude.ai セッション一覧をCI実行で
+          # 埋めない(2026-07-30 オーナー要望)。
           npx -y @anthropic-ai/claude-code@latest -p "${PROMPT}" \
             --dangerously-skip-permissions \
+            --no-session-persistence \
             --model "${CLAUDE_MODEL:-sonnet}"
 
       - name: Sync generated learnings back to config checkout

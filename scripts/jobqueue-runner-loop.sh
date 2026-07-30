@@ -199,7 +199,9 @@ extract_result() {
 # Writes claude's parsed {result_text, cost_usd} as a JSON object on stdout, or "" on hard failure.
 run_claude() {
   local prompt="$1" extra_args="$2" turns="${3:-$MAX_TURNS}" raw parsed
-  raw="$(npx -y @anthropic-ai/claude-code@latest -p "${prompt}" --output-format json --max-turns "${turns}" ${extra_args} 2>/tmp/claude_stderr_$$.log)"
+  # --no-session-persistence: 使い捨てランナー上の1回きりの実行なのでセッション
+  # 保存不要。オーナーの claude.ai セッション一覧をCI実行で埋めない(2026-07-30)。
+  raw="$(npx -y @anthropic-ai/claude-code@latest -p "${prompt}" --output-format json --no-session-persistence --max-turns "${turns}" ${extra_args} 2>/tmp/claude_stderr_$$.log)"
   if [ -z "${raw}" ]; then
     echo "[jobqueue-runner] claude produced no output; stderr:" >&2
     cat "/tmp/claude_stderr_$$.log" >&2 2>/dev/null || true

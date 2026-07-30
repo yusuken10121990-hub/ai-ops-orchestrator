@@ -138,8 +138,12 @@ cd "${HOME_CLAUDE}"
 # a silent no-op. This is a disposable GitHub Actions runner touching only
 # the config/ checkout (no other credentials/business systems reachable), so
 # bypassing the prompt is low-risk here — see decisions.md 2026-07-16 entry.
+# --no-session-persistence: 使い捨てランナー上の1回きりの実行なのでセッション
+# 保存は不要。オーナーの claude.ai セッション一覧を CI 実行で埋めない
+# (2026-07-30 オーナー要望: 「セッション追加させずに実行してほしい」)。
 npx -y @anthropic-ai/claude-code@latest -p "${PROMPT}" \
   --dangerously-skip-permissions \
+  --no-session-persistence \
   --model "${CLAUDE_MODEL:-sonnet}"
 
 echo "== claude run finished, syncing generated changes back to config checkout =="

@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-08-01T15:18:15.186Z",
+  "generated_at": "2026-08-01T16:37:40.890Z",
   "note": "systems.json(非公開)のうちstatus:liveの監視に必要な安全なフィールドのみを公開したサブセット。哨戒B(Netlify Scheduled Function)が認証なしで参照する。",
   "systems": [
     {
@@ -10,6 +10,16 @@
       "healthPath": "/",
       "marker": "商談前リサーチ",
       "deploy": "netlify",
+      "status": "live"
+    },
+    {
+      "id": "research-quality-learning",
+      "name": "ゼロシスリサーチ 品質学習ループ(実行テレメトリ→週次学習)",
+      "url": "https://github.com/yusuken10121990-hub/ai-ops-orchestrator/actions/workflows/research-quality-learning.yml",
+      "kind": "backend",
+      "healthPath": "",
+      "marker": "",
+      "deploy": "github-actions-cron(weekly, 日曜22:00 UTC) + netlify(集計APIはzerosys-researchに同居)",
       "status": "live"
     },
     {

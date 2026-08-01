@@ -1,0 +1,78 @@
+name: brand-visual-learning
+
+# PC-off / PC-memory-pressure migration (2026-08-01, CTO directive P2 #6).
+# Cloud counterpart of the local Windows task AIOps-BrandVisualLearning-Headless
+# (scheduled-tasks/brand-visual-learning). Pure WebSearch/WebFetch learning +
+# a memory/learnings append -- no external repo checkout, no browser, no
+# secrets beyond the standard config-repo deploy key -- so it fits the same
+# minimal "config-only" template already proven by team-learning-loop.yml /
+# research-team-learning.yml / owner-todo-autoresolver.yml.
+#
+# JST 8:05 = UTC 23:05 (previous day). Offset a few minutes from
+# sns-posting-api's UTC 23:00 trigger to avoid runner contention.
+on:
+  schedule:
+    - cron: "5 23 * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: brand-visual-learning
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout orchestrator (public, scripts only)
+        uses: actions/checkout@v7
+
+      - name: Setup SSH deploy key for private config repo
+        uses: webfactory/ssh-agent@v0.10.0
+        with:
+          ssh-private-key: ${{ secrets.CONFIG_DEPLOY_KEY }}
+
+      - name: Add github.com to known_hosts
+        run: |
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          ssh-keyscan -H github.com >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: Checkout private config repo via deploy key (SSH)
+        run: |
+          git clone --depth 1 --branch main git@github.com:yusuken10121990-hub/ai-ops-config.git config
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: "20"
+
+      - name: Run brand-visual-learning
+        env:
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          chmod +x scripts/run-loop.sh
+          bash scripts/run-loop.sh brand-visual-learning
+
+      - name: Commit & push generated learnings to private config repo (SSH)
+        working-directory: config
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "no changes to commit"
+          else
+            git commit -m "chore: brand-visual-learning auto update ($(TZ=Asia/Tokyo date '+%Y-%m-%d %H:%M JST'))"
+            bash ../scripts/git-push-retry.sh git@github.com:yusuken10121990-hub/ai-ops-config.git main
+          fi
+# Note (2026-07-17 convention): no LINE/Slack-on-failure step here by design.
+# Owner rule (~/.claude/CLAUDE.md "承認通知ルール"): Slack/LINE/email are
+# reserved for money-approval requests only. Failure visibility lives in the
+# Actions run history / dashboard "稼働状況" tab instead. This loop also
+# never touches money (SKILL.md explicit prohibition), so no ad-money-guard
+# style step applies here either.

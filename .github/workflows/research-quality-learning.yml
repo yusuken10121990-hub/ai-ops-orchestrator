@@ -1,0 +1,72 @@
+name: research-quality-learning
+
+# CTO設計(2026-08-01)「本番の実行結果から勝ちパターンを学習する配線」の週次学習ループ。
+# ゼロシスリサーチ(research.zerosys.jp)の匿名化実行テレメトリ集計API
+# (/api/research-telemetry)を読み、learnings/research/pipeline-quality.mdへ
+# 実測ベースで追記する。新規リサーチ実行(課金)は一切行わない・金銭ゼロ・通知なし。
+# 週次・日曜22:00 UTC (JST日曜7:00頃)。
+on:
+  schedule:
+    - cron: "0 22 * * 0"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: research-quality-learning
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout orchestrator (public, scripts only)
+        uses: actions/checkout@v7
+
+      - name: Setup SSH deploy key for private config repo
+        uses: webfactory/ssh-agent@v0.10.0
+        with:
+          ssh-private-key: ${{ secrets.CONFIG_DEPLOY_KEY }}
+
+      - name: Add github.com to known_hosts
+        run: |
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          ssh-keyscan -H github.com >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: Checkout private config repo via deploy key (SSH)
+        run: |
+          git clone --depth 1 --branch main git@github.com:yusuken10121990-hub/ai-ops-config.git config
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: "20"
+
+      - name: Run research-quality-learning
+        env:
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          OPS_DASHBOARD_KEY: ${{ secrets.OPS_DASHBOARD_KEY }}
+        run: |
+          chmod +x scripts/run-loop.sh
+          bash scripts/run-loop.sh research-quality-learning
+
+      - name: Commit & push generated learnings to private config repo (SSH)
+        working-directory: config
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "no changes to commit"
+          else
+            git commit -m "chore: research-quality-learning auto update ($(TZ=Asia/Tokyo date '+%Y-%m-%d %H:%M JST'))"
+            bash ../scripts/git-push-retry.sh git@github.com:yusuken10121990-hub/ai-ops-config.git main
+          fi
+# Note: no Slack/LINE-on-failure step here by design (owner rule: money-approval
+# notifications only). Failure visibility lives in the Actions run history /
+# dashboard "稼働状況" tab instead. This loop never runs paid research jobs and
+# never moves money; OPS_DASHBOARD_KEY here is read-only (GET /api/research-telemetry).

@@ -1,0 +1,112 @@
+name: video-quality-learning
+
+# 2026-08-01 新設。video-narration-learning（音声/日本語表現の日次学習）の姉妹ループ。
+# 映像側品質（リップシンク視覚同期・表情・視線・ジェスチャー・カメラワーク・演出・
+# テンポ・構図・モーション・演技・完成度）の日次学習を担当する video-quality-director
+# エージェント（.claude/agents/video-quality-director.md）の実行主体。
+#
+# video-narration-learningと同じ CRUDTEST1_DEPLOY_KEY（既に稼働実績あり、
+# gh secret list 2026-08-01時点で存在確認済み）を再利用する。ElevenLabs/Railway
+# には依存しない（新規動画生成・デプロイを日次ループから行わないため）。
+# JST 7:20 = UTC 22:20（前日）。video-narration-learning（JST 6:45）と時間帯をずらす。
+on:
+  schedule:
+    - cron: "20 22 * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: video-quality-learning
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      # GitHub Actions は `secrets` コンテキストをstep-level `if:` で読めないため
+      # （video-narration-learning.ymlと同じ既知の制約）、env経由で判定する。
+      HAS_CRUDTEST1_KEY: ${{ secrets.CRUDTEST1_DEPLOY_KEY != '' }}
+    steps:
+      - name: Checkout orchestrator (public, scripts only)
+        uses: actions/checkout@v7
+
+      - name: Setup SSH deploy keys (config + crudtest1)
+        env:
+          CONFIG_DEPLOY_KEY: ${{ secrets.CONFIG_DEPLOY_KEY }}
+          CRUDTEST1_DEPLOY_KEY: ${{ secrets.CRUDTEST1_DEPLOY_KEY }}
+        run: |
+          chmod +x scripts/setup-ssh-keys.sh
+          scripts/setup-ssh-keys.sh
+
+      - name: Checkout private config repo via deploy key (SSH)
+        run: |
+          git clone --depth 1 --branch main git@config-gh:yusuken10121990-hub/ai-ops-config.git config
+
+      - name: Checkout crudtest1 (video_factory) via deploy key (SSH)
+        if: ${{ env.HAS_CRUDTEST1_KEY == 'true' }}
+        run: |
+          git clone --depth 1 --branch main git@crudtest1-gh:yusuken10121990-hub/crudtest1.git crudtest1
+          echo "CRUDTEST1_DIR=$(pwd)/crudtest1" >> "$GITHUB_ENV"
+
+      - name: Skip notice (crudtest1 deploy key not available)
+        if: ${{ env.HAS_CRUDTEST1_KEY != 'true' }}
+        run: |
+          echo "CRUDTEST1_DEPLOY_KEY is not set -- skipping this run."
+          echo "Should not happen: video-narration-learning already relies on this same secret."
+
+      - name: Setup Python
+        if: ${{ env.HAS_CRUDTEST1_KEY == 'true' }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install video_factory deps
+        if: ${{ env.HAS_CRUDTEST1_KEY == 'true' }}
+        run: |
+          cd "${CRUDTEST1_DIR}/video_factory"
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+
+      - name: Run video-quality-learning
+        if: ${{ env.HAS_CRUDTEST1_KEY == 'true' }}
+        env:
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          chmod +x scripts/run-loop.sh
+          bash scripts/run-loop.sh video-quality-learning
+
+      - name: Commit & push generated learnings to private config repo (SSH)
+        if: ${{ env.HAS_CRUDTEST1_KEY == 'true' }}
+        working-directory: config
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "no changes to commit"
+          else
+            git commit -m "chore: video-quality-learning auto update ($(TZ=Asia/Tokyo date '+%Y-%m-%d %H:%M JST'))"
+            bash ../scripts/git-push-retry.sh git@config-gh:yusuken10121990-hub/ai-ops-config.git main
+          fi
+
+      - name: Sync crudtest1 changes back (prompt registry / config, no deploy)
+        if: ${{ env.HAS_CRUDTEST1_KEY == 'true' }}
+        working-directory: crudtest1
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A -- video_factory
+          if git diff --cached --quiet; then
+            echo "no changes to commit"
+          else
+            git commit -m "chore: video-quality-learning auto update ($(TZ=Asia/Tokyo date '+%Y-%m-%d %H:%M JST'))"
+            bash ../scripts/git-push-retry.sh git@crudtest1-gh:yusuken10121990-hub/crudtest1.git main
+          fi
+# Note: no LINE/Slack-on-failure step (failure/学習 notifications go to the dashboard only,
+# per CLAUDE.md 承認通知ルール). This loop never calls paid video-generation APIs (Kling等)
+# and never redeploys Railway -- it only researches trends, scores existing (already-rendered)
+# samples if any exist, and registers reversible prompt-registry challengers with zero traffic
+# share (review/traffic-assignment stays a separate human-gated task).

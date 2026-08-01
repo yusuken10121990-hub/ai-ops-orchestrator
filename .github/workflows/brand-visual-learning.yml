@@ -8,11 +8,14 @@ name: brand-visual-learning
 # minimal "config-only" template already proven by team-learning-loop.yml /
 # research-team-learning.yml / owner-todo-autoresolver.yml.
 #
-# JST 8:05 = UTC 23:05 (previous day). Offset a few minutes from
-# sns-posting-api's UTC 23:00 trigger to avoid runner contention.
+# 2026-08-02 quota-lightening: moved from JST 8:05 -- that slot sits inside
+# the JST 5-10am pileup of learning/judgment workflows, which keeps landing
+# inside the same rolling 5h Claude usage window as daytime interactive use
+# (decisions.md 2026-08-02 api-quota-watcher entry). Daily cadence unchanged.
+# JST 5:00 = UTC 20:00 (previous day).
 on:
   schedule:
-    - cron: "5 23 * * *"
+    - cron: "0 20 * * *"
   workflow_dispatch: {}
 
 permissions:
@@ -54,6 +57,8 @@ jobs:
         env:
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          # 2026-08-02 quota-lightening: 純粋なWeb調査→learnings追記ループのため軽量モデルへ。
+          CLAUDE_MODEL: claude-haiku-4-5-20251001
         run: |
           chmod +x scripts/run-loop.sh
           bash scripts/run-loop.sh brand-visual-learning

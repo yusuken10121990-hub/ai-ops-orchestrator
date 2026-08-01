@@ -49,6 +49,9 @@ jobs:
         env:
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          # 2026-08-02 quota-lightening: 全エージェントの持ち回り学習(Web調査→learnings追記)
+          # のため軽量モデルへ。
+          CLAUDE_MODEL: claude-haiku-4-5-20251001
         run: |
           chmod +x scripts/run-loop.sh
           bash scripts/run-loop.sh team-learning-loop

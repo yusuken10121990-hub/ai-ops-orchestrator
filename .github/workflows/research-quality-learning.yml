@@ -4,10 +4,12 @@ name: research-quality-learning
 # ゼロシスリサーチ(research.zerosys.jp)の匿名化実行テレメトリ集計API
 # (/api/research-telemetry)を読み、learnings/research/pipeline-quality.mdへ
 # 実測ベースで追記する。新規リサーチ実行(課金)は一切行わない・金銭ゼロ・通知なし。
-# 週次・日曜22:00 UTC (JST日曜7:00頃)。
+# 週次。2026-08-02 quota-lightening: JST日曜7:00頃はJST 5〜10時台の集中帯に含まれるため、
+# 比較的空いているJST月曜5:30へ移動(頻度=週次は変更なし)。
+# JST 月5:30 = UTC 日20:30。
 on:
   schedule:
-    - cron: "0 22 * * 0"
+    - cron: "30 20 * * 0"
   workflow_dispatch: {}
 
 permissions:
@@ -50,6 +52,9 @@ jobs:
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           OPS_DASHBOARD_KEY: ${{ secrets.OPS_DASHBOARD_KEY }}
+          # 2026-08-02 quota-lightening: 匿名化テレメトリの週次集計→learnings追記のみ
+          # (新規リサーチ実行は絶対に行わない禁止事項付きループ)のため軽量モデルへ。
+          CLAUDE_MODEL: claude-haiku-4-5-20251001
         run: |
           chmod +x scripts/run-loop.sh
           bash scripts/run-loop.sh research-quality-learning

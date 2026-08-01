@@ -1,10 +1,13 @@
 name: research-team-learning
 
-# P2: 24h無人運用の横展開。企業リサーチパイプライン11体の日次学習(毎朝5:30 JST・並列)。
-# JST 5:30 = UTC 20:30 (前日)
+# P2: 24h無人運用の横展開。企業リサーチパイプライン11体の日次学習(並列)。
+# 2026-08-02 quota-lightening: 元は毎朝5:30 JSTだったが、JST 5〜10時台に学習/判断系
+# ワークフローが集中し週次利用上限の5時間ローリング枠に張り付きやすいため、比較的空いている
+# 深夜帯(JST 2時台)へ移動。頻度(毎日)は変更なし。learning-enforcer(JST 2:00相当)から20分後。
+# JST 2:20 = UTC 17:20 (前日)
 on:
   schedule:
-    - cron: "30 20 * * *"
+    - cron: "20 17 * * *"
   workflow_dispatch: {}
 
 permissions:
@@ -46,6 +49,8 @@ jobs:
         env:
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          # 2026-08-02 quota-lightening: 11体並列の日次学習(Web調査→learnings追記)のため軽量モデルへ。
+          CLAUDE_MODEL: claude-haiku-4-5-20251001
         run: |
           chmod +x scripts/run-loop.sh
           bash scripts/run-loop.sh research-team-learning

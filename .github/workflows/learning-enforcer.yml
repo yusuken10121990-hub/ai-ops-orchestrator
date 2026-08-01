@@ -120,6 +120,9 @@ jobs:
         env:
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          # 2026-08-02 quota-lightening: stale化した各エージェントへの委任は「Web調査→
+          # learnings追記」の学習キャッチアップのみ(判断・実行系ではない)なので軽量モデルへ。
+          CLAUDE_MODEL: claude-haiku-4-5-20251001
         run: |
           set -euo pipefail
           BATCH_LIST="$(node -e 'console.log(JSON.parse(require("fs").readFileSync("stale-batch.json","utf8")).join(", "))')"

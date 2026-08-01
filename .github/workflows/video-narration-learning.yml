@@ -13,10 +13,14 @@ name: video-narration-learning
 # the run step exits early with a clear message instead of failing the whole
 # workflow -- this file is ready to go live the moment the owner runs the
 # 3 `gh secret set` commands in the owner-todo.
-# JST 6:45 = UTC 21:45 (previous day).
+# 2026-08-02 quota-lightening: moved from JST 6:45 to JST 3:00 -- the JST
+# 5-10am band is packed with both learning and judgment-系 workflows and
+# keeps landing inside the same rolling 5h Claude usage window (see
+# decisions.md 2026-08-02 api-quota-watcher entry). Daily cadence unchanged.
+# JST 3:00 = UTC 18:00 (previous day).
 on:
   schedule:
-    - cron: "45 21 * * *"
+    - cron: "0 18 * * *"
   workflow_dispatch: {}
 
 permissions:
@@ -85,6 +89,9 @@ jobs:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          # 2026-08-02 quota-lightening: 辞書/評価ハーネス育成の自己学習ループ(新規動画生成・
+          # 課金APIは行わない)のため軽量モデルへ。
+          CLAUDE_MODEL: claude-haiku-4-5-20251001
         run: |
           chmod +x scripts/run-loop.sh
           bash scripts/run-loop.sh video-narration-learning

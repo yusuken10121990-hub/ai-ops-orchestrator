@@ -8,10 +8,14 @@ name: video-quality-learning
 # video-narration-learningと同じ CRUDTEST1_DEPLOY_KEY（既に稼働実績あり、
 # gh secret list 2026-08-01時点で存在確認済み）を再利用する。ElevenLabs/Railway
 # には依存しない（新規動画生成・デプロイを日次ループから行わないため）。
-# JST 7:20 = UTC 22:20（前日）。video-narration-learning（JST 6:45）と時間帯をずらす。
+# 2026-08-02 quota-lightening: JST 7:20はJST 5〜10時台の学習/判断系ワークフロー
+# 集中帯に含まれ週次利用上限のローリング5時間枠に張り付きやすいため、比較的空いている
+# JST 4時台へ移動。video-narration-learning（同日JST 3:00移動済み）と1時間25分ずらす。
+# 頻度(毎日)は変更なし。
+# JST 4:25 = UTC 19:25（前日）。
 on:
   schedule:
-    - cron: "20 22 * * *"
+    - cron: "25 19 * * *"
   workflow_dispatch: {}
 
 permissions:
@@ -74,6 +78,9 @@ jobs:
         env:
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          # 2026-08-02 quota-lightening: 映像品質の自己学習ループ(トレンド調査→learnings追記が
+          # 主、新規動画生成/実課金APIは行わない)のため軽量モデルへ。
+          CLAUDE_MODEL: claude-haiku-4-5-20251001
         run: |
           chmod +x scripts/run-loop.sh
           bash scripts/run-loop.sh video-quality-learning

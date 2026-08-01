@@ -57,6 +57,11 @@ jobs:
         env:
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          # 2026-08-02 quota-lightening: 週次利用上限逼迫(quota-status.json)対応。
+          # 学習系ループ(分析→learnings追記が主、実際のLP/広告への可逆反映は別ワークフロー
+          # ad-lp-apply-daily側の判断)なので軽量モデルへ。判断系(ad-lp-apply-daily等)は
+          # 据え置き。run-loop.shは既にCLAUDE_MODEL環境変数を`--model`にそのまま渡す実装。
+          CLAUDE_MODEL: claude-haiku-4-5-20251001
         run: |
           chmod +x scripts/run-loop.sh
           bash scripts/run-loop.sh ad-lp-daily-learning

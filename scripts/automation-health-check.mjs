@@ -47,6 +47,19 @@ const NEVER_FIRED_GRACE_MINUTES = 24 * 60; // 新規タスクが一度も発火�
 // 監視対象の中でも「止まると業務影響が大きい」ものだけP1候補にする(GitHub Issue起票対象)。
 // ハードコードだが、この一覧自体は「重大度の定義」であり監視対象一覧そのものはheartbeat.json/
 // ワークフロー一覧から動的に読むため、ダッシュボード完全性ルール(台帳からの動的生成)には抵触しない。
+//
+// 2026-08-05ポストモーテム修正: 'qa-daily'は元々ローカルscheduled-taskとしてここ
+// (CRITICAL_LOCAL_TASK_IDS)にcriticalマークされていたが、2026-07-23にGitHub Actions
+// クラウドworkflow(.github/workflows/qa-daily.yml)へ移行された際、移行先の
+// CRITICAL_CLOUD_WORKFLOW_FILESへcriticalマークが引き継がれなかった。結果、
+// qa-daily(cloud)はheartbeatに現れずisSupersededByCloud判定で単なる「移設済み」
+// 扱いとなり、8/4-8/5にClaude週次上限で2日連続failureしてもGitHub Issue起票(この
+// 監視ループにおける唯一の能動的通知チャネル)が一度も発火しなかった(ダッシュボード上
+// には☁️qa-daily failedとして表示はされていたが、59件中16警告に埋もれ、オーナーが
+// 本番502で先に気づくまで誰も見なかった)。同じ「ローカル→クラウド移行でcritical
+// マークが失われる」構造的リスクはservice-assurance-daily(決済突合)にも該当するため
+// 合わせてクラウド側へ移す。move先を追加するだけで、ローカル側のIDは「万一クラウドから
+// ローカルへ戻された場合の保険」として残す(isSupersededByCloudが二重発報を防ぐ)。
 const CRITICAL_LOCAL_TASK_IDS = new Set([
   'owner-todo-dashboard-sync', // これが止まるとハートビート自体が止まる(全監視の生命線)
   'qa-daily',
@@ -55,6 +68,7 @@ const CRITICAL_LOCAL_TASK_IDS = new Set([
 ]);
 const CRITICAL_CLOUD_WORKFLOW_FILES = new Set([
   'dashboard-sync', 'system-health-cloud', 'automation-health-cloud', 'backup-daily',
+  'qa-daily', 'service-assurance-daily',
 ]);
 
 function nowMs() { return Date.now(); }
@@ -361,6 +375,7 @@ async function main() {
     cloudWorkflows,
     knownLimitations: [
       "status='never-fired'/'new-pending-first-run'はlastRunAt欠落による判定で、既知の表示不整合(nextRunAtは前進するがlastRunAtが記録されないバグ、qa-daily SKILL.md 3.8/3.86参照)により誤検知しうる。確度が高いのはstatus='stalled'(実際に記録されたlastRunAtが閾値超過)のみ。",
+      "cloudWorkflowsのstatus='failed'は『直近1回の実行結果』のみで原因(Claude週次上限到達か、コード側バグか)までは区別しない。原因切り分けは `gh run view <id> --log-failed` を人間/エージェントが実施する。qa-daily失敗時のAPI層フォールバックはsystems.jsonのapiProbes(health-check.mjs、system-health-cloud.yml、LLM不使用・30分毎)が独立に担保する(2026-08-05追加)。",
     ],
     summary: {
       localTaskCount: localTasks.length,

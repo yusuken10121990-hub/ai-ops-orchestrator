@@ -1,0 +1,60 @@
+name: rivet-weekly-improvement
+
+# 2026-08-05 新設: Rivet学習システム（オーナー発注・要件=crudtest1/autobuild/docs/rivet-learning/）。
+# ai-ops-config の scheduled-tasks/rivet-weekly-improvement/SKILL.md を run-loop.sh で実行し、
+# 成果（rivet-knowledge/proposals・reports・learnings）を config リポジトリへ commit する。
+# 金銭が動くAPI・デプロイ・通知は行わない（SKILL側で禁止・軽量モデル）。
+# schedule: JST Mon 2:35 (Sun UTC) = UTC "35 17 * * 0"（JST 5-10時の混雑帯を回避）。
+on:
+  schedule:
+    - cron: "35 17 * * 0"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rivet-weekly-improvement
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout orchestrator (public, scripts only)
+        uses: actions/checkout@v7
+
+      - name: Setup SSH deploy key (config)
+        env:
+          CONFIG_DEPLOY_KEY: ${{ secrets.CONFIG_DEPLOY_KEY }}
+        run: |
+          chmod +x scripts/setup-ssh-keys.sh
+          scripts/setup-ssh-keys.sh
+
+      - name: Checkout private config repo via deploy key (SSH)
+        run: |
+          git clone --depth 1 --branch main git@config-gh:yusuken10121990-hub/ai-ops-config.git config
+
+      - name: Run rivet-weekly-improvement
+        env:
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          CLAUDE_MODEL: claude-haiku-4-5-20251001
+        run: |
+          chmod +x scripts/run-loop.sh
+          bash scripts/run-loop.sh rivet-weekly-improvement
+
+      - name: Commit & push results to private config repo (SSH)
+        working-directory: config
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "no changes to commit"
+          else
+            git commit -m "chore: rivet-weekly-improvement auto update ($(TZ=Asia/Tokyo date '+%Y-%m-%d %H:%M JST'))"
+            bash ../scripts/git-push-retry.sh git@config-gh:yusuken10121990-hub/ai-ops-config.git main
+          fi
+# Note: no Slack/LINE/failure notifications (dashboard only, per CLAUDE.md rules).

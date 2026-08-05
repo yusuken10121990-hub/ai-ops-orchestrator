@@ -122,6 +122,59 @@ async function httpCheckWithRetry(url, marker) {
   return result;
 }
 
+// 2026-08-05 追加(ポストモーテム対応): APIレベルの無害プローブ。
+// 背景: research.zerosys.jpのトップページは静的200のまま、認証必須API群だけが
+// 5xx(Supabase SDK初期化クラッシュ)で全滅する障害が発生し、トップページの
+// 死活+markerしか見ない本チェックでは検知できなかった。さらに検知するはずの
+// qa-daily(Claude駆動)がAPI週上限で2日連続失敗しており、オーナーが最初の
+// 発見者になった。恒久対策として、LLM不要のこのスクリプトに「期待ステータス
+// コードを返すか」だけを見る軽量プローブを追加する(課金・書き込み・実行系の
+// 副作用は一切なし。ダミー認証ヘッダで認証コードパスを通し、401/400が返れば
+// 正常、5xx/timeoutならng)。
+// systems.jsonのエントリに任意フィールド apiProbes:[{path,method,headers,
+// contentType,body,expect:[...]}] を書くと自動で実行される(台帳駆動)。
+async function apiProbeOnce(sys, probe) {
+  let url;
+  try {
+    url = new URL(probe.path, sys.url).href;
+  } catch {
+    return { ok: false, http: null, error: 'bad-probe-path' };
+  }
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+  try {
+    const headers = { ...(probe.headers || {}) };
+    if (probe.contentType) headers['content-type'] = probe.contentType;
+    const res = await fetch(url, {
+      method: probe.method || 'GET',
+      headers,
+      body: probe.body ?? undefined,
+      signal: controller.signal,
+      redirect: 'follow',
+    });
+    const expect = Array.isArray(probe.expect) && probe.expect.length ? probe.expect : [200];
+    return { ok: expect.includes(res.status), http: res.status };
+  } catch (e) {
+    return { ok: false, http: null, error: e.message };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function runApiProbes(sys) {
+  const results = [];
+  for (const probe of sys.apiProbes) {
+    let r = await apiProbeOnce(sys, probe);
+    if (!r.ok) {
+      // 本体チェックと同じ誤検知対策: 20-30秒空けて2回目も失敗した場合のみng
+      await new Promise((res) => setTimeout(res, retryWaitMs()));
+      r = await apiProbeOnce(sys, probe);
+    }
+    results.push({ path: probe.path, method: probe.method || 'GET', http: r.http, ok: r.ok, ...(r.error ? { error: r.error } : {}) });
+  }
+  return results;
+}
+
 function extractGhRepoSlug(sys) {
   const note = sys._deploy_note || '';
   const m = note.match(/GitHub:\s*([\w.-]+\/[\w.-]+)/);
@@ -263,6 +316,18 @@ async function main() {
       if (result.error) entry.error = result.error;
       if (sys.marker && result.http != null && result.http >= 200 && result.http < 300 && !result.markerOk) {
         entry.reason = 'marker-missing';
+      }
+    }
+
+    // 2026-08-05: APIレベル無害プローブ(台帳のapiProbes駆動)。トップ200でも
+    // API層だけ5xxで死んでいる障害を検知する(Supabase初期化クラッシュ事故対応)。
+    if (Array.isArray(sys.apiProbes) && sys.apiProbes.length > 0) {
+      const probeResults = await runApiProbes(sys);
+      entry.api_probes = probeResults;
+      const failed = probeResults.filter((p) => !p.ok);
+      if (failed.length > 0 && entry.status !== 'ng') {
+        entry.status = 'ng';
+        entry.reason = `api-probe-failed(${failed.map((p) => `${p.method} ${p.path}→${p.http ?? p.error}`).join(', ')})`;
       }
     }
 

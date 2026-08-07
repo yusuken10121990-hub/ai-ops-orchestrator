@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-08-07T10:34:41.165Z",
+  "generated_at": "2026-08-07T11:30:45.425Z",
   "note": "systems.json(非公開)のうちstatus:liveの監視に必要な安全なフィールドのみを公開したサブセット。哨戒B(Netlify Scheduled Function)が認証なしで参照する。",
   "systems": [
     {
@@ -190,6 +190,16 @@
       "healthPath": "/login",
       "marker": "Rivet",
       "deploy": "railway-up",
+      "status": "live"
+    },
+    {
+      "id": "fundops-demo",
+      "name": "FundOps (ファンド運営・AI審査・顧客管理システム デモ)",
+      "url": "https://fundops-demo.netlify.app",
+      "kind": "site",
+      "healthPath": "/",
+      "marker": "FundOps",
+      "deploy": "netlify deploy --prod --dir C:/Users/user/fund-ops-demo",
       "status": "live"
     }
   ]

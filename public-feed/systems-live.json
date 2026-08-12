@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-08-12T22:24:23.478Z",
+  "generated_at": "2026-08-12T23:22:32.534Z",
   "note": "systems.json(非公開)のうちstatus:liveの監視に必要な安全なフィールドのみを公開したサブセット。哨戒B(Netlify Scheduled Function)が認証なしで参照する。",
   "systems": [
     {

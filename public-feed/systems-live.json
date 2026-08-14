@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-08-14T12:28:24.171Z",
+  "generated_at": "2026-08-14T14:04:22.390Z",
   "note": "systems.json(非公開)のうちstatus:liveの監視に必要な安全なフィールドのみを公開したサブセット。哨戒B(Netlify Scheduled Function)が認証なしで参照する。",
   "systems": [
     {
@@ -189,7 +189,17 @@
       "kind": "site",
       "healthPath": "/login",
       "marker": "Rivet",
-      "deploy": "railway-up",
+      "deploy": "railway-up（2026-08-14よりworktree直上での`railway up`はCLIハング不具合を確認・恒久策として`git archive HEAD`でクリーンな一時ステージングへ展開しそこから`railway up --service autobuild --detach --json`する方式に変更。手順はdecisions.md 2026-08-14「デプロイ実務メモ」参照）",
+      "status": "live"
+    },
+    {
+      "id": "rivet-l1-verify-app",
+      "name": "Rivet 大型開発L1検証アプリ（dev_dataパイプライン疎通確認用）",
+      "url": "https://l1-8847775af37b0c68b460de49d191c654.app.rivetai.jp",
+      "kind": "site",
+      "healthPath": "/rt/v1/meta",
+      "marker": "",
+      "deploy": "N/A（POST /api/requests kind=dev_data経由でプロビジョニングされる生成アプリ。手動デプロイ対象ではない）",
       "status": "live"
     },
     {

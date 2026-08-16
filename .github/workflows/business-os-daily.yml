@@ -6,7 +6,7 @@ name: business-os-daily
 # 登録されていなかった。つまりPCを落とすとAI CEOが止まり、Task生成・Agent起動・
 # Experiment・Analyst・Knowledge更新・Daily Reportが1件も発生しなかった。
 # ここがそのPC依存を外すためのworkflow。以後 Canonical Scheduler はクラウド1つで、
-# ローカル側の定期登録は停止してある（二重実行はrun-guardのロックでも検知する）。
+# ローカル側の定期登録は停止してある（二重実行は run-guard のロックでも検知する）。
 #
 # JST 09:12 = UTC 00:12（従来のローカル実行時刻をそのまま移設）
 on:
@@ -60,7 +60,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v7
         with:
-          node-version: "20"
+          node-version: "22"
 
       - name: "Install deps (google-ads / meta-ads: STEP1のデータ収集が参照する)"
         run: |
@@ -70,13 +70,29 @@ jobs:
             fi
           done
 
-      # Business OS の Canonical Entry Point を、まずコードとして決定的に走らせる。
-      # LLMセッション側が何をしても、25STEPの判断は必ず1回行われることを保証する。
-      # 失敗しても後続のAgent起動へは進める（continue-on-error）。判定は最後にまとめて行う。
-      - name: Run Business OS cycle (canonical entry point, deterministic)
-        id: cycle
+      - name: Record the cycle id we start from (for the freshness check below)
+        id: before
+        run: |
+          cd config
+          echo "cycle_id=$(node -e "try{console.log(require('./memory/business-os/last-run.json').cycle_id)}catch(e){console.log('none')}")" >> "$GITHUB_OUTPUT"
+
+      # ここがPC依存を外す本体。headless Claude Code が SKILL.md を実行する。
+      # SKILL.md の STEP1 が Canonical Entry Point（run-business-os.mjs）を叩き、
+      # STEP2-3 で READY になった Task の専門Agentを実際に起動して結果を書き戻す。
+      # Alert配信も SKILL.md 内で cloud-alert.mjs（GitHub Issue）へ分岐する。
+      #
+      # GA4のAPI資格情報は未取得（オーナー作業）。取れない段はUNKNOWNのままで
+      # measurement_health=DEGRADED として扱われ、Cycle自体は止まらない。
+      - name: Run business-os-daily SKILL (cycle + agent execution + alert)
+        id: skill
         continue-on-error: true
         env:
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GATE_URL: ${{ secrets.GATE_URL }}
+          GATE_AGENT_KEY: ${{ secrets.GATE_AGENT_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ALERT_REPO: ${{ github.repository }}
           GOOGLE_ADS_DEVELOPER_TOKEN: ${{ secrets.GOOGLE_ADS_DEVELOPER_TOKEN }}
           GOOGLE_ADS_CLIENT_ID: ${{ secrets.GOOGLE_ADS_CLIENT_ID }}
           GOOGLE_ADS_CLIENT_SECRET: ${{ secrets.GOOGLE_ADS_CLIENT_SECRET }}
@@ -89,30 +105,31 @@ jobs:
           META_AD_ACCOUNT_ID: ${{ secrets.META_AD_ACCOUNT_ID }}
           META_API_VERSION: ${{ secrets.META_API_VERSION }}
         run: |
-          set -o pipefail
-          cd config
-          # GA4のAPI資格情報は未取得（オーナー作業）。取れない段はUNKNOWNのまま
-          # measurement_health=DEGRADED として扱われ、Cycle自体は止まらない。
-          node scripts/run-business-os.mjs 2>&1 | tee ../cycle.log
-          echo "cycle_id=$(node -e "console.log(require('./memory/business-os/last-run.json').cycle_id)")" >> "$GITHUB_OUTPUT"
-
-      # ここがPC依存を外す本体。headless Claude Code が SKILL.md を実行し、
-      # READY になった Task の専門Agentを実際に起動して結果を書き戻す。
-      # Alert配信も SKILL.md 内で cloud-alert.mjs（GitHub Issue）へ分岐する。
-      - name: Run business-os-daily SKILL (agent execution / alert delivery)
-        id: skill
-        continue-on-error: true
-        env:
-          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          GATE_URL: ${{ secrets.GATE_URL }}
-          GATE_AGENT_KEY: ${{ secrets.GATE_AGENT_KEY }}
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          ALERT_REPO: ${{ github.repository }}
-          BOS_RUNNER: cloud
-        run: |
           chmod +x scripts/run-loop.sh
           bash scripts/run-loop.sh business-os-daily
+
+      # SKILL.md が STEP1 で必ずCycleを回すので、通常ここは何もしない。
+      # 二重に回すとCycleが2本立ち、dedupが片方を丸ごとCANCELLEDにして無駄になる
+      # （初回のクラウド実行で実際に _16 と _17 の2本が立った）。
+      # ここは「SKILLが落ちてCycleが1本も回らなかった」場合の保険。
+      - name: Ensure a cycle actually ran (fallback only)
+        id: cycle
+        if: always()
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          cd config
+          NOW="$(node -e "try{console.log(require('./memory/business-os/last-run.json').cycle_id)}catch(e){console.log('none')}")"
+          if [ "$NOW" != "${{ steps.before.outputs.cycle_id }}" ]; then
+            echo "SKILLがCycleを回した: $NOW"
+            echo "cycle_id=$NOW" >> "$GITHUB_OUTPUT"
+            echo "fallback_used=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "Cycleが1本も回っていない。保険としてCanonical Entry Pointを直接実行する" >&2
+          node scripts/run-business-os.mjs 2>&1 | tee ../cycle.log
+          echo "cycle_id=$(node -e "console.log(require('./memory/business-os/last-run.json').cycle_id)")" >> "$GITHUB_OUTPUT"
+          echo "fallback_used=true" >> "$GITHUB_OUTPUT"
 
       # SKILLが落ちてもAlertだけは必ず出す（PC OFF中はここが唯一の通報経路）
       - name: Deliver pending alerts (fallback)
@@ -146,15 +163,18 @@ jobs:
 
       # 失敗を黙って埋もれさせない。PC OFF中は誰も気づけないのでIssueで通報する。
       - name: Report failure as Issue
-        if: steps.cycle.outcome == 'failure' || steps.skill.outcome == 'failure'
+        if: always() && (steps.cycle.outcome == 'failure' || steps.skill.outcome == 'failure')
+        continue-on-error: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           ALERT_REPO: ${{ github.repository }}
         run: |
           cd config
-          node scripts/cloud-alert.mjs --fail "cycle=${{ steps.cycle.outcome }} / skill=${{ steps.skill.outcome }}。$(tail -c 1500 ../cycle.log 2>/dev/null || echo 'ログなし')"
+          node scripts/cloud-alert.mjs --fail "skill=${{ steps.skill.outcome }} / cycle=${{ steps.cycle.outcome }} / fallback=${{ steps.cycle.outputs.fallback_used }}。$(tail -c 1500 ../cycle.log 2>/dev/null || echo 'ログなし')"
 
-      - name: Fail the job if the cycle itself failed
+      # Cycleが1本も回らなかった場合だけジョブを失敗にする。
+      # Agent起動が0件（今日は着手できるTaskが無い）は正常であって失敗ではない。
+      - name: Fail the job if no cycle ran at all
         if: steps.cycle.outcome == 'failure'
         run: |
           echo "Business OS cycle failed - see the Issue created above" >&2

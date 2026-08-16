@@ -77,6 +77,19 @@ jobs:
         run: |
           git clone --branch main git@config-gh:yusuken10121990-hub/ai-ops-config.git config
 
+      # 2026-08-16 診断: 「登録したのにジョブから見えない」を切り分ける。
+      # 出すのは **名前だけ**。値は一切出力しない（jq で keys のみ抽出）。
+      # Environment secrets / Variables タブ / 別名登録 のどれなのかがこれで判る。
+      - name: Diagnose available secret and variable NAMES (never values)
+        env:
+          SECRETS_JSON: ${{ toJSON(secrets) }}
+          VARS_JSON: ${{ toJSON(vars) }}
+        run: |
+          echo "--- secret names visible to this job ---"
+          printf '%s' "$SECRETS_JSON" | jq -r 'keys[]' | sed 's/^/  secret: /'
+          echo "--- variable names visible to this job ---"
+          printf '%s' "$VARS_JSON" | jq -r 'keys[]' | sed 's/^/  var: /'
+
       - name: Check for propagation token
         id: token_check
         env:

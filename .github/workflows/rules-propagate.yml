@@ -84,7 +84,19 @@ jobs:
         run: |
           if [ -z "$RULES_PROPAGATE_TOKEN" ]; then
             echo "has_token=false" >> "$GITHUB_OUTPUT"
-            echo "::warning::RULES_PROPAGATE_TOKEN not set - skipping propagation (see owner-todos.md: rules-propagate-token-provision)"
+            # 2026-08-16: 以前は warning + green で終わっていたため、3回実行して3回とも
+            # 「success なのに1件も配布していない」状態を success と誤読した。
+            # 配布できていないことは黙って成功にしない（§39 Rule Violation / §37 コード強制）。
+            # 手動実行(workflow_dispatch)は「今すぐ配りたい」意思表示なので失敗させる。
+            # 定期実行(schedule)は既存運用を壊さないため警告に留める。
+            echo "::error::RULES_PROPAGATE_TOKEN not set - 配布は1件も行われていない。" \
+              "ai-ops-orchestrator の Settings > Secrets and variables > Actions >" \
+              "Repository secrets に RULES_PROPAGATE_TOKEN を登録すること" \
+              "(Environment secrets ではジョブから参照できない)。" \
+              "owner-todos.md: rules-propagate-token-provision"
+            if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+              exit 1
+            fi
           else
             echo "has_token=true" >> "$GITHUB_OUTPUT"
           fi
@@ -105,6 +117,10 @@ jobs:
           GH_TOKEN: ${{ secrets.RULES_PROPAGATE_TOKEN }}
         run: |
           cd config
+          # 2026-08-16: 正典へGovernance節を追記した際にテンプレートリテラルの backtick を
+          # エスケープし忘れ、propagate-rules.mjs が SyntaxError でパース不能になっていた。
+          # 構文が壊れた状態で配布ジョブに入らないよう、実行前に必ず落とす。
+          node --check scripts/propagate-rules.mjs
           node scripts/propagate-rules.mjs
 
       - name: Commit + push updated propagate state back to ai-ops-config

@@ -7,6 +7,71 @@
 PC・クラウド(スマホ含む)どちらの環境から編集してもOKです。次回の自動同期(毎日)で全リポジトリに
 反映されます。即時反映したい場合は `gh workflow run rules-propagate.yml -R yusuken10121990-hub/ai-ops-orchestrator`。
 
+## セッション開始時にまずこれ（Session Handoff・GOVERNANCE §55 / SHARED_RULES 36章）
+**このセッションで最初のTaskに着手する前に1回だけ実行する。** 人間に「クラウドの正典を読んで」
+「前回の状態を引き継いで」と毎回言わせないための導線。出力は数行なので会話を埋めない。
+
+```
+node <ai-ops-configのルート>/scripts/session-handoff.mjs
+# オーナーPC: node C:\Users\user\.claude\scripts\session-handoff.mjs
+```
+
+Cloud Canonical Source から12項目（Global Governance / RULES-INDEX / SHARED_RULES / Current Phase /
+Business Goal / Latest Business State / Latest Cycle / Active・Ready・Blocked Tasks /
+Latest Decisions / Relevant Knowledge / Human Action Required / Agent Registry）を読み込み、
+`governance_version` `cloud_commit` `latest_cycle_id` `loaded_at` を記録する。
+
+- **Cloud優先。** 正典は `git show origin/<branch>:<path>` で読み、**working treeに触らない**
+  （checkout / merge / reset をしない＝未コミットのローカル変更を消さない・黙ってマージしない）。
+- **Cloud未確認は `STALE` / 競合は `CONFLICT` / 読込失敗は `HANDOFF_FAILED` を必ず明示する。**
+  取得に失敗した古い状態を「最新」として扱わない。CONFLICTは自動解決せず人間へEscalateする。
+- 強制はコード側: `governance.mjs preflight()` の `HANDOFF_CURRENT`。
+  Canonical Stateを読めていない/競合したままTaskを開始できない（`RULE_CONFLICT`で停止）。
+- **既存セッション・長時間開いたままのセッションも、重要Task開始前に再確認する。**
+  過去セッションのContextだけで判断を継続しない。
+- Handoffは**状態同期のみ**。Production変更・外部API操作・金銭操作・Deployを行わない。
+- この環境に `ai-ops-config` が無ければ clone してから実行する。それも不可能なら
+  **「引き継げた」と言わずに `HANDOFF_FAILED` として報告する**（推測で状態を語らない）。
+
+## 最上位: Global Governance
+- **正典は1か所** `ai-ops-config/memory/governance/GOVERNANCE.md`（機械可読版 `governance/governance.json`・**現行 v1.1.0**）。
+  版とhashは `governance.mjs --verify` が照合し、不一致なら重要判断を進めてはならない。
+  新規セッション・既存セッション再開・Scheduler・Cron・GitHub Actions・Sub-Agent・Event Handler、
+  **どこから処理が始まっても同じ最上位原則・Risk Policy・SSoT・Knowledge・Business Goalに従う。**
+  このブロックを含む下位ルールが正典と矛盾する場合は**正典が優先**する。
+- 優先順位: オーナーの発言 > Global Governance > Business OS v3 > SHARED_RULES > Domain仕様 >
+  Gate O > Repository CLAUDE.md > Agent Prompt > SKILL。矛盾を黙って解釈せず、
+  解決できなければ `RULE_CONFLICT` として人間へEscalateする。
+- 重要ルールはPromptではなく**コードで強制**されている（`scripts/governance.mjs`）:
+  金銭は承認ゲートを迂回できない／本番Deployは deploy-guard を通す／計測BROKEN時は最適化を開始しない／
+  UNKNOWNを0や推測で埋めると DATA_INVALID／全AgentのGovernance束縛は registry --check が強制。
+
+## 【最上位に次ぐ】Core確定・開発フェーズ終了 / Architecture固定（SHARED_RULES 35章）
+**2026-08-16をもって AI Business OS の Core Architecture を確定し、開発フェーズを終了した。以後この構造を勝手に変更しない。**
+
+- **Canonical Entry Point は `scripts/run-business-os.mjs`（25STEP）。新しい入口を別に作らない。**
+- **Core Architecture**: Business Orchestrator/AI CEO → Domain・Capability Routing → Specialist Agent
+  → Execution/Experiment → Measurement → Analyst → Knowledge → Business Orchestrator
+- **Core Loop**: BUSINESS GOAL → OBSERVE → DIAGNOSE → BOTTLENECK/OPPORTUNITY → ROOT CAUSE →
+  RESEARCH IF NEEDED → KNOWLEDGE RETRIEVAL → HYPOTHESIS → PRIORITIZE → TASK GENERATION →
+  AGENT ROUTING → EXECUTION/EXPERIMENT → QA → RISK/APPROVAL → DEPLOY/APPLY → MEASURE →
+  ANALYZE → BUSINESS OUTCOME → KNOWLEDGE → NEXT DECISION
+- **Core完成の再検証は `node memory/business-os/domain-e2e.mjs`**（GROW/BUILD/REVENUE/DATAの4Domainを
+  通常Entry Pointの実起動で一周・72項目・冪等）。専用関数の直呼びテストは完成根拠にしない。
+- **禁止**: 新しい大規模Architecture変更の無断開始 / 完成度%を上げること自体の目的化 /
+  Agent数を成果にすること /「不足を1個見つけて直して再監査」の反復。
+  必要と判断したらオーナーへ1行で提示して選ばせる。**新Agentは既存でCapabilityを満たせない場合のみ。**
+- **残作業は必ず4分類**（CORE BLOCKER / PRODUCTION VALIDATION / EXTERNAL BLOCKER / OPTIONAL ENHANCEMENT）。
+  OPTIONAL ENHANCEMENT は実装しない。実Lead・実受注が無いことを理由にCore未完成としない
+  （それは `PRODUCTION_VALIDATION_PENDING`）。
+- **IMPLEMENTED / SHADOW VERIFIED / CANARY VERIFIED / PRODUCTION VERIFIED を混ぜない。**
+  Mock PASSを本番完成と呼ばない。**Shadowでも Research/Agent実行/Strategy/Experiment設計/QA/Knowledge は
+  実際に動かす**（止めるのは外部への不可逆な変更だけ。「Shadowだから何もしない」は違反）。
+- **以後の問いは「次に何を作れるか」ではなく「今あるAI Business OSでBusiness Goalへどう近づくか」。**
+  運用 → 実データ蓄積 → Production Validation → Prediction Calibration → Business Outcome改善。
+- **定期実行はGitHub Actionsが正**（daily 09:12 / weekly 月 09:33 / monthly 1日 10:00 JST）。
+  ローカルの定期登録は禁止（二重書き込み）。cycle_id/task_idは件数+1でなく**既存の最大連番+1**。
+
 ## 最重要ルール（要約）
 - YESが必要なのは「お金が実際に動く操作」（広告費/入札変更・新規出稿・決済・新規有料契約）だけ。
   それ以外（分析・調査・可逆なコード変更・デプロイ・設定変更・ダッシュボード生成等）は確認せず自動で進める。

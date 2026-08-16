@@ -53,6 +53,17 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: node scripts/health-check.mjs | tee health-check.log
 
+      # Business OS が「静かに止まる」のを検知する（2026-08-16追加）。
+      # workflow失敗はIssueで気づけるが、一度も起動しなくなる場合はエラーが
+      # 1件も出ないままAI CEOだけが沈黙する。鮮度で見張るのはここだけ。
+      - name: Check Business OS freshness (silent-stop detector)
+        continue-on-error: true
+        env:
+          CONFIG_DIR: config
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ALERT_REPO: ${{ github.repository }}
+        run: node scripts/business-os-freshness.mjs
+
       - name: Night-time first-response (safe-remediate, whitelisted systems only)
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}

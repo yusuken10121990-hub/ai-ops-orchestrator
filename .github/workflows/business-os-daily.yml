@@ -1,0 +1,161 @@
+name: business-os-daily
+
+# AI Business OS の Canonical Daily Cycle。
+#
+# 2026-08-16まで、このループは「オーナーのPCのClaude Code内蔵Scheduler」にしか
+# 登録されていなかった。つまりPCを落とすとAI CEOが止まり、Task生成・Agent起動・
+# Experiment・Analyst・Knowledge更新・Daily Reportが1件も発生しなかった。
+# ここがそのPC依存を外すためのworkflow。以後 Canonical Scheduler はクラウド1つで、
+# ローカル側の定期登録は停止してある（二重実行はrun-guardのロックでも検知する）。
+#
+# JST 09:12 = UTC 00:12（従来のローカル実行時刻をそのまま移設）
+on:
+  schedule:
+    - cron: "12 0 * * *"
+  workflow_dispatch:
+    inputs:
+      reason:
+        description: "手動実行の理由（監査ログに残る）"
+        required: false
+        default: "manual"
+
+permissions:
+  contents: read
+  issues: write   # Alert / 実行失敗を Issue として起票する（cloud-alert.mjs）
+
+# 同じBusiness OSを同時に2本走らせない。前の実行が終わるまで待つ（キャンセルしない）。
+concurrency:
+  group: business-os
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      BOS_RUNNER: cloud
+    steps:
+      - name: Checkout orchestrator (public, scripts only)
+        uses: actions/checkout@v7
+
+      - name: Setup SSH deploy keys (config + ai-business-ops + sales-research-tool + meta-ads)
+        env:
+          CONFIG_DEPLOY_KEY: ${{ secrets.CONFIG_DEPLOY_KEY }}
+          AI_BUSINESS_OPS_DEPLOY_KEY: ${{ secrets.AI_BUSINESS_OPS_DEPLOY_KEY }}
+          SALES_RESEARCH_DEPLOY_KEY: ${{ secrets.SALES_RESEARCH_DEPLOY_KEY }}
+          META_ADS_DEPLOY_KEY: ${{ secrets.META_ADS_DEPLOY_KEY }}
+        run: |
+          chmod +x scripts/setup-ssh-keys.sh
+          scripts/setup-ssh-keys.sh
+
+      - name: Checkout private config repo via deploy key (SSH)
+        run: |
+          git clone --depth 1 --branch main git@config-gh:yusuken10121990-hub/ai-ops-config.git config
+
+      - name: Checkout ai-business (広告実測の台帳を読むため)
+        run: |
+          chmod +x scripts/checkout-ai-business.sh
+          scripts/checkout-ai-business.sh
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: "20"
+
+      - name: "Install deps (google-ads / meta-ads: STEP1のデータ収集が参照する)"
+        run: |
+          for d in google-ads meta-ads; do
+            if [ -f "${AI_BUSINESS_DIR}/$d/package.json" ]; then
+              (cd "${AI_BUSINESS_DIR}/$d" && (npm ci --no-audit --no-fund || npm install --no-audit --no-fund)) || true
+            fi
+          done
+
+      # Business OS の Canonical Entry Point を、まずコードとして決定的に走らせる。
+      # LLMセッション側が何をしても、25STEPの判断は必ず1回行われることを保証する。
+      # 失敗しても後続のAgent起動へは進める（continue-on-error）。判定は最後にまとめて行う。
+      - name: Run Business OS cycle (canonical entry point, deterministic)
+        id: cycle
+        continue-on-error: true
+        env:
+          GOOGLE_ADS_DEVELOPER_TOKEN: ${{ secrets.GOOGLE_ADS_DEVELOPER_TOKEN }}
+          GOOGLE_ADS_CLIENT_ID: ${{ secrets.GOOGLE_ADS_CLIENT_ID }}
+          GOOGLE_ADS_CLIENT_SECRET: ${{ secrets.GOOGLE_ADS_CLIENT_SECRET }}
+          GOOGLE_ADS_REFRESH_TOKEN: ${{ secrets.GOOGLE_ADS_REFRESH_TOKEN }}
+          GOOGLE_ADS_LOGIN_CUSTOMER_ID: ${{ secrets.GOOGLE_ADS_LOGIN_CUSTOMER_ID }}
+          GOOGLE_ADS_CUSTOMER_ID: ${{ secrets.GOOGLE_ADS_CUSTOMER_ID }}
+          META_APP_ID: ${{ secrets.META_APP_ID }}
+          META_APP_SECRET: ${{ secrets.META_APP_SECRET }}
+          META_SYSTEM_USER_TOKEN: ${{ secrets.META_SYSTEM_USER_TOKEN }}
+          META_AD_ACCOUNT_ID: ${{ secrets.META_AD_ACCOUNT_ID }}
+          META_API_VERSION: ${{ secrets.META_API_VERSION }}
+        run: |
+          set -o pipefail
+          cd config
+          # GA4のAPI資格情報は未取得（オーナー作業）。取れない段はUNKNOWNのまま
+          # measurement_health=DEGRADED として扱われ、Cycle自体は止まらない。
+          node scripts/run-business-os.mjs 2>&1 | tee ../cycle.log
+          echo "cycle_id=$(node -e "console.log(require('./memory/business-os/last-run.json').cycle_id)")" >> "$GITHUB_OUTPUT"
+
+      # ここがPC依存を外す本体。headless Claude Code が SKILL.md を実行し、
+      # READY になった Task の専門Agentを実際に起動して結果を書き戻す。
+      # Alert配信も SKILL.md 内で cloud-alert.mjs（GitHub Issue）へ分岐する。
+      - name: Run business-os-daily SKILL (agent execution / alert delivery)
+        id: skill
+        continue-on-error: true
+        env:
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GATE_URL: ${{ secrets.GATE_URL }}
+          GATE_AGENT_KEY: ${{ secrets.GATE_AGENT_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ALERT_REPO: ${{ github.repository }}
+          BOS_RUNNER: cloud
+        run: |
+          chmod +x scripts/run-loop.sh
+          bash scripts/run-loop.sh business-os-daily
+
+      # SKILLが落ちてもAlertだけは必ず出す（PC OFF中はここが唯一の通報経路）
+      - name: Deliver pending alerts (fallback)
+        if: always()
+        continue-on-error: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ALERT_REPO: ${{ github.repository }}
+        run: |
+          cd config && node scripts/cloud-alert.mjs
+
+      - name: Release run lock (どんな終わり方でも必ず返す)
+        if: always()
+        continue-on-error: true
+        run: |
+          cd config && node scripts/run-guard.mjs release --status "${{ job.status }}"
+
+      - name: Commit & push results to private config repo (SSH)
+        if: always()
+        working-directory: config
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "no changes to commit"
+          else
+            git commit -m "chore: business-os-daily cloud cycle ($(TZ=Asia/Tokyo date '+%Y-%m-%d %H:%M JST'))"
+            bash ../scripts/git-push-retry.sh git@config-gh:yusuken10121990-hub/ai-ops-config.git main
+          fi
+
+      # 失敗を黙って埋もれさせない。PC OFF中は誰も気づけないのでIssueで通報する。
+      - name: Report failure as Issue
+        if: steps.cycle.outcome == 'failure' || steps.skill.outcome == 'failure'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ALERT_REPO: ${{ github.repository }}
+        run: |
+          cd config
+          node scripts/cloud-alert.mjs --fail "cycle=${{ steps.cycle.outcome }} / skill=${{ steps.skill.outcome }}。$(tail -c 1500 ../cycle.log 2>/dev/null || echo 'ログなし')"
+
+      - name: Fail the job if the cycle itself failed
+        if: steps.cycle.outcome == 'failure'
+        run: |
+          echo "Business OS cycle failed - see the Issue created above" >&2
+          exit 1

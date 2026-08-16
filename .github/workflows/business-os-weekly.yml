@@ -1,0 +1,91 @@
+name: business-os-weekly
+
+# Weekly CEO Report をクラウドで生成し、config repo へ永続保存する。
+# 2026-08-16まではオーナーのPCのSchedulerにしか登録が無く、PCを落とすと
+# レポートが1本も出なかった。ここがそのPC依存を外すためのworkflow。
+#
+# 毎週月曜 09:33 JST（= UTC cron "33 0 * * 1"）
+on:
+  schedule:
+    - cron: "33 0 * * 1"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  issues: write
+
+# daily と同じロック空間。Cycleとレポート生成が同時に台帳へ書かないようにする。
+concurrency:
+  group: business-os
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      BOS_RUNNER: cloud
+    steps:
+      - name: Checkout orchestrator (public, scripts only)
+        uses: actions/checkout@v7
+
+      - name: Setup SSH deploy keys
+        env:
+          CONFIG_DEPLOY_KEY: ${{ secrets.CONFIG_DEPLOY_KEY }}
+          AI_BUSINESS_OPS_DEPLOY_KEY: ${{ secrets.AI_BUSINESS_OPS_DEPLOY_KEY }}
+          SALES_RESEARCH_DEPLOY_KEY: ${{ secrets.SALES_RESEARCH_DEPLOY_KEY }}
+          META_ADS_DEPLOY_KEY: ${{ secrets.META_ADS_DEPLOY_KEY }}
+        run: |
+          chmod +x scripts/setup-ssh-keys.sh
+          scripts/setup-ssh-keys.sh
+
+      - name: Checkout private config repo via deploy key (SSH)
+        run: |
+          git clone --depth 1 --branch main git@config-gh:yusuken10121990-hub/ai-ops-config.git config
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: "20"
+
+      # レポート生成は決定的。数字が無い項目は UNKNOWN のまま出る（0で埋めない）。
+      - name: Generate Weekly CEO Report
+        id: report
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          cd config
+          node scripts/periodic-report.mjs weekly 2>&1 | tee ../report.log
+
+      - name: Deliver pending alerts
+        if: always()
+        continue-on-error: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ALERT_REPO: ${{ github.repository }}
+        run: |
+          cd config && node scripts/cloud-alert.mjs
+
+      - name: Commit & push report to private config repo (SSH)
+        if: always()
+        working-directory: config
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "no changes to commit"
+          else
+            git commit -m "chore: business-os-weekly report ($(TZ=Asia/Tokyo date '+%Y-%m-%d %H:%M JST'))"
+            bash ../scripts/git-push-retry.sh git@config-gh:yusuken10121990-hub/ai-ops-config.git main
+          fi
+
+      - name: Report failure as Issue
+        if: steps.report.outcome == 'failure'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ALERT_REPO: ${{ github.repository }}
+        run: |
+          cd config
+          node scripts/cloud-alert.mjs --fail "business-os-weekly のレポート生成に失敗。$(tail -c 1200 ../report.log 2>/dev/null || echo 'ログなし')"
+          exit 1

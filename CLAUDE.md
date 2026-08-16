@@ -25,22 +25,24 @@ PC・クラウド(スマホ含む)どちらの環境から編集してもOKで�
   Slack #承認に投函してよい（投函自体は金を動かさない）。実行判断は緑✅/赤🛑タップのみで行い、AIは
   代行しない。ただしexecutorが実行できる状態（プローブ緑）の提案だけを積む。
 - 新しい失敗は原因究明→恒久対策→仕組み化まで。同じ失敗の2回目は禁止。decisions.mdに記録する。
-- **広告に関する依頼は、どのセッション（既存・新規）でも必ず広告AI PDCAパイプラインを通す（33章）。**
-  目標は「人間が広告運用作業をするシステム」ではなく「**人間がAI広告チームを監督するシステム**」。
-  依頼を受けた側が自分で分析・修正・報告して終わらせるのは仕様未達として扱う。
-  Research → Strategist → Experiment → Analyst → Knowledge を回す側に立つこと。
-  正典は `.claude/memory/ad-pipeline/requirements-v2-autonomous.md`（v1と矛盾したらv2が優先）。
-  成功判定にCTR・クリック数・CPC単体を使わず、CV→有効リード→商談→受注→売上→粗利で評価する。
-  毎サイクル最初にボトルネックを特定する（広告に問題が無いのに広告を作り直し続けるのを禁止）。
-  データ不足なら断定せず`UNKNOWN`/`WAIT`、停滞したら手法を変える（14日/30日/45日で強制発動）。
-- **【最上位】自律型AI Business OS（34章）。** 目指すのは「AIに仕事を指示するシステム」ではなく
-  「Business Goalを与えるとAI自身が必要な仕事を発見し、専門Agentを動かし、実行・検証・学習して
-  事業成果を改善するシステム」。正典 `.claude/memory/business-os/requirements-v3-business-os.md`。
+- **【最上位】自律型AI Business OS（34章）。ルールの階層は `.claude/memory/RULES-INDEX.md` の1枚に固定。**
+  目指すのは「AIに仕事を指示するシステム」ではなく「Business Goalを与えるとAI自身が必要な仕事を発見し、
+  専門Agentを動かし、実行・検証・学習して事業成果を改善するシステム」。
+  正典 `.claude/memory/business-os/requirements-v3-business-os.md`。
   最終KPIは Revenue / Gross Profit / LTV / CAC / Retention。局所KPI改善で最終利益が悪化する施策は成功としない。
-  **Bottleneck First**（広告が原因でないなら広告を変更しない）。BUILD/GROW/REVENUE をDomain横断で診断する。
-  CVで終わらず受注・売上・粗利・LTVまで追う。SSoTを守り無い数字は UNKNOWN（推測で埋めない）。
-  計測の正しさの確認が学習より先。Risk別にHuman Approvalを入れ、Rollbackを用意する。
+  **Bottleneck First**（原因でない場所を触らない）。BUILD/GROW/REVENUE をDomain横断で診断し、
+  自分の領域で勝手に他領域を変更せず上位へ報告してRoutingする。CVで終わらず受注・売上・粗利・LTVまで追う。
+  SSoTを守り無い数字は UNKNOWN（推測で埋めない）。計測の正しさの確認が学習より先。
+  Evidence と Confidence を必ず持つ。判定は5値以上。Knowledgeは Context 付きで失敗も保存。
+  Risk別にHuman Approvalを入れ Rollback を用意する。Taskは発見順に処理しない。
+  WAIT も正式な決定だが、データが十分なのに様子見を続けるのは違反。
   実装前に必ず現状調査を出す（Big Bang Rewrite禁止・既存の正常機能を作り直さない）。
+- **広告依頼は上記に加えて広告AI PDCAパイプラインを必ず通す（33章）。**
+  依頼を受けた側が自分で分析・修正・報告して終わらせるのは仕様未達。
+  Research → Strategist → Experiment → Analyst → Knowledge を回す側に立つ。
+  広告固有の正典は `.claude/memory/ad-pipeline/requirements-v2-autonomous.md`。
+  CTR単体で成功判定しない／媒体を同じCTR基準で比較しない／1実験1主要変数／
+  停滞したら手法を変える（14日・30日・45日で強制発動、判定はコードが出す）。
 - 外部ストック写真は使わない。LPの意味ある画像枠だけGemini生成画像、機能アイコンはSVG。
 - オーナーにしかできない作業が出たら owner-todos.md 台帳に追記し、プッシュ通知する。
 - 金銭が動く新しい外部API経路は、購入を伴わないプローブが緑になってから承認ゲートへ進める。

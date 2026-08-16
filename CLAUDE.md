@@ -33,6 +33,14 @@ PC・クラウド(スマホ含む)どちらの環境から編集してもOKで�
   成功判定にCTR・クリック数・CPC単体を使わず、CV→有効リード→商談→受注→売上→粗利で評価する。
   毎サイクル最初にボトルネックを特定する（広告に問題が無いのに広告を作り直し続けるのを禁止）。
   データ不足なら断定せず`UNKNOWN`/`WAIT`、停滞したら手法を変える（14日/30日/45日で強制発動）。
+- **【最上位】自律型AI Business OS（34章）。** 目指すのは「AIに仕事を指示するシステム」ではなく
+  「Business Goalを与えるとAI自身が必要な仕事を発見し、専門Agentを動かし、実行・検証・学習して
+  事業成果を改善するシステム」。正典 `.claude/memory/business-os/requirements-v3-business-os.md`。
+  最終KPIは Revenue / Gross Profit / LTV / CAC / Retention。局所KPI改善で最終利益が悪化する施策は成功としない。
+  **Bottleneck First**（広告が原因でないなら広告を変更しない）。BUILD/GROW/REVENUE をDomain横断で診断する。
+  CVで終わらず受注・売上・粗利・LTVまで追う。SSoTを守り無い数字は UNKNOWN（推測で埋めない）。
+  計測の正しさの確認が学習より先。Risk別にHuman Approvalを入れ、Rollbackを用意する。
+  実装前に必ず現状調査を出す（Big Bang Rewrite禁止・既存の正常機能を作り直さない）。
 - 外部ストック写真は使わない。LPの意味ある画像枠だけGemini生成画像、機能アイコンはSVG。
 - オーナーにしかできない作業が出たら owner-todos.md 台帳に追記し、プッシュ通知する。
 - 金銭が動く新しい外部API経路は、購入を伴わないプローブが緑になってから承認ゲートへ進める。

@@ -80,8 +80,7 @@ for n in $(seq 1 "$MAX_TASKS"); do
 
   set +e
   npx -y @anthropic-ai/claude-code@latest -p "あなたは自律継続Workerです。ユーザーは不在で、質問は一切できません。 Task: ${TID} / next_action: ${NEXT} 。安全な範囲(読み取り・分析・可逆なファイル変更)のみ実行すること。 blocked にしてよいのは次の7つだけです: 有料契約 / Credential / 法的判断 / 重大な不可逆操作 / 重大な金銭判断 / オーナーにしか決められない経営判断 / AIで安全に解消できないHigh-Risk Conflict。 Context不足・別Repo・別Agent・Test・調査・修正・次Stepは blocker ではありません。自分で解消するか、次のnext_actionに落として advanced にしてください。 **最初にやることは分割です。** 与えられた next_action が1回の実行(${turns}ターン以内)で終わらない大きさなら、着手する前に .chat-task-outcome.json を status=advanced で書き、next_action には「最初の小さな1Step」だけを入れて保存すること。分割して保存した時点でそれがこの実行の成果です。残りは次の実行が続けます。小さな1Stepとは「対象ファイルを読んで現状を1つ記録する」「1箇所だけ直す」「1つだけ実測する」程度の粒度です。分割を保存したら、そのまま最初の1Stepを実行してよい。 報告は カレントディレクトリの .chat-task-outcome.json に書く。既に暫定版が置いてあるので、作業を始める前に一度自分の内容で上書きし、進捗があるたびに上書きし直すこと。最後にまとめて書こうとすると turn 上限で報告が失われる。スキーマ: {\"status\":\"advanced\"|\"completed\"|\"blocked\", \"evidence\":\"何を実測したかを具体的に(必須)\", \"next_action\":\"次にやる具体的Action(statusがadvancedなら必須)\", \"resume_point\":\"任意\", \"blocker\":\"statusがblockedなら理由\"} 。Root Goalがまだ達成できていないなら status は advanced にし、next_action に次の一手を必ず入れること。完全に達成できた場合のみ completed にすること。" \
-    --permission-mode acceptEdits \
-    --allowedTools "Write" "Edit" "Read" "Grep" "Glob" "Bash(node scripts/chat-task.mjs:*)" \
+    --permission-mode bypassPermissions \
     --max-turns "$turns" \
     --output-format stream-json --verbose >> "worker-${TID}.log" 2>&1
   WCODE=$?

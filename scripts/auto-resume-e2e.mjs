@@ -80,6 +80,19 @@ console.log('=== INCIDENT-1: 無限リトライを止める ===');
   const r = run(RECLAIM, [p, 'ct_test']);
   check('Worker が更新済みなら上書きしない', JSON.parse(fs.readFileSync(p, 'utf8')).items[0].status, 'COMPLETED');
   check('正常時は exit 0', r.code, 0);
+  check('--force でも COMPLETED は掘り起こさない',
+    run(RECLAIM, [p, 'ct_test', '--force']).code, 0);
+}
+{
+  // apply が台帳を origin から取り直すと IN_PROGRESS が消えるため、
+  // --force で「起動したが未報告」を記録できる必要がある。
+  const p = ledger('f.json', [task({ status: 'OPEN', attempts: 1 })]);
+  const r = run(RECLAIM, [p, 'ct_test', '--max-attempts', '3', '--force', '--reason', 'x']);
+  const t = JSON.parse(fs.readFileSync(p, 'utf8')).items[0];
+  check('--force なら OPEN でも失敗を記録する', t.evidence.length, 1);
+  check('--force で記録したら exit 1（前進していない）', r.code, 1);
+  check('--force 無しなら OPEN は触らない',
+    run(RECLAIM, [ledger('g.json', [task({ status: 'OPEN' })]), 'ct_test']).code, 0);
 }
 
 console.log('=== INCIDENT-2: 偽green を作らない ===');
@@ -110,6 +123,16 @@ console.log('=== INCIDENT-2: 偽green を作らない ===');
   check('Worker の全ターンをログに残す', /--output-format stream-json/.test(wf), true);
   check('ログを artifact として保存する',
     /upload-artifact/.test(wf) && /worker\.log/.test(wf), true);
+
+  // 2026-08-17 実測 (run 32014867668): Worker は正常に報告し Ledger も更新でき
+  // ていたが、12分の作業中に別ワークフローが main を進めて push が rejected。
+  // `|| true` で握り潰され、成果が消えたまま Job は success だった。
+  check('push失敗を握り潰さない（|| true を残していない）',
+    /git push origin HEAD:main \|\| true/.test(wf), false);
+  check('push rejected 時は台帳を取り直して再適用する',
+    /push rejected/.test(wf) && /reset -q --hard origin\/main/.test(wf), true);
+  check('5回失敗したら Job を失敗させる（成果を黙って捨てない）',
+    /台帳のpushが5回失敗/.test(wf), true);
 
   const cron = (wf.match(/- cron:\s*"([^"]+)"/) || [])[1] || '';
   check('schedule が設定されている', !!cron, true);

@@ -51,7 +51,16 @@ if (!task) {
 }
 
 // Worker が自分で状態を更新できていれば、それが正。ここでは何もしない。
-if (task.status !== 'IN_PROGRESS') {
+//
+// --force は「Worker を起動したが報告が無かった」ことを呼び出し側が知っている
+// 場合に使う。2026-08-17 実測 (run 32014867668) の修正で、apply が push 競合
+// 対策として台帳を origin/main から取り直すようになった。consume() が付けた
+// IN_PROGRESS はまだ push されていないため、取り直すと OPEN に戻る。
+// その状態でこのチェックに当たると失敗の記録が残らず、3回で打ち切る
+// エスカレーションも効かなくなる。
+const forced = argv.includes('--force');
+const done = ['COMPLETED', 'BLOCKED'].includes(task.status);
+if (done || (task.status !== 'IN_PROGRESS' && !forced)) {
   console.log(`OK 状態更新済み: ${task.status}`);
   process.exit(0);
 }

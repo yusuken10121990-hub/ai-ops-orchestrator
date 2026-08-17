@@ -143,15 +143,45 @@ jobs:
 
       # Worker の報告を Runtime 側で Ledger へ反映する（決定論）。
       # 反映できれば Task は前進 = このrunは成功。
-      - name: Apply worker outcome to ledger
+      # 2026-08-17 実測 (run 32014867668): Worker は正常に報告し、Ledger も
+      # ローカルでは更新できていた。しかし12分の作業中に別ワークフロー
+      # (system-health-cloud / learning-heartbeat) が main を進めたため
+      # `git push` が rejected になり、`|| true` で握り潰されて成果が消えた。
+      # Job は success のまま = 偽green。
+      #
+      # → push まで含めて1つのステップにし、rejected なら
+      #   「台帳を取り直して outcome を再適用」してから再push する。
+      #   毎回 origin/main の最新から適用するので二重追記にならない。
+      - name: Apply worker outcome and push (race-safe)
         id: apply
         if: always() && steps.pick.outputs.picked != 'none' && steps.pick.outputs.picked != ''
         continue-on-error: true
         run: |
-          node scripts/chat-task-apply.mjs \
-            --config-dir config \
-            --task "${{ steps.pick.outputs.picked }}" \
-            --outcome config/.chat-task-outcome.json | tee apply.log
+          set -e
+          cp config/.chat-task-outcome.json /tmp/outcome.json 2>/dev/null || true
+          cd config
+          git config user.name "chat-task-consumer"
+          git config user.email "bot@users.noreply.github.com"
+          for i in 1 2 3 4 5; do
+            git fetch -q origin main
+            git reset -q --hard origin/main
+            if ! node "$GITHUB_WORKSPACE/scripts/chat-task-apply.mjs" \
+                 --config-dir . \
+                 --task "${{ steps.pick.outputs.picked }}" \
+                 --outcome /tmp/outcome.json > "$GITHUB_WORKSPACE/apply.log" 2>&1; then
+              cat "$GITHUB_WORKSPACE/apply.log"
+              exit 3
+            fi
+            cat "$GITHUB_WORKSPACE/apply.log"
+            git add memory/business-os/chat-tasks.json
+            if git diff --cached --quiet; then echo "台帳に変更なし"; exit 0; fi
+            git commit -q -m "chat-task: consumer cycle"
+            if git push origin HEAD:main; then echo "PUSHED"; exit 0; fi
+            echo "push rejected (${i}回目) — 台帳を取り直して再適用する"
+            sleep $((i * 3))
+          done
+          echo "::error::台帳のpushが5回失敗した。成果を捨てないため失敗にする。"
+          exit 1
 
       # outcome が無い/壊れている場合だけ後始末する。
       # 前進しなかった場合はここが exit 1 する（= 偽greenを潰す）。
@@ -165,17 +195,24 @@ jobs:
             memory/business-os/chat-tasks.json \
             "${{ steps.pick.outputs.picked }}" \
             --max-attempts 3 \
+            --force \
             --reason "claude exit=${{ steps.exec.outputs.claude_exit }} / outcome未提出"
 
-      - name: Push ledger
-        if: always()
+      # reclaim（outcome未提出時のみ走る）の記録も、同じ理由で
+      # 単発pushでは失われる。ここも retry する。
+      - name: Push reclaim record
+        if: always() && steps.reclaim.outcome != 'skipped'
         working-directory: config
         run: |
-          git config user.name "chat-task-consumer"
-          git config user.email "bot@users.noreply.github.com"
           git add memory/business-os/chat-tasks.json || true
-          git diff --cached --quiet || git commit -m "chat-task: consumer cycle"
-          git push origin HEAD:main || true
+          if git diff --cached --quiet; then echo "変更なし"; exit 0; fi
+          git commit -q -m "chat-task: reclaim record"
+          for i in 1 2 3 4 5; do
+            if git push origin HEAD:main; then echo "PUSHED"; exit 0; fi
+            git pull --rebase -q origin main || { git rebase --abort || true; }
+            sleep $((i * 3))
+          done
+          echo "::warning::reclaim記録のpushに失敗した"
 
       # 台帳が進んでいないのに green で終わらせない（QUALITY OS: 成功コード=成功ではない）。
       # apply が成功 = Ledger が実際に前進した場合のみ green。

@@ -115,14 +115,43 @@ console.log('=== apply: Worker報告のLedger反映 ===');
 
   check('completed → complete を呼ぶ',
     /CALLED:complete\|ct_test/.test(apply({ status: 'completed', evidence: 'e' }).stdout), true);
-  check('blocked → block を呼ぶ',
-    /CALLED:block\|ct_test/.test(apply({ status: 'blocked', evidence: 'e', blocker: 'b' }).stdout), true);
+  check('blocked → block を呼ぶ（真のHuman-only blockerのみ）',
+    /CALLED:block\|ct_test/.test(
+      apply({ status: 'blocked', evidence: 'e', blocker: 'API keyが未投入' }).stdout), true);
 
   check('outcome 未提出は exit 3（推測で進めない）', apply(null).code, 3);
   check('evidence 空は拒否', apply({ status: 'completed', evidence: '' }).code, 3);
   check('advanced で next_action 欠落は拒否（再開不能にしない）',
     apply({ status: 'advanced', evidence: 'e' }).code, 3);
   check('未知の status は拒否', apply({ status: 'done', evidence: 'e' }).code, 3);
+
+  // F: 偽のblockerで自走を止めさせない
+  const bogus = apply({ status: 'blocked', evidence: 'e', blocker: 'Context不足で判断できない' });
+  check('Context不足を blocker として認めない', bogus.code, 3);
+  check('偽blockerは Ledger を触らない', /REJECTED_BLOCKER/.test(bogus.stdout), true);
+  check('別Repoを blocker として認めない',
+    apply({ status: 'blocked', evidence: 'e', blocker: '別Repoのファイルが見えない' }).code, 3);
+  check('調査が必要を blocker として認めない',
+    apply({ status: 'blocked', evidence: 'e', blocker: 'さらに調査が必要' }).code, 3);
+  check('真のblocker(Credential)は認める',
+    apply({ status: 'blocked', evidence: 'e', blocker: 'META_APP_SECRET が未投入' }).code, 0);
+  check('真のblocker(金銭)は認める',
+    apply({ status: 'blocked', evidence: 'e', blocker: '広告費の予算変更が必要' }).code, 0);
+}
+
+console.log('=== F: Human-only blocker の判定 ===');
+{
+  const { isHumanOnlyBlocker: h } = await import(path.join(HERE, 'chat-task-apply.mjs'));
+  for (const t of ['Context不足', '別Repoにある', '別Agentが必要', 'テストが必要',
+    '調査が必要', '修正が必要', '次のStepが不明', 'permission-modeの問題']) {
+    check(`NOT blocker: ${t}`, h(t), false);
+  }
+  for (const t of ['有料契約が必要', 'API keyが未投入', '法的判断が必要',
+    '不可逆なデータ削除になる', '入札変更が必要', 'オーナー判断が必要',
+    'High-Risk Conflictで安全に解消不能']) {
+    check(`HUMAN-ONLY: ${t}`, h(t), true);
+  }
+  check('既定は blocker ではない（ループを続ける側に倒す）', h('よくわからない状況'), false);
 }
 
 console.log('=== INCIDENT-3: 指標を自己申告にしない ===');

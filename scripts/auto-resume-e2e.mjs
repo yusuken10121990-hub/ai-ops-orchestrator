@@ -102,7 +102,14 @@ console.log('=== INCIDENT-2: 偽green を作らない ===');
     /PROVISIONAL/.test(wf) && /worker-unreported/.test(wf), true);
   check('暫定 outcome は現在の next_action を保持する',
     /CURRENT_NEXT_ACTION/.test(wf), true);
-  check('1回の実行で 1 Step だけに絞っている', /1 Step だけ/.test(wf), true);
+  // 2026-08-17 実測: 数時間仕事を1つの next_action として渡され、
+  // 60ターンでは終わらず毎回力尽きていた。分割を最初の成果として認める。
+  check('大きすぎる next_action は着手前に分割させる',
+    /最初にやることは分割です/.test(wf), true);
+  // 6分半・40ターン分の作業がログに1行も残らず診断不能だった。
+  check('Worker の全ターンをログに残す', /--output-format stream-json/.test(wf), true);
+  check('ログを artifact として保存する',
+    /upload-artifact/.test(wf) && /worker\.log/.test(wf), true);
 
   const cron = (wf.match(/- cron:\s*"([^"]+)"/) || [])[1] || '';
   check('schedule が設定されている', !!cron, true);

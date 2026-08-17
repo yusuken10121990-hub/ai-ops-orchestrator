@@ -126,6 +126,42 @@ Latest Decisions / Relevant Knowledge / Human Action Required / Agent Registry�
 - セッション開始時は `node scripts/session-handoff.mjs` で Evidence Policy と
   既知の品質事故（一般化ルール込み）を復元してから事実を答える。
 
+### QUALITY OPERATING SYSTEM（2026-08-17オーナー制定・全Repo/全Agent/全Session共通）
+**TRUST THE DATA, VERIFY THE MODEL.** LLMの注意力・記憶・プロンプト遵守だけを信用しない。
+LLM proposes → 独立した検証層（Evidence/Scope/Semantic/Temporal/Consistency/Risk/Action/Output）
+→ PASSした場合のみ回答・実行。HIGH-RISKはFail-Closed。
+
+- **中央ポリシー**: `ai-ops-config/memory/governance/quality-policy.json`（Version管理・
+  25検証レイヤ・Risk Tier R0-R5・HIGH-RISK Action一覧・前提条件・停止条件・既知事故Regression 4件）。
+  実装は `scripts/quality-gate.mjs`（Scope/Temporal/Completeness/DataValidity/Assumption/
+  ActionGate/OutputType/PostExecution/Anomaly/Fail-Closed wrapper/自動回帰生成）。
+- **SCOPE VALIDATION**: Evidence ScopeとClaim Scopeの不一致= `SCOPE_MISMATCH` でBlock。
+  **Partial ScopeからGlobal Conclusionを作るの禁止**（LINE脚のnotify.sent=falseをSlack全体の
+  失敗と結論した事故の一般化。1キャンペーンCV0→広告全体CV0も同罪）。
+- **Presence != Validity**: データが存在しても invalid/stale/partial/test/shadow/estimated/
+  untrusted なら判断に使用禁止（誤った停滞データ→Campaign PAUSE事故の一般化）。
+- **TEMPORAL**: 「昨日ACTIVEだった」を「現在ACTIVE」と断定禁止。currentの断定は鮮度要件を満たす
+  data_as_of が必要。無ければ時点を限定して述べる。
+- **OUTPUT TYPE**: 出力を COMMAND/CODE/DATA/QUOTE/EXAMPLE/EXPLANATION/REPORT/INSTRUCTION に
+  型分けし、**QUOTE/DATA/EXAMPLEを実行可能Commandのように提示禁止**（JSON引用をPowerShellへ
+  貼れるように見せた事故の一般化）。実行可能提示は検証済みCOMMANDのみ。
+- **ACTION GATE**: 広告のPAUSE/ENABLE/予算/入札/ターゲティング/CV定義、本番Deploy、データ削除、
+  送信、課金、公開、契約、権限変更、外部API書込はHIGH-RISK。前提条件（data_valid/scope_valid/
+  freshness/tracking/sample/decision_rule/no_contradiction等）が**未確認(undefined)=不成立**として
+  評価され、1つでも不成立なら `BLOCK_ACTION`。**PLAN→VALIDATE→EXECUTE→VERIFY** を分離し、
+  実行後は intended vs actual を実ソースで確認（成功コード=成功ではない）。
+- **STOP CONDITIONS**: UNKNOWN / UNVERIFIED / INVALID / STALE / CONTRADICTED / PARTIAL /
+  SCOPE_MISMATCH / MISSING_PRECONDITION / SEMANTIC_DRIFT / ENTITY_LOSS / AGGREGATION_ERROR /
+  SOURCE_UNAVAILABLE / **VALIDATION_UNAVAILABLE（検証系自体の故障もFail-Closed）** では断定・実行しない。
+- **INCIDENT LEARNING**: AIのミス確認＝Quality Incident化（33分類のRoot Cause taxonomy）→
+  一般化ルール→自動回帰ケース生成（`regression-cases.json`）→全Repo伝搬。同一Root Causeの再発は
+  SEV3→SEV2→SEV1へエスカレーション。**ルールが存在するのに再発した場合はRUNTIME_BYPASS
+  （Runtime Enforcement Failure）を疑い迂回経路を監査する。** Prompt追記だけの対策は禁止
+  （schema/validator/assertion/test/runtime gateとしてコード化する）。
+- 回帰: `node memory/business-os/quality-e2e.mjs`（既知事故TEST A-O＋Property/Fuzz/
+  Metamorphic/Adversarial）。既知事故4件（Meta誤分類/Slack Scope/Output Type/Invalid Data Pause）は
+  永久Regression。
+
 ## 最重要ルール（要約）
 - YESが必要なのは「お金が実際に動く操作」（広告費/入札変更・新規出稿・決済・新規有料契約）だけ。
   それ以外（分析・調査・可逆なコード変更・デプロイ・設定変更・ダッシュボード生成等）は確認せず自動で進める。

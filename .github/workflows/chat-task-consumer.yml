@@ -20,10 +20,16 @@ on:
     # 未発火を2 tick 分だけ観測して断定したのが誤り。分をずらす意味は
     # 他ワークフローとの競合を少し減らす程度で、Root Cause ではない。
     - cron: "11,41 * * * *"
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      chain:
+        description: "自己連鎖の深さ(自動設定・手動起動は0のままでよい)"
+        required: false
+        default: "0"
 
 permissions:
   contents: write
+  actions: write
 
 concurrency:
   group: chat-task-consumer
@@ -69,6 +75,27 @@ jobs:
         run: |
           chmod +x scripts/drain-chat-tasks.sh
           scripts/drain-chat-tasks.sh "$GITHUB_WORKSPACE/config" "$GITHUB_WORKSPACE" 2400
+
+      # OPENなTaskが残っていれば次のrunを自分で起動する（自己連鎖）。
+      # cronはGitHub側で1回/時に間引かれるため、これが無いと残Taskが1時間待たされる。
+      # 深さ上限6で無限連鎖を防ぐ（cron発火でchain=0にリセットされる）。
+      # drainが1件も前進できず失敗した時は連鎖しない（同じ失敗の無限リトライ防止）。
+      - name: Continue drain chain
+        if: success()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CHAIN: ${{ github.event.inputs.chain || '0' }}
+        run: |
+          if [ "$CHAIN" -ge 6 ]; then echo "chain上限(${CHAIN})。次はcronに任せる"; exit 0; fi
+          cd config
+          git fetch -q origin main
+          git show origin/main:memory/business-os/chat-tasks.json > /tmp/ledger.json
+          if node -e "const j=require('/tmp/ledger.json');const now=Date.now();process.exit(j.items.some(t=>t.status==='OPEN'&&t.next_action&&(!t.blockers||!t.blockers.length)&&(!t.lease_until||Date.parse(t.lease_until)<now))?0:1)"; then
+            echo "OPEN Taskが残っている。chain=$((CHAIN+1)) で次のrunを起動する"
+            gh workflow run chat-task-consumer.yml -R "$GITHUB_REPOSITORY" -f chain=$((CHAIN+1))
+          else
+            echo "残Taskなし。連鎖終了"
+          fi
 
       # 失敗しても次の手が打てるように、Worker の全ターンを残す。
       - name: Upload worker logs

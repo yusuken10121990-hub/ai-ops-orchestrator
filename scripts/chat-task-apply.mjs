@@ -64,6 +64,25 @@ export function isHumanOnlyBlocker(text) {
   return HUMAN_ONLY.some((re) => re.test(s));
 }
 
+/** 暫定 outcome（Worker未報告）が台帳に何回記録されたかを数える。 */
+export const UNREPORTED_MARK = '結果を報告せずに終了';
+
+/**
+ * この Task で「Worker が報告せずに終わった」回数。
+ *
+ * evidence は追記型なので "連続" は判定できない。ここは累積回数を返す
+ * （推測で連続性を作らない）。累積で打ち切る方が安全側 — 報告できない
+ * Worker を何度も走らせ続ける理由がないため。
+ */
+export function unreportedCount(configDir, taskId) {
+  const p = path.join(configDir, 'memory', 'business-os', 'chat-tasks.json');
+  let items;
+  try { items = JSON.parse(fs.readFileSync(p, 'utf8')).items || []; } catch { return 0; }
+  const t = items.find((x) => x.task_id === taskId);
+  if (!t) return 0;
+  return (t.evidence || []).filter((e) => String(e).includes(UNREPORTED_MARK)).length;
+}
+
 /** このファイルが直接実行されたか（import 時に CLI を走らせないため）。 */
 function isMain() {
   return process.argv[1]
@@ -118,10 +137,28 @@ function cli() {
       console.log('BAD_OUTCOME status=advanced なのに next_action が空。再開不能な状態にしない');
       process.exit(3);
     }
+
+    // Runtime が置いた暫定 outcome がそのまま残っている = Worker が何も報告せずに
+    // 終わった。ループは殺さない（advance する）が、これが続くと「毎回走るが
+    // 何も進まない」状態を green のまま量産してしまう。
+    const unreported = String(outcome.resume_point || '') === 'worker-unreported';
+    if (unreported) {
+      const count = unreportedCount(configDir, taskId) + 1;
+      console.log(`UNREPORTED Worker が結果を報告しなかった（通算${count}回）`);
+      if (count >= 3) {
+        // 3回とも自己報告できない = Worker 側の構造的問題。人が見るべき。
+        const blocker = `Workerが通算3回結果を報告できない（安全に解消不能: `
+          + `turn上限/timeout/クラッシュの切り分けに実行環境の調査が必要）`;
+        console.log(`ESCALATED ${taskId} -> ${chatTask(['block', taskId, '--blocker', blocker])}`);
+        process.exit(0);
+      }
+    }
+
     const args = ['advance', taskId, '--next', next, '--evidence', evidence];
     if (outcome.resume_point) args.push('--resume', String(outcome.resume_point));
     console.log(`ADVANCED ${taskId} -> ${chatTask(args)}`);
     console.log(`  next_action: ${next}`);
+    if (unreported) console.log('UNREPORTED_ADVANCE');
   } else if (status === 'completed') {
     console.log(`COMPLETED ${taskId} -> ${chatTask(['complete', taskId, '--evidence', evidence])}`);
   } else if (status === 'blocked') {

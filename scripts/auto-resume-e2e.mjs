@@ -95,6 +95,15 @@ console.log('=== INCIDENT-2: 偽green を作らない ===');
   // 2026-08-17 実測: ":00 / :30" に置いた schedule は 62分経っても発火しなかった。
   // GitHub は高負荷時に schedule を遅延・間引くと明記しており、毎時の開始時刻が
   // 最も混雑する。混雑枠に戻す退行を検出する。
+  // 2026-08-17 実測 (run 32010932504): Worker が max turns を使い切り、
+  // outcome を書く前に打ち切られて前進ゼロだった。報告を最後に書く設計は
+  // turn上限・timeout・クラッシュのすべてで失われる。
+  check('Runtime が先に暫定 outcome を置く（打ち切られてもループが死なない）',
+    /PROVISIONAL/.test(wf) && /worker-unreported/.test(wf), true);
+  check('暫定 outcome は現在の next_action を保持する',
+    /CURRENT_NEXT_ACTION/.test(wf), true);
+  check('1回の実行で 1 Step だけに絞っている', /1 Step だけ/.test(wf), true);
+
   const cron = (wf.match(/- cron:\s*"([^"]+)"/) || [])[1] || '';
   check('schedule が設定されている', !!cron, true);
   const minuteField = cron.split(/\s+/)[0] || '';

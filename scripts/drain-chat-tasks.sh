@@ -89,11 +89,22 @@ for n in $(seq 1 "$MAX_TASKS"); do
 
   cp .chat-task-outcome.json "/tmp/outcome-${TID}.json" 2>/dev/null || true
 
+  # Worker のファイル変更を先にコミットして保全する。
+  # (2026-08-17 実測: 旧実装の reset --hard が Worker の qa-policy.json 編集等を
+  #  毎サイクル破棄し、Worker自身が「変更が永続化されない」と報告していた)
+  # outcome/ログはリポジトリに入れない。
+  git add -A -- . ':!.chat-task-outcome.json' ':!worker-*.log' ':!apply-*.log'
+  git diff --cached --quiet || git commit -q -m "chat-task: $TID worker成果物"
+
   # 台帳へ反映。他ワークフローが main を進めていたら取り直して再適用する。
   applied=0
   for attempt in 1 2 3 4 5; do
     git fetch -q origin main
-    git reset -q --hard origin/main
+    if ! git rebase -q origin/main; then
+      # rebase衝突時のみ従来どおり捨てて台帳反映を優先する（稀ケース）
+      git rebase --abort >/dev/null 2>&1 || true
+      git reset -q --hard origin/main
+    fi
     if ! node "$ORCH/scripts/chat-task-apply.mjs" \
          --config-dir . --task "$TID" --outcome "/tmp/outcome-${TID}.json" \
          > "$ORCH/apply-${TID}.log" 2>&1; then

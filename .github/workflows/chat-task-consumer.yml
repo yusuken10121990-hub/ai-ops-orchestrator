@@ -7,7 +7,16 @@ name: chat-task-consumer
 # 対話Sessionに依存しない。PCが閉じていても動く。
 on:
   schedule:
-    - cron: "*/30 * * * *"
+    # 2026-08-17 実測修正: 元は "*/30 * * * *" だったが、workflow 登録から62分
+    # 経過しても schedule 起動が0件だった（08:00 の tick が発火しなかった）。
+    # GitHub は schedule イベントが高負荷時に遅延・間引かれることを明記しており、
+    # 「毎時の開始時刻」が最も混雑する。このリポジトリの実測でも、発火している
+    # cron はすべて明示分指定であり :00 に置いた schedule だけが動いていない:
+    #   automation-health-cloud "8,38"  → 08:08:50 発火
+    #   system-health-cloud     "13,43" → 08:23:09 発火
+    #   chat-task-consumer      "*/30"  → 0件
+    # よって混雑枠を外し、かつ既存ワークフローと分をずらす。
+    - cron: "11,41 * * * *"
   workflow_dispatch: {}
 
 permissions:

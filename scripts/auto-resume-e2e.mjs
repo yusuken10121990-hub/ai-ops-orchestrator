@@ -91,6 +91,17 @@ console.log('=== INCIDENT-2: 偽green を作らない ===');
     /chat-task-apply\.mjs/.test(wf), true);
   check('前進しなかったら Job を失敗させるステップがある',
     /steps\.apply\.outcome != 'success'/.test(wf), true);
+
+  // 2026-08-17 実測: ":00 / :30" に置いた schedule は 62分経っても発火しなかった。
+  // GitHub は高負荷時に schedule を遅延・間引くと明記しており、毎時の開始時刻が
+  // 最も混雑する。混雑枠に戻す退行を検出する。
+  const cron = (wf.match(/- cron:\s*"([^"]+)"/) || [])[1] || '';
+  check('schedule が設定されている', !!cron, true);
+  const minuteField = cron.split(/\s+/)[0] || '';
+  const firesAtTopOfHour = minuteField === '*'
+    || /(^|,)0($|,)/.test(minuteField)
+    || /^\*\/(1|2|3|4|5|6|10|12|15|20|30|60)$/.test(minuteField);
+  check('毎時 :00 の混雑枠を使っていない', firesAtTopOfHour, false);
 }
 
 console.log('=== apply: Worker報告のLedger反映 ===');

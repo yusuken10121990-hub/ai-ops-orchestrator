@@ -1,0 +1,99 @@
+name: chat-task-consumer
+
+# 2026-08-17 監査 PRIMARY_ROOT_CAUSE の修正3点目。
+# チャット発の永続Task(chat-tasks.json)を拾って next_action を実行する Consumer。
+# これが無かったため、Task台帳もsession-handoffも「登録されないもの」を
+# 復元できず、毎回Ownerが次Promptを手入力する構造になっていた。
+# 対話Sessionに依存しない。PCが閉じていても動く。
+on:
+  schedule:
+    - cron: "*/30 * * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+concurrency:
+  group: chat-task-consumer
+  cancel-in-progress: false
+
+jobs:
+  consume:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup SSH deploy key (config)
+        env:
+          CONFIG_DEPLOY_KEY: ${{ secrets.CONFIG_DEPLOY_KEY }}
+        run: |
+          chmod +x scripts/setup-ssh-keys.sh
+          scripts/setup-ssh-keys.sh
+
+      - name: Checkout private config repo
+        run: git clone --branch main git@config-gh:yusuken10121990-hub/ai-ops-config.git config
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Consume next chat task
+        id: pick
+        working-directory: config
+        run: |
+          set +e
+          OUT=$(node scripts/chat-task.mjs consume --agent cloud-consumer)
+          CODE=$?
+          set -e
+          if [ "$CODE" = "3" ]; then
+            echo "picked=none" >> "$GITHUB_OUTPUT"
+            echo "実行対象なし"
+            exit 0
+          fi
+          echo "$OUT"
+          TID=$(echo "$OUT" | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{console.log(JSON.parse(s).task_id)})")
+          NEXT=$(echo "$OUT" | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{console.log(JSON.parse(s).next_action)})")
+          echo "picked=$TID" >> "$GITHUB_OUTPUT"
+          echo "next_action=$NEXT" >> "$GITHUB_OUTPUT"
+
+      - name: Quality OS preflight
+        if: steps.pick.outputs.picked != 'none' && steps.pick.outputs.picked != ''
+        working-directory: config
+        run: node scripts/quality-os.mjs bootstrap
+
+      - name: Execute next_action (headless)
+        if: steps.pick.outputs.picked != 'none' && steps.pick.outputs.picked != ''
+        working-directory: config
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+        run: |
+          set +e
+          npx -y @anthropic-ai/claude-code@latest -p "あなたは自律継続Workerです。ユーザーは不在です。質問は禁止。 Task: ${{ steps.pick.outputs.picked }} / next_action: ${{ steps.pick.outputs.next_action }} 。安全な範囲(読み取り・分析・可逆な変更)のみ実行すること。金銭・不可逆・Credentialに触れる必要が出たら node scripts/chat-task.mjs block ${{ steps.pick.outputs.picked }} --blocker '理由' を実行して終了。1 Step終えて未完了なら node scripts/chat-task.mjs advance ${{ steps.pick.outputs.picked }} --next '次の具体的Action' --evidence '実測結果' を、完了したら node scripts/chat-task.mjs complete ${{ steps.pick.outputs.picked }} --evidence '実測結果' を必ず実行すること。" --permission-mode acceptEdits --max-turns 40
+          echo "claude exit=$?"
+
+      - name: Reclaim if worker left it in progress
+        if: always() && steps.pick.outputs.picked != 'none' && steps.pick.outputs.picked != ''
+        working-directory: config
+        run: |
+          node -e "
+          const fs=require('fs');const p='memory/business-os/chat-tasks.json';
+          const d=JSON.parse(fs.readFileSync(p,'utf8'));
+          const t=d.items.find(x=>x.task_id==='${{ steps.pick.outputs.picked }}');
+          if(t && t.status==='IN_PROGRESS'){
+            t.status='OPEN'; delete t.lease_owner; delete t.lease_until;
+            t.history.push({at:new Date().toISOString(),event:'RECLAIMED',note:'Workerが状態更新せず終了'});
+            fs.writeFileSync(p,JSON.stringify(d,null,2)+String.fromCharCode(10));
+            console.log('RECLAIMED');
+          } else { console.log('状態更新済み:', t && t.status); }"
+
+      - name: Push ledger
+        if: always()
+        working-directory: config
+        run: |
+          git config user.name "chat-task-consumer"
+          git config user.email "bot@users.noreply.github.com"
+          git add memory/business-os/chat-tasks.json || true
+          git diff --cached --quiet || git commit -m "chat-task: consumer cycle"
+          git push origin HEAD:main || true

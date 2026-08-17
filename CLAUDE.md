@@ -72,6 +72,33 @@ Latest Decisions / Relevant Knowledge / Human Action Required / Agent Registry�
 - **定期実行はGitHub Actionsが正**（daily 09:12 / weekly 月 09:33 / monthly 1日 10:00 JST）。
   ローカルの定期登録は禁止（二重書き込み）。cycle_id/task_idは件数+1でなく**既存の最大連番+1**。
 
+## EVIDENCE FIRST（未確認断定の禁止・SHARED_RULES 36章・全Repo共通）
+**確認可能な事実は、Evidenceを取得し検証してからでなければ断定しない。
+分からないときは答えを作らず「確認できません」と止まる。**
+
+- **識別子は必ずフィールドから読む。** 媒体・アカウント・環境・所有者などを、表示名・
+  ファイル名・並び順・文脈から推測して判定してはならない。読めなければ `UNKNOWN`。
+  2026-08-17 QI-20260817-01: 台帳に `platform:"meta"` とあったのにキャンペーン名から
+  「Google検索」と推測し、媒体別の表からMetaが消えた。Evidenceは手元にあった＝
+  取得の失敗ではなく読み方の事故（CLASSIFICATION_ERROR）。
+- **一次情報の所在は** `ai-ops-config/memory/governance/canonical-sources.json`。
+  AIの過去回答・会話要約・memory・ダッシュボード表示を一次Evidenceにしない。
+  台帳は一次APIの写しなので `data_as_of` を必ず添える。
+- **検証状態**: VERIFIED / PARTIALLY_VERIFIED / UNVERIFIED / STALE / CONTRADICTED /
+  SOURCE_UNAVAILABLE。VERIFIED 以外を確認済みの事実として提示しない。
+  STALEは時点を限定すれば述べてよい（「現在配信中」ではなく「○時点では配信を確認」）。
+- **FAIL-CLOSED**: 取得不能・欠損・古い・矛盾・timeout・parse失敗で推測Fallbackは禁止。
+  「おそらく」「たぶん」で事実確認を代替しない。矛盾は片方を採らずEscalateする。
+- **広告はHIGH SEVERITY**: 配信状態/広告費/Platform/Campaign/imp/click/CTR/CPC/CV/CVR/
+  CPA/Lead/商談/受注/売上/粗利/ROAS のEvidenceなし断定を禁止。
+- **オーナーの訂正は品質事故**: `memory/quality-incidents.json` へ root_cause(12分類)・
+  一般化ルール・regression_test つきで記録する。謝って終わりにしない。
+- 実装: `scripts/evidence.mjs`（record / validateEvidence / resolvePlatform）
+  `scripts/claim-gate.mjs`（gate / verifyAnswer / verifyPlatformLabels・既定deny）
+  回帰 `node memory/business-os/evidence-e2e.mjs`（52項目）。
+- セッション開始時は `node scripts/session-handoff.mjs` で Evidence Policy と
+  既知の品質事故（一般化ルール込み）を復元してから事実を答える。
+
 ## 最重要ルール（要約）
 - YESが必要なのは「お金が実際に動く操作」（広告費/入札変更・新規出稿・決済・新規有料契約）だけ。
   それ以外（分析・調査・可逆なコード変更・デプロイ・設定変更・ダッシュボード生成等）は確認せず自動で進める。

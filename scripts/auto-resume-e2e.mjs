@@ -85,10 +85,44 @@ console.log('=== INCIDENT-1: 無限リトライを止める ===');
 console.log('=== INCIDENT-2: 偽green を作らない ===');
 {
   const wf = fs.readFileSync(path.join(HERE, '..', '.github', 'workflows', 'chat-task-consumer.yml'), 'utf8');
-  check('台帳更新コマンドが allowedTools で許可されている',
-    /--allowedTools[^\n]*chat-task\.mjs/.test(wf), true);
+  check('Worker は承認不要なファイル書き込みで報告する',
+    /\.chat-task-outcome\.json/.test(wf), true);
+  check('Ledger 更新は Runtime 側が決定論的に行う',
+    /chat-task-apply\.mjs/.test(wf), true);
   check('前進しなかったら Job を失敗させるステップがある',
-    /steps\.reclaim\.outcome == 'failure'/.test(wf), true);
+    /steps\.apply\.outcome != 'success'/.test(wf), true);
+}
+
+console.log('=== apply: Worker報告のLedger反映 ===');
+{
+  // config を模したディレクトリ（chat-task.mjs を薄いスタブで置き換える）
+  const cfg = path.join(TMP, 'cfg');
+  fs.mkdirSync(path.join(cfg, 'scripts'), { recursive: true });
+  fs.writeFileSync(path.join(cfg, 'scripts', 'chat-task.mjs'),
+    "console.log('CALLED:'+process.argv.slice(2).join('|'));\n");
+
+  const apply = (obj) => {
+    const f = path.join(TMP, 'outcome.json');
+    if (obj === null) { fs.rmSync(f, { force: true }); } else { fs.writeFileSync(f, JSON.stringify(obj)); }
+    return run(path.join(HERE, 'chat-task-apply.mjs'),
+      ['--config-dir', cfg, '--task', 'ct_test', '--outcome', f]);
+  };
+
+  const adv = apply({ status: 'advanced', evidence: '実測した', next_action: '次の一手' });
+  check('advanced → chat-task.mjs advance を呼ぶ', /CALLED:advance\|ct_test/.test(adv.stdout), true);
+  check('advanced は exit 0', adv.code, 0);
+  check('next_action が渡る', /次の一手/.test(adv.stdout), true);
+
+  check('completed → complete を呼ぶ',
+    /CALLED:complete\|ct_test/.test(apply({ status: 'completed', evidence: 'e' }).stdout), true);
+  check('blocked → block を呼ぶ',
+    /CALLED:block\|ct_test/.test(apply({ status: 'blocked', evidence: 'e', blocker: 'b' }).stdout), true);
+
+  check('outcome 未提出は exit 3（推測で進めない）', apply(null).code, 3);
+  check('evidence 空は拒否', apply({ status: 'completed', evidence: '' }).code, 3);
+  check('advanced で next_action 欠落は拒否（再開不能にしない）',
+    apply({ status: 'advanced', evidence: 'e' }).code, 3);
+  check('未知の status は拒否', apply({ status: 'done', evidence: 'e' }).code, 3);
 }
 
 console.log('=== INCIDENT-3: 指標を自己申告にしない ===');

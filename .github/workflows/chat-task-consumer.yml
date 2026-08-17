@@ -87,6 +87,7 @@ jobs:
           CHAIN: ${{ github.event.inputs.chain || '0' }}
         run: |
           if [ "$CHAIN" -ge 6 ]; then echo "chain上限(${CHAIN})。次はcronに任せる"; exit 0; fi
+          if [ -f /tmp/quota-exhausted ]; then echo "クォータ枯渇のため連鎖しない(cron任せ)"; exit 0; fi
           cd config
           git fetch -q origin main
           git show origin/main:memory/business-os/chat-tasks.json > /tmp/ledger.json

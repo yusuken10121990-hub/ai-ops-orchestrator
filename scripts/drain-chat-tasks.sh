@@ -98,6 +98,16 @@ for n in $(seq 1 "$MAX_TASKS"); do
   set -e
   log "サイクル${n}: worker exit=$WCODE"
 
+  # APIクォータ枯渇(429 weekly limit等)の検出。
+  # (2026-08-17 実測: 週次上限到達で全Workerが1ターンも動けず、無報告扱いで
+  #  attemptを3回消費してタスクがBLOCKEDになった。クォータ切れはタスクの欠陥では
+  #  ないので、attemptを消費せず終了し、lease期限切れ後の自動回収に任せる)
+  if tail -c 8000 "worker-${TID}.log" | grep -q '"api_error_status":429'; then
+    log "QUOTA_EXHAUSTED: APIレート/週次上限。処理を中断し、復活後のcron/連鎖に任せる"
+    touch /tmp/quota-exhausted
+    break
+  fi
+
   cp .chat-task-outcome.json "/tmp/outcome-${TID}.json" 2>/dev/null || true
 
   # Worker のファイル変更を先にコミットして保全する。
@@ -154,6 +164,12 @@ for n in $(seq 1 "$MAX_TASKS"); do
 done
 
 log "取得 ${picked_total}件 / 前進 ${advanced}件 / 経過 $(( $(date +%s) - START ))s"
+
+# クォータ枯渇は失敗ではなく待機（exit 1にすると毎時failureのノイズになる）。
+if [ -f /tmp/quota-exhausted ]; then
+  log "クォータ枯渇のため待機終了。上限リセット後のcronが自動再開する"
+  exit 0
+fi
 
 if [ "$picked_total" -gt 0 ] && [ "$advanced" = "0" ]; then
   echo "::error::${picked_total}件拾ったが1件も前進しなかった"

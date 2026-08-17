@@ -84,18 +84,45 @@ Latest Decisions / Relevant Knowledge / Human Action Required / Agent Registry�
 - **一次情報の所在は** `ai-ops-config/memory/governance/canonical-sources.json`。
   AIの過去回答・会話要約・memory・ダッシュボード表示を一次Evidenceにしない。
   台帳は一次APIの写しなので `data_as_of` を必ず添える。
-- **検証状態**: VERIFIED / PARTIALLY_VERIFIED / UNVERIFIED / STALE / CONTRADICTED /
-  SOURCE_UNAVAILABLE。VERIFIED 以外を確認済みの事実として提示しない。
-  STALEは時点を限定すれば述べてよい（「現在配信中」ではなく「○時点では配信を確認」）。
+- **検証状態**: VERIFIED / DERIVED / INFERRED / PARTIALLY_VERIFIED / UNVERIFIED / STALE /
+  CONTRADICTED / SOURCE_UNAVAILABLE / INVALID。VERIFIED 以外を確認済みの事実として提示しない。
+  **INFERRED を VERIFIED として扱わない。** STALEは時点を限定すれば述べてよい
+  （「現在配信中」ではなく「○時点では配信を確認」）。
 - **FAIL-CLOSED**: 取得不能・欠損・古い・矛盾・timeout・parse失敗で推測Fallbackは禁止。
   「おそらく」「たぶん」で事実確認を代替しない。矛盾は片方を採らずEscalateする。
 - **広告はHIGH SEVERITY**: 配信状態/広告費/Platform/Campaign/imp/click/CTR/CPC/CV/CVR/
   CPA/Lead/商談/受注/売上/粗利/ROAS のEvidenceなし断定を禁止。
-- **オーナーの訂正は品質事故**: `memory/quality-incidents.json` へ root_cause(12分類)・
+- **オーナーの訂正は品質事故**: `memory/quality-incidents.json` へ root_cause(22分類)・
   一般化ルール・regression_test つきで記録する。謝って終わりにしない。
+
+### FACT SAFETY（2026-08-17オーナー制定・広告に限らず全Domain）
+**DO NOT INFER WHAT YOU ALREADY KNOW.** 信頼できる明示Factが既にあるなら、同じFactを推論し直さない。
+
+- **権威階層**: L0 CANONICAL_EXPLICIT > L1 AUTHORITATIVE_STRUCTURED > L2 DETERMINISTIC_DERIVED
+  > L3 VALIDATED_INFERENCE > L4 HEURISTIC_INFERENCE > L5 LLM_GUESS。
+  **L0/L1 があるFactを L3以下から上書き・再分類・再解釈してはならない。**
+  L5 は確認可能な事実の確定値として原則使用禁止。
+- **STRUCTURED FIELD FIRST**: 名称・ラベル・説明文・自然言語は Canonical Structured Field
+  より優先してはならない。`{platform:"meta", campaign_name:"Google_Search_Test"}` の答えは
+  `meta`。同じ構造の誤りは status/environment/branch/金額/日時/件数にも起きる
+  （`branch:"master"` を「普通はmain」と推測する等）。
+- **明示 vs 推論の衝突**: 明示値を採用し、`INFERENCE_CONFLICT` を記録する。
+  重要な衝突は Quality Incident 候補。
+- **欠損時のみ推論可**: その場合 `verification_status = INFERRED` を必ず付ける。
+  未知値を既知Categoryへ勝手にマッピングしない（`UNKNOWN` のまま保持）。
+- **変換の安全性**: 重要な変換では ENTITY_LOSS（入出力の件数と落ちた対象）・
+  AGGREGATION_ERROR（合計＝内訳の和）・SEMANTIC_DRIFT（platform=meta が「Google検索」に化ける）
+  を機械的に検査する。決定論的に計算できる値をLLMに暗算・推測させない。
+- **CONTEXT CONTAMINATION 禁止**: 過去Session・Memory・Knowledge・会話要約は、
+  現在の権威Factを上書きしない。過去情報は履歴としてのみ使う。
+- 実装: `scripts/fact-safety.mjs`（resolveFact / detectEntityLoss / checkAggregation /
+  detectSemanticDrift / assertCanonicalPreserved / resolveAgainstMemory）
+  設定 `memory/governance/fact-schema.json`（Fact別の canonical_fields・
+  forbidden_source_fields・enum・不変条件6件）。
 - 実装: `scripts/evidence.mjs`（record / validateEvidence / resolvePlatform）
-  `scripts/claim-gate.mjs`（gate / verifyAnswer / verifyPlatformLabels・既定deny）
-  回帰 `node memory/business-os/evidence-e2e.mjs`（52項目）。
+  `scripts/claim-gate.mjs`（gate / verifyAnswer / verifyFactLabels / verifyTransformation・既定deny）
+  回帰 `node memory/business-os/evidence-e2e.mjs`（56項目）
+  ＋ `node memory/business-os/fact-safety-e2e.mjs`（TEST01-15 含む64項目）。
 - セッション開始時は `node scripts/session-handoff.mjs` で Evidence Policy と
   既知の品質事故（一般化ルール込み）を復元してから事実を答える。
 

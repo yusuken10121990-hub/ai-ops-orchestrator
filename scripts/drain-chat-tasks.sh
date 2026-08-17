@@ -64,6 +64,17 @@ for n in $(seq 1 "$MAX_TASKS"); do
   picked_total=$((picked_total + 1))
   log "サイクル${n}: $TID を取得（残り ${remaining}s）"
 
+  # CONSUMED イベントを即pushして履歴に残す。
+  # (2026-08-17 実測: push前にapplyのrebase/resetが走るため、CONSUMEDが
+  #  永続履歴から毎回消え、監査上 CONSUMED -> COMPLETED の対応が追えなかった)
+  git add memory/business-os/chat-tasks.json
+  if ! git diff --cached --quiet; then
+    git commit -q -m "chat-task: $TID consumed"
+    git push -q origin HEAD:main \
+      || { git pull --rebase -q origin main && git push -q origin HEAD:main; } \
+      || log "CONSUMED の push に失敗（続行する）"
+  fi
+
   # Worker が打ち切られても next_action が失われないよう、先に暫定outcomeを置く。
   CURRENT_NEXT_ACTION="$NEXT" node -e "
   const fs=require('fs');

@@ -84,7 +84,7 @@ jobs:
         run: |
           rm -f .chat-task-outcome.json
           set +e
-          npx -y @anthropic-ai/claude-code@latest -p "あなたは自律継続Workerです。ユーザーは不在で、質問は一切できません。 Task: ${{ steps.pick.outputs.picked }} / next_action: ${{ steps.pick.outputs.next_action }} 。安全な範囲(読み取り・分析・可逆なファイル変更)のみ実行すること。金銭・不可逆・Credentialに触れる必要が出たら中止すること。 実行が終わったら、必ずカレントディレクトリに .chat-task-outcome.json というファイルを書くこと。これがあなたの唯一の報告手段であり、書かなければ作業は無かったことになる。スキーマ: {\"status\":\"advanced\"|\"completed\"|\"blocked\", \"evidence\":\"何を実測したかを具体的に(必須)\", \"next_action\":\"次にやる具体的Action(statusがadvancedなら必須)\", \"resume_point\":\"任意\", \"blocker\":\"statusがblockedなら理由\"} 。Root Goalがまだ達成できていないなら status は advanced にし、next_action に次の一手を必ず入れること。完全に達成できた場合のみ completed にすること。" \
+          npx -y @anthropic-ai/claude-code@latest -p "あなたは自律継続Workerです。ユーザーは不在で、質問は一切できません。 Task: ${{ steps.pick.outputs.picked }} / next_action: ${{ steps.pick.outputs.next_action }} 。安全な範囲(読み取り・分析・可逆なファイル変更)のみ実行すること。 blocked にしてよいのは次の7つだけです: 有料契約 / Credential / 法的判断 / 重大な不可逆操作 / 重大な金銭判断 / オーナーにしか決められない経営判断 / AIで安全に解消できないHigh-Risk Conflict。 Context不足・別Repo・別Agent・Test・調査・修正・次Stepは blocker ではありません。自分で解消するか、次のnext_actionに落として advanced にしてください。 実行が終わったら、必ずカレントディレクトリに .chat-task-outcome.json というファイルを書くこと。これがあなたの唯一の報告手段であり、書かなければ作業は無かったことになる。スキーマ: {\"status\":\"advanced\"|\"completed\"|\"blocked\", \"evidence\":\"何を実測したかを具体的に(必須)\", \"next_action\":\"次にやる具体的Action(statusがadvancedなら必須)\", \"resume_point\":\"任意\", \"blocker\":\"statusがblockedなら理由\"} 。Root Goalがまだ達成できていないなら status は advanced にし、next_action に次の一手を必ず入れること。完全に達成できた場合のみ completed にすること。" \
             --permission-mode acceptEdits \
             --allowedTools "Write" "Edit" "Read" "Grep" "Glob" "Bash(node scripts/chat-task.mjs:*)" \
             --max-turns 40

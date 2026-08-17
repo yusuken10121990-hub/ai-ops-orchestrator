@@ -103,8 +103,10 @@ for n in $(seq 1 "$MAX_TASKS"); do
   # Worker のファイル変更を先にコミットして保全する。
   # (2026-08-17 実測: 旧実装の reset --hard が Worker の qa-policy.json 編集等を
   #  毎サイクル破棄し、Worker自身が「変更が永続化されない」と報告していた)
-  # outcome/ログはリポジトリに入れない。
-  git add -A -- . ':!.chat-task-outcome.json' ':!worker-*.log' ':!apply-*.log'
+  # configの.gitignoreはallowlist方式(/*で全無視)なので、outcome/ログ等の
+  # root直下ファイルは元から追跡されない。除外pathspecを書くとgitが
+  # 「ignoredなパスの指定」としてexit 1する(2026-08-17に3run連続failureの実測)ため書かない。
+  git add -A
   git diff --cached --quiet || git commit -q -m "chat-task: $TID worker成果物"
 
   # 台帳へ反映。他ワークフローが main を進めていたら取り直して再適用する。

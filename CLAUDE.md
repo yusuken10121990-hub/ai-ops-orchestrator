@@ -162,6 +162,31 @@ LLM proposes → 独立した検証層（Evidence/Scope/Semantic/Temporal/Consis
   Metamorphic/Adversarial）。既知事故4件（Meta誤分類/Slack Scope/Output Type/Invalid Data Pause）は
   永久Regression。
 
+## UI RESOURCE SAFETY（AIが開いた画面の後片付け・SHARED_RULES 37章・全Repo共通）
+**IF AI OPENED IT, AI OWNS ITS CLEANUP.
+ただしユーザーが元から開いていた画面を勝手に閉じることは禁止する。**
+この2つを同時に満たすこと。「開いている画面を全部閉じる」は重大な違反。
+
+- **Ownership**: `AGENT_OWNED`(Cleanup対象) / `USER_OWNED`・`SYSTEM_OWNED`・`UNKNOWN`(触らない) /
+  `SHARED`(安全性を確認)。**UNKNOWN を AGENT_OWNED と推測しない**（既定は DO_NOT_CLOSE）。
+  別Agent・別Session・別Taskが開いた資源も閉じない。
+- **追跡**: UIを開いた瞬間に台帳へ登録する。対象はブラウザWindow/Tab・Terminal・PowerShell・
+  cmd・Explorer・Editor/VS Code・Dialog・Popup・設定画面・Preview・認証画面・一時アプリ・
+  DevTools・テスト窓。特定アプリだけHardcodeしない。
+- **Task Complete Gate（最終強制条件）**: Agent-owned な一時UIが残っている限り Task を
+  Complete にしない（`WORK_DONE_CLEANUP_PENDING`）。
+  **「Closeを送った」だけでは成功にしない** — 実際に消えたことを確認して初めて `CLEANUP_VERIFIED`。
+- **最小作用**: Tabで済むならWindowを閉じない。Windowで済むならApplicationをKillしない。
+  Force Killから始めるのは禁止。
+- **保護優先**: 未保存データは勝手にDiscardしない。Server/watcher等は `SERVICE_RESOURCE` として
+  UI Cleanupで止めない。意図的保持は理由と解除条件が必須（理由なし保持・永久放置は禁止）。
+- **Session終了/Handoff**: 「とりあえず全部残して次へ」は禁止。残すなら理由・解除条件・次の所有者を引き継ぐ。
+- **KPI**: `task_completed_with_open_agent_ui = 0` / `user_resource_wrongly_closed = 0`。
+- 実装 `scripts/ui-resource-manager.mjs` / 設定 `memory/governance/ui-resource-policy.json` /
+  回帰 `node memory/business-os/ui-cleanup-e2e.mjs`（74項目）。
+- 不要画面を残したら `UI_CLEANUP_INCIDENT` として記録する。**同じ原因の再発は
+  Agentの注意力の問題ではなく Runtime Enforcement の欠陥として扱う。**
+
 ## 最重要ルール（要約）
 - YESが必要なのは「お金が実際に動く操作」（広告費/入札変更・新規出稿・決済・新規有料契約）だけ。
   それ以外（分析・調査・可逆なコード変更・デプロイ・設定変更・ダッシュボード生成等）は確認せず自動で進める。

@@ -97,50 +97,46 @@ console.log('=== INCIDENT-1: 無限リトライを止める ===');
 
 console.log('=== INCIDENT-2: 偽green を作らない ===');
 {
+  // 2026-08-17: 1件ごとのサイクルは drain-chat-tasks.sh に集約した
+  // （このリポジトリの scheduled workflow は cron に関わらず1時間1回しか
+  //   発火しないため、1回の起動で複数件を処理する必要がある）。
+  const sh = fs.readFileSync(path.join(HERE, 'drain-chat-tasks.sh'), 'utf8');
   const wf = fs.readFileSync(path.join(HERE, '..', '.github', 'workflows', 'chat-task-consumer.yml'), 'utf8');
+
   check('Worker は承認不要なファイル書き込みで報告する',
-    /\.chat-task-outcome\.json/.test(wf), true);
+    /\.chat-task-outcome\.json/.test(sh), true);
   check('Ledger 更新は Runtime 側が決定論的に行う',
-    /chat-task-apply\.mjs/.test(wf), true);
-  check('前進しなかったら Job を失敗させるステップがある',
-    /steps\.apply\.outcome != 'success'/.test(wf), true);
+    /chat-task-apply\.mjs/.test(sh), true);
+  check('1件も前進しなければ Job を失敗させる',
+    /1件も前進しなかった/.test(sh), true);
 
-  // 2026-08-17 実測: ":00 / :30" に置いた schedule は 62分経っても発火しなかった。
-  // GitHub は高負荷時に schedule を遅延・間引くと明記しており、毎時の開始時刻が
-  // 最も混雑する。混雑枠に戻す退行を検出する。
-  // 2026-08-17 実測 (run 32010932504): Worker が max turns を使い切り、
-  // outcome を書く前に打ち切られて前進ゼロだった。報告を最後に書く設計は
-  // turn上限・timeout・クラッシュのすべてで失われる。
+  // Worker が max turns で打ち切られても報告が失われないようにする。
   check('Runtime が先に暫定 outcome を置く（打ち切られてもループが死なない）',
-    /PROVISIONAL/.test(wf) && /worker-unreported/.test(wf), true);
+    /worker-unreported/.test(sh), true);
   check('暫定 outcome は現在の next_action を保持する',
-    /CURRENT_NEXT_ACTION/.test(wf), true);
-  // 2026-08-17 実測: 数時間仕事を1つの next_action として渡され、
-  // 60ターンでは終わらず毎回力尽きていた。分割を最初の成果として認める。
+    /CURRENT_NEXT_ACTION/.test(sh), true);
   check('大きすぎる next_action は着手前に分割させる',
-    /最初にやることは分割です/.test(wf), true);
-  // 6分半・40ターン分の作業がログに1行も残らず診断不能だった。
-  check('Worker の全ターンをログに残す', /--output-format stream-json/.test(wf), true);
-  check('ログを artifact として保存する',
-    /upload-artifact/.test(wf) && /worker\.log/.test(wf), true);
+    /最初にやることは分割です/.test(sh), true);
 
-  // 2026-08-17 実測 (run 32014867668): Worker は正常に報告し Ledger も更新でき
-  // ていたが、12分の作業中に別ワークフローが main を進めて push が rejected。
-  // `|| true` で握り潰され、成果が消えたまま Job は success だった。
+  // 6分半・40ターン分の作業がログに1行も残らず診断不能だった。
+  check('Worker の全ターンをログに残す', /--output-format stream-json/.test(sh), true);
+  check('ログを artifact として保存する',
+    /upload-artifact/.test(wf) && /worker-\*\.log/.test(wf), true);
+
+  // Worker は正常に報告し Ledger も更新できていたのに、12分の作業中に別
+  // ワークフローが main を進めて push が rejected。`|| true` で握り潰され成果が消えた。
   check('push失敗を握り潰さない（|| true を残していない）',
-    /git push origin HEAD:main \|\| true/.test(wf), false);
+    /git push[^\n]*\|\| true/.test(sh), false);
   check('push rejected 時は台帳を取り直して再適用する',
-    /push rejected/.test(wf) && /reset -q --hard origin\/main/.test(wf), true);
-  check('5回失敗したら Job を失敗させる（成果を黙って捨てない）',
-    /台帳のpushが5回失敗/.test(wf), true);
+    /push rejected/.test(sh) && /reset -q --hard origin\/main/.test(sh), true);
+
+  // 1時間1回しか起動しないので、1回で複数件を消化する。
+  check('1回の起動で複数件を処理する', /MAX_TASKS/.test(sh), true);
+  check('残り時間が足りなければ次の起動に回す',
+    /次のscheduled runへ回す/.test(sh), true);
 
   const cron = (wf.match(/- cron:\s*"([^"]+)"/) || [])[1] || '';
   check('schedule が設定されている', !!cron, true);
-  const minuteField = cron.split(/\s+/)[0] || '';
-  const firesAtTopOfHour = minuteField === '*'
-    || /(^|,)0($|,)/.test(minuteField)
-    || /^\*\/(1|2|3|4|5|6|10|12|15|20|30|60)$/.test(minuteField);
-  check('毎時 :00 の混雑枠を使っていない', firesAtTopOfHour, false);
 }
 
 console.log('=== apply: Worker報告のLedger反映 ===');

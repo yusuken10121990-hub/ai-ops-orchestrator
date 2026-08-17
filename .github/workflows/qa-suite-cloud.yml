@@ -41,6 +41,11 @@ jobs:
         with:
           node-version: "20"
 
+      # Auto-Resume 系の永久回帰（2026-08-17 の実測事故3件）。
+      # このリポジトリ側のスクリプトなので config の qa-gate とは別に回す。
+      - name: Auto-resume regression (orchestrator-local)
+        run: node scripts/auto-resume-e2e.mjs
+
       - name: Build required test manifest (full)
         working-directory: config
         run: node scripts/qa-gate.mjs manifest --tier R4

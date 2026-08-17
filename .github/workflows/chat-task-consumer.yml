@@ -62,7 +62,17 @@ jobs:
         working-directory: config
         run: node scripts/quality-os.mjs bootstrap
 
+      # 2026-08-17 実測修正: run 32006213949 のログで確定した根本原因。
+      #   `--permission-mode acceptEdits` は「ファイル編集」だけを自動承認し、
+      #   Bash コマンド実行は承認プロンプトを出す。ヘッドレス(-p)ではユーザーが
+      #   居ないためプロンプトは自動的に拒否され、Workerに必須の台帳更新
+      #   (`node scripts/chat-task.mjs advance|complete|block`) が毎回実行不能だった。
+      #   ログの原文: 「ユーザー不在のため、破壊的ではないが承認が必要な
+      #   コマンド実行が拒否されました」。
+      #   → 台帳更新コマンドだけを --allowedTools で明示的に許可する
+      #     (bypassPermissions で全開放はしない = 最小作用)。
       - name: Execute next_action (headless)
+        id: exec
         if: steps.pick.outputs.picked != 'none' && steps.pick.outputs.picked != ''
         working-directory: config
         env:
@@ -70,23 +80,28 @@ jobs:
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
         run: |
           set +e
-          npx -y @anthropic-ai/claude-code@latest -p "あなたは自律継続Workerです。ユーザーは不在です。質問は禁止。 Task: ${{ steps.pick.outputs.picked }} / next_action: ${{ steps.pick.outputs.next_action }} 。安全な範囲(読み取り・分析・可逆な変更)のみ実行すること。金銭・不可逆・Credentialに触れる必要が出たら node scripts/chat-task.mjs block ${{ steps.pick.outputs.picked }} --blocker '理由' を実行して終了。1 Step終えて未完了なら node scripts/chat-task.mjs advance ${{ steps.pick.outputs.picked }} --next '次の具体的Action' --evidence '実測結果' を、完了したら node scripts/chat-task.mjs complete ${{ steps.pick.outputs.picked }} --evidence '実測結果' を必ず実行すること。" --permission-mode acceptEdits --max-turns 40
-          echo "claude exit=$?"
+          npx -y @anthropic-ai/claude-code@latest -p "あなたは自律継続Workerです。ユーザーは不在です。質問は禁止。 Task: ${{ steps.pick.outputs.picked }} / next_action: ${{ steps.pick.outputs.next_action }} 。安全な範囲(読み取り・分析・可逆な変更)のみ実行すること。金銭・不可逆・Credentialに触れる必要が出たら node scripts/chat-task.mjs block ${{ steps.pick.outputs.picked }} --blocker '理由' を実行して終了。1 Step終えて未完了なら node scripts/chat-task.mjs advance ${{ steps.pick.outputs.picked }} --next '次の具体的Action' --evidence '実測結果' を、完了したら node scripts/chat-task.mjs complete ${{ steps.pick.outputs.picked }} --evidence '実測結果' を必ず実行すること。台帳更新コマンドは承認不要で実行できる。" \
+            --permission-mode acceptEdits \
+            --allowedTools "Bash(node scripts/chat-task.mjs:*)" "Read" "Grep" "Glob" \
+            --max-turns 40
+          CODE=$?
+          set -e
+          echo "claude exit=$CODE"
+          echo "claude_exit=$CODE" >> "$GITHUB_OUTPUT"
 
+      # 前進しなかった場合はここが exit 1 する（= 偽greenを潰す）。
+      # continue-on-error で一旦受け止め、台帳を push してから最後に判定する。
       - name: Reclaim if worker left it in progress
+        id: reclaim
         if: always() && steps.pick.outputs.picked != 'none' && steps.pick.outputs.picked != ''
+        continue-on-error: true
         working-directory: config
         run: |
-          node -e "
-          const fs=require('fs');const p='memory/business-os/chat-tasks.json';
-          const d=JSON.parse(fs.readFileSync(p,'utf8'));
-          const t=d.items.find(x=>x.task_id==='${{ steps.pick.outputs.picked }}');
-          if(t && t.status==='IN_PROGRESS'){
-            t.status='OPEN'; delete t.lease_owner; delete t.lease_until;
-            t.history.push({at:new Date().toISOString(),event:'RECLAIMED',note:'Workerが状態更新せず終了'});
-            fs.writeFileSync(p,JSON.stringify(d,null,2)+String.fromCharCode(10));
-            console.log('RECLAIMED');
-          } else { console.log('状態更新済み:', t && t.status); }"
+          node "$GITHUB_WORKSPACE/scripts/chat-task-reclaim.mjs" \
+            memory/business-os/chat-tasks.json \
+            "${{ steps.pick.outputs.picked }}" \
+            --max-attempts 3 \
+            --reason "claude exit=${{ steps.exec.outputs.claude_exit }} / 台帳未更新"
 
       - name: Push ledger
         if: always()
@@ -97,3 +112,10 @@ jobs:
           git add memory/business-os/chat-tasks.json || true
           git diff --cached --quiet || git commit -m "chat-task: consumer cycle"
           git push origin HEAD:main || true
+
+      # 台帳が進んでいないのに green で終わらせない（QUALITY OS: 成功コード=成功ではない）。
+      - name: Fail if task did not advance
+        if: always() && steps.reclaim.outcome == 'failure'
+        run: |
+          echo "::error::Task ${{ steps.pick.outputs.picked }} を拾ったが台帳が前進しなかった。"
+          exit 1

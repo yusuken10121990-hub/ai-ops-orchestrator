@@ -1,0 +1,75 @@
+name: qa-suite-cloud
+
+# P0-01 (2026-08-17 QA監査): ai-ops-config の決定論テスト13スイートは
+# CIから一度も実行されていなかった。push毎の関門は config repo 側の
+# qa-gate.yml が担う（mandatory core のみ・private minutes節約）。
+# ここでは full regression を毎日回し、STALE化と静かな腐敗を防ぐ。
+#
+# NO FALSE PASS: 非PASSが1件でもあれば job を落とし、Issue で表面化させる。
+on:
+  schedule:
+    - cron: "35 20 * * *"   # JST 05:35
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: qa-suite-cloud
+  cancel-in-progress: false
+
+jobs:
+  full-regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout orchestrator
+        uses: actions/checkout@v4
+
+      - name: Setup SSH deploy key (config)
+        env:
+          CONFIG_DEPLOY_KEY: ${{ secrets.CONFIG_DEPLOY_KEY }}
+        run: |
+          chmod +x scripts/setup-ssh-keys.sh
+          scripts/setup-ssh-keys.sh
+
+      - name: Checkout private config repo via deploy key (SSH)
+        run: git clone --branch main git@config-gh:yusuken10121990-hub/ai-ops-config.git config
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Build required test manifest (full)
+        working-directory: config
+        run: node scripts/qa-gate.mjs manifest --tier R4
+
+      - name: Run full regression
+        id: run
+        working-directory: config
+        run: node scripts/qa-gate.mjs run
+
+      - name: Completion gate (full scope)
+        working-directory: config
+        run: node scripts/qa-gate.mjs gate --ui-clean true --critical-unknown 0
+
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: qa-full-evidence-${{ github.run_id }}
+          path: |
+            config/memory/qa/test-results.json
+            config/memory/qa/test-manifest.json
+          retention-days: 30
+
+      - name: Open issue on failure
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh issue create -R "$GITHUB_REPOSITORY" \
+            --title "qa-suite-cloud FAILED ($(date -u +%Y-%m-%d))" \
+            --body "full regression が非PASSで終了しました。run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+            || true

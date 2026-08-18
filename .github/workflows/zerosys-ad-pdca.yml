@@ -168,14 +168,12 @@ jobs:
       # ワークフローで実行しstatusを最新化する(ad-money-guardと同じ考え方、CONFIG_DIR配下の
       # 状態ファイルはconfig/memory/ad-circuit-breaker-state.jsonの月次アキュムレータで
       # 二重カウントを防止済み)。
-      - name: Run ad-circuit-breaker (budget hard cap + performance circuit breaker, no LLM)
-        env:
-          OPS_DASHBOARD_KEY: ${{ secrets.OPS_DASHBOARD_KEY }}
-          CONFIG_DIR: config
-          AI_BUSINESS_DIR: ${{ env.AI_BUSINESS_DIR }}
-        run: |
-          node scripts/ad-circuit-breaker.mjs
-
+      # 2026-08-18: ここにあった ad-circuit-breaker ステップを削除した。参照先の
+      # scripts/ad-circuit-breaker.mjs は origin/master に存在せず MODULE_NOT_FOUND で
+      # 落ち、後続の commit & push まで skip させていた(run 32084977599)。原因は、この
+      # ワークフローの土台にした ad-pdca-daily.yml を「ローカル作業ツリー」から複製した
+      # こと(ローカルには未pushでremoteに無いステップが混ざっていた)。恒久対策: クラウド
+      # のワークフローを複製するときは必ず origin/master の内容を土台にする。
       - name: Commit & push generated learnings to private config repo (SSH)
         working-directory: config
         run: |

@@ -9,7 +9,7 @@
 //
 // Usage: node scripts/loop-self-heal-e2e.mjs
 
-import { classifyCron, lastScheduledOccurrence, discoverLoops, decideState } from './loop-self-heal.mjs';
+import { classifyCron, lastScheduledOccurrence, discoverLoops, decideState, selectForDispatch } from './loop-self-heal.mjs';
 
 let pass = 0;
 const failures = [];
@@ -99,6 +99,32 @@ check('注釈が読めない(null)なら unverifiable（needs-recoveryに倒さ�
 
 check('判定不能と確実な成功が混在するなら ok を優先',
   decideState([R(1, 'success'), R(2, 'success')], new Map([[1, null], [2, false]])), 'ok');
+
+// ── selectForDispatch（復旧が上限を焼き切らないための安全弁）────────────────
+// TEST-D: 2026-08-19 本番dry-runで復旧対象が16本同時に立った。1tickで全部撃つと
+// 戻ったばかりの週次トークンを復旧作業自体が焼き切る（自家中毒）。古い順に数本ずつ。
+{
+  const mk = (id, m) => ({ id, _missedForMinutes: m });
+  const e = [mk('new', 100), mk('oldest', 900), mk('mid', 500)];
+  const { dispatch, deferred } = selectForDispatch(e, 2);
+  check('TEST-D 古い取りこぼしから返す', dispatch.map((x) => x.id), ['oldest', 'mid']);
+  check('TEST-D 残りは次tickへ', deferred.map((x) => x.id), ['new']);
+  check('TEST-D 入力を破壊しない', e.map((x) => x.id), ['new', 'oldest', 'mid']);
+}
+{
+  const { dispatch, deferred } = selectForDispatch([], 3);
+  check('TEST-D 対象0件でも壊れない', [dispatch.length, deferred.length], [0, 0]);
+}
+{
+  const e = [{ id: 'a', _missedForMinutes: 10 }, { id: 'b', _missedForMinutes: 20 }];
+  const { dispatch, deferred } = selectForDispatch(e, 10);
+  check('TEST-D capが対象数より大きければ全部撃つ', [dispatch.length, deferred.length], [2, 0]);
+}
+{
+  const e = [{ id: 'a', _missedForMinutes: 10 }];
+  const { dispatch, deferred } = selectForDispatch(e, 0);
+  check('TEST-D cap=0なら1本も撃たない', [dispatch.length, deferred.length], [0, 1]);
+}
 
 // ── 結果 ────────────────────────────────────────────────────────────────────
 console.log(`\nloop-self-heal-e2e: ${pass} passed, ${failures.length} failed`);

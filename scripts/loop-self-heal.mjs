@@ -67,6 +67,11 @@ const WORKFLOWS_DIR = process.env.WORKFLOWS_DIR || '.github/workflows';
 const OUTPUT_JSON = process.env.OUTPUT_JSON || 'config/memory/loop-self-heal-status.json';
 const GRACE_MINUTES = Number(process.env.GRACE_MINUTES || 90);
 const MAX_DISPATCH_PER_WINDOW = Number(process.env.MAX_DISPATCH_PER_WINDOW || 2);
+// 2026-08-19 本番dry-runで判明: 上限に2日当たった直後は復旧対象が16本同時に立つ。
+// これを1tickで全部撃つと、戻ったばかりの週次トークンを復旧作業自体が焼き切り、
+// 「上限で止まる→復旧で上限に当たる」の自家中毒になる。毎時走るので、1tick数本ずつ
+// 古い取りこぼしから順に返す（16本なら約6時間で回収し、スパイクを作らない）。
+const MAX_DISPATCH_PER_TICK = Number(process.env.MAX_DISPATCH_PER_TICK || 3);
 const DRY_RUN = process.env.DRY_RUN === '1' || process.argv.includes('--dry-run');
 
 // run-loop.sh が SKIPPED 時に出す注釈のタイトル。両者を変えるときは必ず一緒に変えること
@@ -76,7 +81,10 @@ export const SKIP_ANNOTATION_TITLE = 'SKIPPED (Claude usage limit)';
 // 上限が今も切れているかを課金ゼロで判定するためのプローブ。*/5 で回っている
 // run-loop.sh 系ループを使う（専用にclaudeを叩くとトークンを消費してしまうため）。
 const QUOTA_PROBE_WORKFLOW = process.env.QUOTA_PROBE_WORKFLOW || 'creative-studio-apply-runner.yml';
-const QUOTA_PROBE_MAX_AGE_MIN = Number(process.env.QUOTA_PROBE_MAX_AGE_MIN || 25);
+// 2026-08-19 本番実測で修正: */5 のcronでもGitHub側の間引きで実際には20〜40分空く
+// （8/18-19の実測で 20/22/25/39分間隔）。25分だとプローブがほぼ常に probe-stale で
+// UNKNOWNになり、上限中でも無駄撃ちしてしまう。実測レンジを覆う60分にする。
+const QUOTA_PROBE_MAX_AGE_MIN = Number(process.env.QUOTA_PROBE_MAX_AGE_MIN || 60);
 
 const ISSUE_LABEL = 'loop-self-heal';
 
@@ -271,6 +279,17 @@ async function upsertIssue(title, body, shouldBeOpen) {
   }
 }
 
+
+/**
+ * 再実行するループを選ぶ。取りこぼしが古い順に cap 本だけ。
+ * 復旧作業そのものが週次上限を焼き切らないための安全弁なので、純粋関数にして
+ * 回帰テストで固定する（loop-self-heal-e2e.mjs）。
+ */
+export function selectForDispatch(eligible, cap) {
+  const sorted = [...eligible].sort((a, b) => (b._missedForMinutes ?? 0) - (a._missedForMinutes ?? 0));
+  return { dispatch: sorted.slice(0, cap), deferred: sorted.slice(cap) };
+}
+
 // ──────────────────────────────────────────────────────────────── main
 
 async function main() {
@@ -355,25 +374,41 @@ async function main() {
       entry.action = 'hold-usage-limit';
       entry.detail = '上限がまだ切れているため再実行を見送り（次のtickで再判定）';
     } else {
-      entry.action = DRY_RUN ? 'would-dispatch' : 'dispatch';
-      if (!DRY_RUN) {
-        try {
-          await ghApi(`/repos/${REPO}/actions/workflows/${t.workflowFile}/dispatches`, {
-            method: 'POST',
-            body: JSON.stringify({ ref: 'master' }),
-          });
-          dispatched++;
-          console.log(`[loop-self-heal] 再実行しました: ${t.id}`);
-        } catch (e) {
-          entry.action = 'dispatch-failed';
-          entry.detail = e.message;
-          stuck++;
-          console.log(`[loop-self-heal] 再実行に失敗: ${t.id}: ${e.message}`);
-        }
-      }
+      // ここでは撃たない。全ループの判定が出揃ってから、古い取りこぼし順に
+      // MAX_DISPATCH_PER_TICK 本だけ撃つ（下の第2段）。
+      entry.action = 'eligible';
+      entry._workflowFile = t.workflowFile;
+      entry._missedForMinutes = Math.round(minutesSinceSlot);
     }
     loops.push(entry);
   }
+
+  // ── 第2段: 再実行の実行（1tickあたりの本数を絞る）─────────────────────────
+  // 取りこぼしが古いものから返す。復旧作業そのものが上限を焼き切らないようにする。
+  const { dispatch, deferred } = selectForDispatch(
+    loops.filter((l) => l.action === 'eligible'), MAX_DISPATCH_PER_TICK);
+  for (const entry of deferred) {
+    entry.action = 'queued-next-tick';
+    entry.detail = `1tick上限${MAX_DISPATCH_PER_TICK}本のため次のtickへ（毎時実行）`;
+  }
+  for (const entry of dispatch) {
+    if (DRY_RUN) { entry.action = 'would-dispatch'; continue; }
+    try {
+      await ghApi(`/repos/${REPO}/actions/workflows/${entry._workflowFile}/dispatches`, {
+        method: 'POST',
+        body: JSON.stringify({ ref: 'master' }),
+      });
+      entry.action = 'dispatch';
+      dispatched++;
+      console.log(`[loop-self-heal] 再実行しました: ${entry.id}`);
+    } catch (e) {
+      entry.action = 'dispatch-failed';
+      entry.detail = e.message;
+      stuck++;
+      console.log(`[loop-self-heal] 再実行に失敗: ${entry.id}: ${e.message}`);
+    }
+  }
+  for (const l of loops) { delete l._workflowFile; }
 
   // 検証系そのものが壊れているときに 'OK' と名乗らない（VALIDATION_UNAVAILABLE も
   // 停止条件のひとつ。「判定できなかった」を「異常なし」と表示するのが一番危ない）。
@@ -389,6 +424,7 @@ async function main() {
     quotaProbe: quota,
     graceMinutes: GRACE_MINUTES,
     maxDispatchPerWindow: MAX_DISPATCH_PER_WINDOW,
+    maxDispatchPerTick: MAX_DISPATCH_PER_TICK,
     dryRun: DRY_RUN,
     dispatched,
     unverifiable,

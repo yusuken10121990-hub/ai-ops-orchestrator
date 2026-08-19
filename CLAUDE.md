@@ -7,7 +7,7 @@
 PC・クラウド(スマホ含む)どちらの環境から編集してもOKです。次回の自動同期(毎日)で全リポジトリに
 反映されます。即時反映したい場合は `gh workflow run rules-propagate.yml -R yusuken10121990-hub/ai-ops-orchestrator`。
 
-## セッション開始時にまずこれ（Session Handoff・GOVERNANCE §55 / SHARED_RULES 36章）
+## セッション開始時にまずこれ（Session Handoff・GOVERNANCE §55 / SHARED_RULES 38章）
 **このセッションで最初のTaskに着手する前に1回だけ実行する。** 人間に「クラウドの正典を読んで」
 「前回の状態を引き継いで」と毎回言わせないための導線。出力は数行なので会話を埋めない。
 
@@ -33,8 +33,31 @@ Latest Decisions / Relevant Knowledge / Human Action Required / Agent Registry�
 - この環境に `ai-ops-config` が無ければ clone してから実行する。それも不可能なら
   **「引き継げた」と言わずに `HANDOFF_FAILED` として報告する**（推測で状態を語らない）。
 
+## Web関連タスクの標準動作（GOVERNANCE §56 / SHARED_RULES 39章）
+**「まずブラウザを操作する」ではなく「目的を達成できる最速・最小コストの経路を選ぶ」。**
+
+既存API > 検索API > HTTP直接 > CLI/curl > DOM > Playwright > DevTools MCP > 拡張GUI > 画像認識操作。
+上位で達成できるなら下位を使わない。認証 / JSレンダリング / UI固有操作 / 実ブラウザ検証が必要なときだけ
+自動的に次の手段へフォールバックする（オーナーに可否を聞かない）。
+
+- **Googleをブラウザで開いて検索欄に入力し結果画面を読む操作は原則禁止。** 検索API/HTTP等の高速手段を使う。
+  対象URLが判明したらそのURLへ直接アクセスする。**URLが既知なら検索を経由しない**。同じURLを何度も検索し直さない。
+- テキスト/HTML/JSON/構造化データを取るだけならGUIを起動しない。JSレンダリングが要るときだけブラウザへ。
+- ブラウザを使うのは: ログイン済みセッション / Cookie / JS実行後でないと取れない / SPA / UI操作そのものが目的 /
+  表示状態・レイアウト検証 / DevTools解析 / CAPTCHA / ブラウザ上でしか動かないサービス。
+- **DOM優先**（DOM > accessibility tree > selector > element metadata > URL・Network > スクショ解析）。
+  操作のたびにスクショを撮らない。固定sleepでなく条件ベース待機（element出現 / network idle / URL変化）。
+- 既存Chromeセッションを再利用する。独立作業は並列化。取得済みのURL/DOM/APIレスポンスは再利用する。
+- 巨大なHTML/DOM/ログをそのままコンテキストへ入れない。必要部分だけ抽出する。
+- **速度のために 正確性 / 最新性 / 認証 / セキュリティ / 操作確認 / 完了確認 / エラー検知 を犠牲にしない。**
+  「速いが間違っている」は禁止。目標は FAST + CORRECT + SAFE。
+- 競合時: 安全性 > 正確性 > オーナーの明示的要求 > 本ルール > その他。金銭ゲート・支払い方法登録の非代行・
+  Evidence First(36章)・UI Resource Safety(37章)・Session Handoff(38章) は本ルールより上位のまま。
+- 環境のegress制限等で上位手段が使えないときは「できません」で終わらせず、19章のブラウザ作業ハンドオフキュー
+  (`memory/browser-task-queue.json`) へ積む。**遮断の事実と、試した経路と結果を必ず明示する**（推測で不可能と言わない）。
+
 ## 最上位: Global Governance
-- **正典は1か所** `ai-ops-config/memory/governance/GOVERNANCE.md`（機械可読版 `governance/governance.json`・**現行 v1.1.0**）。
+- **正典は1か所** `ai-ops-config/memory/governance/GOVERNANCE.md`（機械可読版 `governance/governance.json`・**現行 v1.2.0**）。
   版とhashは `governance.mjs --verify` が照合し、不一致なら重要判断を進めてはならない。
   新規セッション・既存セッション再開・Scheduler・Cron・GitHub Actions・Sub-Agent・Event Handler、
   **どこから処理が始まっても同じ最上位原則・Risk Policy・SSoT・Knowledge・Business Goalに従う。**

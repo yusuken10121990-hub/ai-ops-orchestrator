@@ -69,6 +69,14 @@ const CRITICAL_LOCAL_TASK_IDS = new Set([
 const CRITICAL_CLOUD_WORKFLOW_FILES = new Set([
   'dashboard-sync', 'system-health-cloud', 'automation-health-cloud', 'backup-daily',
   'qa-daily', 'service-assurance-daily',
+  // 2026-08-19追加: 8/18-8/19にClaude週次上限で business-os-daily と広告PDCA 3本が
+  // 2日連続で実質未実行になったが、criticalに入っていなかったためこの監視からは
+  // 1件もIssueが起票されなかった（#52/#53はbusiness-os-freshness、#49は自動化ヘルスの
+  // 別経路）。事業のPDCAそのものを回すループなので、止まったら必ず気づける必要がある。
+  'business-os-daily', 'ad-pdca-daily', 'zerosys-ad-pdca', 'zerosys-transport-ads-daily-pdca',
+  // loop-self-heal は「上限で落ちた日次ループを取り戻す」復旧ループ。これが止まると
+  // 復旧が誰もいなくなるので、監視する側を監視する意味でcriticalに入れる。
+  'loop-self-heal',
 ]);
 
 function nowMs() { return Date.now(); }

@@ -138,9 +138,56 @@ cd "${HOME_CLAUDE}"
 # a silent no-op. This is a disposable GitHub Actions runner touching only
 # the config/ checkout (no other credentials/business systems reachable), so
 # bypassing the prompt is low-risk here — see decisions.md 2026-07-16 entry.
+# 5.5 (2026-08-19): Claudeの利用上限(週次/5時間/Opus上限・429)で落ちた場合は
+#   「失敗」ではなく「待機(SKIPPED)」として exit 0 する。
+#   実測 run 32216322754 (creative-studio-apply-runner, 2026-08-19 04:36 UTC):
+#     "You've hit your weekly limit · resets 5am (UTC)" → claude が exit 1
+#     → job failure → GitHubから "Run failed:" メールが飛ぶ。
+#   run-loop.sh は25本のworkflowが共有しており、5分cronのループもあるため、
+#   上限に当たっている間じゅう全ループが失敗メールを撒き続けていた。
+#   上限枯渇はループの欠陥ではなく、リセット後のcronが自動で再開する事象なので
+#   失敗にしない。同じ判断は既に drain-chat-tasks.sh:168 で確立済み
+#   （「クォータ枯渇は失敗ではなく待機（exit 1にすると毎時failureのノイズになる）」）。
+#   本物の失敗（設定ミス・SKILL不整合・API 4xx/5xx等）は従来どおり exit != 0 の
+#   まま通し、メール通知を殺さない。
+USAGE_LIMIT_PATTERN='hit your (weekly|[0-9]+-hour|usage|opus|sonnet) limit|hit your limit|usage limit reached|out of (weekly|usage) limit|"api_error_status" *: *429|rate_limit_error|Too Many Requests'
+
+CLAUDE_LOG="$(mktemp)"
+set +e
 npx -y @anthropic-ai/claude-code@latest -p "${PROMPT}" \
   --dangerously-skip-permissions \
-  --model "${CLAUDE_MODEL:-sonnet}"
+  --model "${CLAUDE_MODEL:-sonnet}" 2>&1 | tee "${CLAUDE_LOG}"
+CLAUDE_EXIT="${PIPESTATUS[0]}"
+set -e
+
+if [ "${CLAUDE_EXIT}" -ne 0 ]; then
+  if grep -Eqi "${USAGE_LIMIT_PATTERN}" "${CLAUDE_LOG}"; then
+    LIMIT_LINE="$(grep -Eim1 "${USAGE_LIMIT_PATTERN}" "${CLAUDE_LOG}" || true)"
+    rm -f "${CLAUDE_LOG}"
+    echo "== SKIPPED: Claudeの利用上限に到達 (exit=${CLAUDE_EXIT}) =="
+    echo "   detected: ${LIMIT_LINE}"
+    echo "   上限リセット後のcronが自動で再開するため、このrunは失敗にしない。"
+    echo "::notice title=SKIPPED (Claude usage limit)::${LOOP_NAME}: ${LIMIT_LINE}"
+    if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
+      {
+        printf '### ⏸ SKIPPED: Claude usage limit
+
+'
+        printf -- '- loop: `%s`
+' "${LOOP_NAME}"
+        printf -- '- detected: `%s`
+' "${LIMIT_LINE}"
+        printf -- '- 上限リセット後のcronが自動で再開します（失敗ではありません）。
+'
+      } >> "${GITHUB_STEP_SUMMARY}"
+    fi
+    exit 0
+  fi
+  rm -f "${CLAUDE_LOG}"
+  echo "ERROR: claude run failed (exit=${CLAUDE_EXIT})" >&2
+  exit "${CLAUDE_EXIT}"
+fi
+rm -f "${CLAUDE_LOG}"
 
 echo "== claude run finished, syncing generated changes back to config checkout =="
 

@@ -1,0 +1,82 @@
+name: loop-self-heal
+
+# 2026-08-19: Claudeの利用上限で落ちた日次/週次ループを、上限が戻ったあと自動で
+# 取り戻す「復旧ループ」。監視(automation-health-cloud)は通知するだけで復旧しないため、
+# 8/4-8/5 と 8/18-8/19 に同じ事故（週次上限で日次ループが丸1日分失われる）が再発した。
+# 判断は全て scripts/loop-self-heal.mjs（決定論・LLM不使用）が行う。
+#
+# 実行できるのは既存workflowの workflow_dispatch 再実行だけ。予算変更・デプロイ・
+# 削除・課金の実装はスクリプトに存在しない（safe-remediate.sh と同じ安全設計）。
+#
+# 他ループと衝突しない分に配置（:08,:38=automation-health / :13,:43=system-health /
+# :23=dashboard-sync / :11,:41=chat-task-consumer）。
+on:
+  schedule:
+    - cron: "52 * * * *"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "1にすると判定のみ行い再実行しない"
+        required: false
+        default: "0"
+
+permissions:
+  contents: read
+  actions: write
+  issues: write
+
+concurrency:
+  group: loop-self-heal
+  cancel-in-progress: false
+
+jobs:
+  heal:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout orchestrator (public, scripts only)
+        uses: actions/checkout@v7
+
+      - name: Setup SSH deploy key (config)
+        env:
+          CONFIG_DEPLOY_KEY: ${{ secrets.CONFIG_DEPLOY_KEY }}
+        run: |
+          chmod +x scripts/setup-ssh-keys.sh
+          scripts/setup-ssh-keys.sh
+
+      - name: Checkout private config repo via deploy key (SSH)
+        run: |
+          git clone --depth 1 --branch main git@config-gh:yusuken10121990-hub/ai-ops-config.git config
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+
+      - name: Regression check (loop-self-heal-e2e)
+        run: node scripts/loop-self-heal-e2e.mjs
+
+      - name: Run loop-self-heal (decision + recovery, no Claude)
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          OUTPUT_JSON: config/memory/loop-self-heal-status.json
+          DRY_RUN: ${{ github.event.inputs.dry_run || '0' }}
+        run: node scripts/loop-self-heal.mjs
+
+      - name: Commit & push loop-self-heal-status.json to config repo
+        working-directory: config
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "no changes to commit"
+          else
+            git commit -m "chore: loop-self-heal update ($(TZ=Asia/Tokyo date '+%Y-%m-%d %H:%M JST'))"
+            bash ../scripts/git-push-retry.sh git@config-gh:yusuken10121990-hub/ai-ops-config.git main
+          fi
+# Note: このworkflow自身はClaudeを使わないため、利用上限の影響を受けない
+# （＝上限で全ループが止まっている最中でも、この復旧ループだけは確実に動き続ける）。
+# 復旧できないループ（再実行上限到達 / dispatch API失敗）は GitHub Issue
+# ラベル loop-self-heal で起票し、復旧を確認したら自動クローズする。

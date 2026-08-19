@@ -111,6 +111,26 @@ check('判定不能と確実な成功が混在するなら ok を優先',
   check('TEST-D 残りは次tickへ', deferred.map((x) => x.id), ['new']);
   check('TEST-D 入力を破壊しない', e.map((x) => x.id), ['new', 'oldest', 'mid']);
 }
+// TEST-E: 事業PDCAを学習系より先に返す（2026-08-19 本番実測で順番が逆だった）
+{
+  const e = [
+    { id: 'research-team-learning', _missedForMinutes: 900 },
+    { id: 'rivet-ui-learning', _missedForMinutes: 800 },
+    { id: 'ad-pdca-daily', _missedForMinutes: 300 },
+    { id: 'zerosys-ad-pdca', _missedForMinutes: 350 },
+  ];
+  const { dispatch } = selectForDispatch(e, 2);
+  check('TEST-E 事業PDCAが先（古さより事業影響）', dispatch.map((x) => x.id),
+    ['zerosys-ad-pdca', 'ad-pdca-daily']);
+}
+{
+  const e = [
+    { id: 'ad-pdca-daily', _missedForMinutes: 100 },
+    { id: 'business-os-daily', _missedForMinutes: 500 },
+  ];
+  const { dispatch } = selectForDispatch(e, 2);
+  check('TEST-E 同じtier内は古い順', dispatch.map((x) => x.id), ['business-os-daily', 'ad-pdca-daily']);
+}
 {
   const { dispatch, deferred } = selectForDispatch([], 3);
   check('TEST-D 対象0件でも壊れない', [dispatch.length, deferred.length], [0, 0]);

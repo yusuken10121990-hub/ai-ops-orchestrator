@@ -280,13 +280,24 @@ async function upsertIssue(title, body, shouldBeOpen) {
 }
 
 
+// 事業のPDCAそのものを回すループ。1tickの枠が埋まるとき、学習系より先に返す。
+// （2026-08-19 本番実測: 古い順だけで並べたら research-team-learning / rivet-* が
+//  先に入り、ad-pdca-daily と zerosys-* が次tickへ回った。取りこぼしの古さより
+//  事業影響の大きさを優先する。automation-health-check.mjs の critical と同じ考え方。）
+export const BUSINESS_CRITICAL_LOOPS = new Set([
+  'business-os-daily', 'ad-pdca-daily', 'zerosys-ad-pdca', 'zerosys-transport-ads-daily-pdca',
+  'ad-lp-apply-daily', 'qa-daily', 'service-assurance-daily',
+]);
+
 /**
- * 再実行するループを選ぶ。取りこぼしが古い順に cap 本だけ。
+ * 再実行するループを選ぶ。事業クリティカル優先 → 取りこぼしが古い順 → cap 本だけ。
  * 復旧作業そのものが週次上限を焼き切らないための安全弁なので、純粋関数にして
  * 回帰テストで固定する（loop-self-heal-e2e.mjs）。
  */
 export function selectForDispatch(eligible, cap) {
-  const sorted = [...eligible].sort((a, b) => (b._missedForMinutes ?? 0) - (a._missedForMinutes ?? 0));
+  const tier = (l) => (BUSINESS_CRITICAL_LOOPS.has(l.id) ? 0 : 1);
+  const sorted = [...eligible].sort((a, b) =>
+    tier(a) - tier(b) || (b._missedForMinutes ?? 0) - (a._missedForMinutes ?? 0));
   return { dispatch: sorted.slice(0, cap), deferred: sorted.slice(cap) };
 }
 

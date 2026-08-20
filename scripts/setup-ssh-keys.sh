@@ -87,3 +87,16 @@ add_key "ai-ops-backups" "${BACKUPS_REPO_DEPLOY_KEY:-}"
 # single dev-integration pass) and CLIENTS_DEPLOY_KEY is provisioned, this
 # skips cleanly until then like every other not-yet-provisioned key here.
 add_key "clients" "${CLIENTS_DEPLOY_KEY:-}"
+# chat-task ct_20260820_9d3941 (2026-08-20): the ZEROSYS limited-offer LP
+# section (memory/ad-drafts/zerosys-limited-offer-lp-section-20260820.md)
+# needs to be applied to yusuken10121990-hub/lp-ai-system-saas
+# (local path C:\Users\user\ai-business\campaigns\ai-system-saas-lp).
+# Confirmed 2026-08-20 this repo is NOT covered by the existing
+# ai-business-ops mirror (checkout-ai-business.sh only copies marketing/ and
+# google-ads/ out of ai-business-ops -- campaigns/ai-system-saas-lp lives in
+# its own separate repo that no cloud workflow currently clones). Skips
+# cleanly until LP_AI_SYSTEM_SAAS_DEPLOY_KEY is provisioned -- see
+# owner-todos.md lp-ai-system-saas-cloud-deploy-key-20260820. No workflow
+# uses this alias yet; provisioning the key only unblocks a future cloud
+# apply step, it does not itself run anything.
+add_key "lp-ai-system-saas" "${LP_AI_SYSTEM_SAAS_DEPLOY_KEY:-}"

@@ -152,9 +152,46 @@ cd "${HOME_CLAUDE}"
 #   まま通し、メール通知を殺さない。
 USAGE_LIMIT_PATTERN='hit your (weekly|[0-9]+-hour|usage|opus|sonnet) limit|hit your limit|usage limit reached|out of (weekly|usage) limit|"api_error_status" *: *429|rate_limit_error|Too Many Requests'
 
+# 5.6 (2026-08-20): CLIの存在を「実行前に」検証してから本番実行する。
+#   実測: zerosys-ad-pdca の schedule 実行が 2026-08-18/19/20 と3日連続で
+#     "Error: claude native binary not installed."
+#     "Either postinstall did not run (--ignore-scripts, some pnpm configs)
+#      or the platform-native optional dependency was not downloaded"
+#   で即死していた (run 32090463389 / 32207296598 / 32323369637)。
+#   一方 workflow_dispatch は同日でも成功しており、npx のキャッシュ状態に
+#   依存する間欠障害だった＝「手で叩けば動く」ため気付きにくい。
+#   run-loop.sh は25本のworkflowが共有しているので、ここを直せば全ループに効く。
+#   対策: (1) --version で実際に起動できることを確認してから本番呼び出しへ進む
+#         (2) 失敗したら npx キャッシュを捨て、postinstall が確実に走る
+#             グローバルインストールへフォールバックして再検証
+#         (3) 3回試して駄目なら「CLIが用意できなかった」と明示して落とす
+#             (プロンプトを投げずに落とすので、上限枯渇の SKIPPED とも混ざらない)
+CLAUDE_CODE_PKG="@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION:-latest}"
+CLAUDE_CMD=""
+for _attempt in 1 2 3; do
+  if npx -y "${CLAUDE_CODE_PKG}" --version >/dev/null 2>&1; then
+    CLAUDE_CMD="npx -y ${CLAUDE_CODE_PKG}"
+    break
+  fi
+  echo "WARN: claude CLI not runnable via npx (attempt ${_attempt}/3). repairing…" >&2
+  npm cache clean --force >/dev/null 2>&1 || true
+  if npm install -g --no-audit --no-fund "${CLAUDE_CODE_PKG}" >/dev/null 2>&1 \
+    && command -v claude >/dev/null 2>&1 \
+    && claude --version >/dev/null 2>&1; then
+    CLAUDE_CMD="claude"
+    break
+  fi
+done
+if [ -z "${CLAUDE_CMD}" ]; then
+  echo "ERROR: claude CLI could not be installed after 3 attempts (${CLAUDE_CODE_PKG})." >&2
+  echo "       native binary missing — see scripts/run-loop.sh section 5.6." >&2
+  exit 1
+fi
+echo "claude CLI: ${CLAUDE_CMD} ($(${CLAUDE_CMD} --version 2>/dev/null | head -1))"
+
 CLAUDE_LOG="$(mktemp)"
 set +e
-npx -y @anthropic-ai/claude-code@latest -p "${PROMPT}" \
+${CLAUDE_CMD} -p "${PROMPT}" \
   --dangerously-skip-permissions \
   --model "${CLAUDE_MODEL:-sonnet}" 2>&1 | tee "${CLAUDE_LOG}"
 CLAUDE_EXIT="${PIPESTATUS[0]}"

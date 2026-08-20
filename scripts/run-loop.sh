@@ -17,6 +17,10 @@
 set -euo pipefail
 
 LOOP_NAME="${1:?usage: run-loop.sh <loop-name>}"
+# このスクリプトが置かれているディレクトリを、cd する前に絶対パスで確定させる。
+# 下の方で cd "${HOME_CLAUDE}" するため、BASH_SOURCE の相対パス
+# (scripts/run-loop.sh) はそこから先では解決できない。run 32349297544 はこれで落ちた。
+RUN_LOOP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONFIG_DIR="${CONFIG_DIR:-${GITHUB_WORKSPACE:-$(pwd)}/config}"
 HOME_CLAUDE="${HOME}/.claude"
 # P2: some loops (ad-lp-*, seo-daily, ad-pdca-daily) reference absolute
@@ -158,7 +162,7 @@ USAGE_LIMIT_PATTERN='hit your (weekly|[0-9]+-hour|usage|opus|sonnet) limit|hit y
 #   learning-enforcer.yml も同じスクリプトを source しており、
 #   「run-loop.sh を通らないworkflow」も同じ保護を受ける。
 # shellcheck source=scripts/ensure-claude-cli.sh
-. "$(dirname "${BASH_SOURCE[0]}")/ensure-claude-cli.sh"
+. "${RUN_LOOP_DIR}/ensure-claude-cli.sh"
 
 CLAUDE_LOG="$(mktemp)"
 set +e

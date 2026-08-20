@@ -46,6 +46,13 @@ jobs:
       - name: Auto-resume regression (orchestrator-local)
         run: node scripts/auto-resume-e2e.mjs
 
+      # 共有ループ入口の契約（2026-08-20: 相対 source が 38 workflow を即死させた）。
+      - name: Shared loop entry contract (orchestrator-local)
+        run: node scripts/run-loop-contract-e2e.mjs
+
+      - name: Loop self-heal regression (orchestrator-local)
+        run: node scripts/loop-self-heal-e2e.mjs
+
       - name: Build required test manifest (full)
         working-directory: config
         run: node scripts/qa-gate.mjs manifest --tier R4

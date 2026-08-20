@@ -153,8 +153,12 @@ jobs:
           printf '%s\n' "${PROMPT:0:400}"
           echo "-----------------------------"
 
+          # 2026-08-20: run-loop.sh を通らない唯一のClaude呼び出しだったため、
+          # "claude native binary not installed" の間欠障害を素で踏んでいた
+          # (schedule実行 6/12 が failure。run 32323962432 等)。共有スクリプトへ統一。
+          . "${GITHUB_WORKSPACE}/scripts/ensure-claude-cli.sh"
           cd "$HOME/.claude"
-          npx -y @anthropic-ai/claude-code@latest -p "${PROMPT}" \
+          ${CLAUDE_CMD} -p "${PROMPT}" \
             --dangerously-skip-permissions \
             --model "${CLAUDE_MODEL:-sonnet}"
 

@@ -160,7 +160,13 @@ export function discoverLoops(dir) {
     const file = join(dir, name);
     const text = readFileSync(file, 'utf8');
     const id = name.replace(/\.ya?ml$/, '');
-    const usesRunLoop = /run-loop\.sh/.test(text);
+    // 2026-08-20: 判定を「run-loop.sh を使うか」から「Claudeを呼ぶか」へ広げた。
+    // learning-enforcer.yml は npx @anthropic-ai/claude-code を直接叩いており、
+    // run-loop.sh を通らないという理由だけで no-claude-loop と分類され、
+    // schedule実行が 6/12 failure のまま一度も復旧対象にならなかった。
+    // 「復旧対象かどうか」を実装経路(run-loop.sh)で判定すると、経路を1本増やした
+    // 瞬間に保護が外れる。判定はClaudeを使う事実そのもので行う。
+    const usesRunLoop = /run-loop\.sh/.test(text) || /@anthropic-ai\/claude-code/.test(text);
     const hasDispatch = /^\s*workflow_dispatch\s*:/m.test(text);
     const crons = [...text.matchAll(/^\s*-\s*cron:\s*["']([^"']+)["']/gm)].map((m) => m[1]);
     const classified = crons.map(classifyCron);

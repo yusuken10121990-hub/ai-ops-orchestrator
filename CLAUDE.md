@@ -258,3 +258,22 @@ LLM proposes → 独立した検証層（Evidence/Scope/Semantic/Temporal/Consis
 `C:\Users\user\.claude\SHARED_RULES.md`）を参照。
 <!-- END shared-rules (auto) -->
 <!-- END shared-rules (auto) -->
+
+<!-- repo-local: ここから下は auto ブロックの外。SHARED_RULES の正典ではなくこのリポジトリ固有の環境メモ -->
+## クラウドセッション（Claude Code on the web / mobile）の実行環境制約
+
+このリポジトリをクラウドセッションで開いた場合、以下は**この環境には存在しない**。
+存在しないものを実行しようとして失敗するのが「バックグラウンドシェルが失敗しました」の常習原因なので、
+試行する前にここを見る。
+
+| 使えないもの | 事実（検証済み） | 代替 |
+| --- | --- | --- |
+| `gh` コマンド | クラウドコンテナに未インストール | GitHub MCP ツール（`actions_run_trigger` / `actions_list` 等） |
+| `node <ai-ops-config>/scripts/session-handoff.mjs` | `ai-ops-config` はこの環境に無く、リポジトリスコープ外のため clone も不可 | 実行を試みず `HANDOFF_FAILED` と明示する（38章の規定どおり。推測で状態を語らない） |
+| `scripts/checkout-ai-business.sh` / `scripts/setup-ssh-keys.sh` 系 | SSH alias（`git@*-gh:`）と deploy key は オーナーPC / GitHub Actions 専用 | クラウドからは実行しない |
+
+- ダッシュボード更新は `gh workflow run dashboard-sync.yml ...` の代わりに GitHub MCP の
+  `actions_run_trigger`（workflow: `dashboard-sync.yml`）を使う。`rules-propagate.yml` も同様。
+- `scripts/run-loop.sh` `scripts/jobqueue-runner-loop.sh` 等の常駐ループをクラウドで
+  バックグラウンド起動しない。ターン終了時に kill され非0終了になるだけで、常駐しない。
+- 上記が本当に必要になった場合は「できません」で終わらせず、**遮断の事実と試した経路と結果を明示**する（39章）。

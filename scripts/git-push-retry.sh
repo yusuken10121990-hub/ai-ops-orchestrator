@@ -64,6 +64,12 @@ MAX_ATTEMPTS=5
 # snapshot/cache files only, never narrative logs.
 CACHE_ONLY_PATTERN='^memory/ad-metrics/.*\.json$|^memory/[^/]*-status\.json$'
 
+# keep-ours では壊れるファイル。累積カウンタを持つので意味を理解して統合する。
+# 2026-08-21: ad-money-guard-state.json の衝突で ad-pdca-daily の schedule 実行が
+# 5回リトライ全敗していた。単に許可リストへ足すと streakDays(広告費を使って成果0の
+# 連続日数)の加算が消え、金銭のP1アラートが遅れるため、専用のマージャを通す。
+SEMANTIC_MERGE_PATTERN='^memory/[^/]*-state\.json$'
+
 resolve_cache_conflicts_or_abort() {
   # Must only be called during a MERGE (not a rebase -- see note (3) above).
   # Returns 0 if the merge's conflicts were either fully resolved (cache-only)
@@ -74,6 +80,29 @@ resolve_cache_conflicts_or_abort() {
   if [ -z "${unmerged}" ]; then
     return 0
   fi
+  # (a) 累積カウンタを持つ state ファイルは、意味を理解して統合する
+  local semantic merger f o t
+  semantic="$(printf '%s\n' "${unmerged}" | grep -E "${SEMANTIC_MERGE_PATTERN}" || true)"
+  if [ -n "${semantic}" ]; then
+    merger="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/merge-state-json.mjs"
+    while IFS= read -r f; do
+      [ -z "${f}" ] && continue
+      o="$(mktemp)"; t="$(mktemp)"
+      if ! git show ":2:${f}" > "${o}" 2>/dev/null || ! git show ":3:${f}" > "${t}" 2>/dev/null; then
+        echo "[git-push-retry] 衝突した両側を取得できません: ${f}" >&2; rm -f "${o}" "${t}"; return 1
+      fi
+      if node "${merger}" "${o}" "${t}" "${f}"; then
+        git add -- "${f}"
+      else
+        echo "[git-push-retry] 意味統合に失敗したため中断します: ${f}" >&2; rm -f "${o}" "${t}"; return 1
+      fi
+      rm -f "${o}" "${t}"
+    done <<< "${semantic}"
+    unmerged="$(git diff --name-only --diff-filter=U || true)"
+    if [ -z "${unmerged}" ]; then return 0; fi
+  fi
+
+  # (b) 残りは丸ごと再生成されるスナップショットだけを keep-ours で解決する
   outside="$(printf '%s\n' "${unmerged}" | grep -vE "${CACHE_ONLY_PATTERN}" || true)"
   if [ -n "${outside}" ]; then
     echo "[git-push-retry] conflict outside cache allowlist, cannot auto-resolve: ${outside}" >&2

@@ -30,7 +30,9 @@
 
 import { readFileSync, writeFileSync, existsSync, readdirSync, statSync } from 'node:fs';
 import { execSync } from 'node:child_process';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { readJson } from './read-json.mjs';
 
 const CONFIG_DIR = process.env.CONFIG_DIR || 'config';
 const HEARTBEAT_JSON = process.env.HEARTBEAT_JSON || join(CONFIG_DIR, 'memory/automation-heartbeat.json');
@@ -199,20 +201,114 @@ function isSupersededByCloud(localId, cloudWorkflows) {
   });
 }
 
-function checkLocalTasks(heartbeat, cloudWorkflows = []) {
-  const tasks = (heartbeat && Array.isArray(heartbeat.tasks)) ? heartbeat.tasks : [];
+
+/* ------------------------------------------------------------------ */
+/* heartbeat スキーマの吸収                                            */
+/* ------------------------------------------------------------------ */
+// 2026-08-23 実測: ローカルPCが書く automation-heartbeat.json の tasks[] は
+//   { name:"AIOps-BrowserTaskRunner-Headless", lastRunTime:"2026/08/22 19:47:36",
+//     status:"ok", nextRunTime, lastResult }
+// というWindowsタスクスケジューラ由来の形をしている。一方このスクリプトは
+//   { taskId, cronExpression, lastRunAt, nextRunAt, enabled }
+// を読んでいた。つまりBOMを直しても t.taskId は全件 undefined になり、
+// 12件が id:undefined のゴミとして台帳へ入るだけだった（監視できていない）。
+// 両方の形を受けられるようにここで正規化する。
+
+/** "AIOps-BrowserTaskRunner-Headless" -> "browser-task-runner" */
+export function windowsTaskNameToId(name) {
+  if (typeof name !== 'string' || !name) return null;
+  const core = name.replace(/^AIOps-/, '').replace(/-Headless$/, '').replace(/-/g, '');
+  if (!core) return null;
+  return core.replace(/(?<=[a-z0-9])(?=[A-Z])/g, '-').toLowerCase();
+}
+
+/**
+ * "2026/08/22 19:47:36" (ローカルPC=JST表記、タイムゾーン情報なし) を ISO へ。
+ * 判別できない形式は null を返す。推測で今の時刻を入れたりしない（FAIL-CLOSED）。
+ */
+export function parseWindowsLocalTime(text) {
+  if (typeof text !== 'string') return null;
+  const m = /^(\d{4})\/(\d{1,2})\/(\d{1,2})[ T](\d{1,2}):(\d{2})(?::(\d{2}))?$/.exec(text.trim());
+  if (!m) return null;
+  const [, y, mo, d, h, mi, se] = m;
+  const pad = (v, n = 2) => String(v).padStart(n, '0');
+  // オーナー環境はJST固定。ここを推測に頼らせないため明示する。
+  const iso = `${y}-${pad(mo)}-${pad(d)}T${pad(h)}:${mi}:${pad(se || '0')}+09:00`;
+  const t = new Date(iso);
+  return Number.isNaN(t.getTime()) ? null : t.toISOString();
+}
+
+// Windowsタスクスケジューラが返す実行状態のうち「動いていない」と読むべきもの。
+const WINDOWS_BAD_STATUSES = new Set(['not_run_or_terminated', 'nonzero_result', 'failed']);
+
+/**
+ * heartbeat.tasks を { taskId, cronExpression, lastRunAt, nextRunAt, enabled,
+ * runnerReported } に揃える。
+ * 変換できた taskId が scheduled-tasks/ に実在しない場合は「推測でIDを作らない」。
+ * unmappedフラグを立てて生の名前のまま残す（FACT SAFETY: 未知値を既知Categoryへ
+ * 勝手にマッピングしない）。
+ */
+export function normalizeHeartbeatTasks(heartbeat, knownTaskIds = new Set()) {
+  const raw = (heartbeat && Array.isArray(heartbeat.tasks)) ? heartbeat.tasks : [];
+  return raw.map((t) => {
+    if (t && typeof t.taskId === 'string' && t.taskId) {
+      return { ...t, runnerReported: t.runnerReported ?? t.status ?? null, unmapped: false };
+    }
+    const derived = windowsTaskNameToId(t?.name);
+    const known = derived !== null && knownTaskIds.has(derived);
+    return {
+      taskId: known ? derived : (t?.name ?? null),
+      cronExpression: t?.cronExpression ?? null,
+      lastRunAt: parseWindowsLocalTime(t?.lastRunTime) ?? t?.lastRunAt ?? null,
+      nextRunAt: parseWindowsLocalTime(t?.nextRunTime) ?? t?.nextRunAt ?? null,
+      enabled: t?.enabled,
+      runnerReported: t?.status ?? null,
+      // scheduled-tasks/ に実体が無い＝Windows専用の保守タスク等。
+      // 存在しないIDへ紐付けたことにしない。
+      unmapped: !known,
+    };
+  });
+}
+
+export function checkLocalTasks(heartbeat, cloudWorkflows = []) {
   const dirTaskIds = existsSync(SCHEDULED_TASKS_DIR)
     ? readdirSync(SCHEDULED_TASKS_DIR).filter((n) => statSync(join(SCHEDULED_TASKS_DIR, n)).isDirectory())
     : [];
+  // heartbeatはローカルPC(Windows)由来の別スキーマで来る。ここで吸収する。
+  const tasks = normalizeHeartbeatTasks(heartbeat, new Set(dirTaskIds));
   const heartbeatIds = new Set(tasks.map((t) => t.taskId));
 
   const results = [];
   for (const t of tasks) {
-    const cls = classifyCron(t.cronExpression);
+    // クラウドworkflowへ移設済みのタスクは、ローカルが止まっていて当然。
+    // ここを見ないと「移設済みなのにstalled」という逆向きの偽警告が出る。
+    if (!t.unmapped && isSupersededByCloud(t.taskId, cloudWorkflows)) {
+      results.push({
+        id: t.taskId,
+        source: 'local',
+        status: 'superseded-by-cloud',
+        critical: false,
+        runnerReported: t.runnerReported ?? null,
+        note: '同名/類似名のクラウドworkflowが存在するため、ローカル側の停止は移設済みによる正常な状態と判断',
+      });
+      continue;
+    }
+    // heartbeat側はcronを持ってこない（Windowsタスクスケジューラ由来のため）。
+    // classifyCron(null) の既定24hをそのまま使うと、07:00実行の日次タスクを
+    // 翌07:30に見た瞬間 24.5h > 24h で毎日必ず 'stalled' になる（実測で確認）。
+    // オーナー指定の「日次系→26h」に合わせ、cadence不明時は26hの猶予にする。
+    // 本当に落ちている場合は runnerReported 側で即座に拾えるので緩めても盲目にならない。
+    const cls = t.cronExpression
+      ? classifyCron(t.cronExpression)
+      : { kind: 'unknown-cadence', thresholdMinutes: 26 * 60 };
     const lastRunAgeMin = ageMinutes(t.lastRunAt);
     let status;
     if (t.enabled === false) {
       status = 'disabled';
+    } else if (WINDOWS_BAD_STATUSES.has(String(t.runnerReported))) {
+      // ランナー本人が「動いていない」と明示している。
+      // 明示Factは推論より上位なので、鮮度計算で上書きしない。
+      status = 'stalled';
     } else if (!t.lastRunAt) {
       // 一度も発火していない: SKILL.mdの初回コミットからの経過で「新規で猶予期間内」か
       // 「本当に発火していない異常」かを切り分ける。
@@ -239,6 +335,8 @@ function checkLocalTasks(heartbeat, cloudWorkflows = []) {
       nextRunAt: t.nextRunAt || null,
       enabled: t.enabled !== false,
       status,
+      runnerReported: t.runnerReported ?? null,
+      unmapped: t.unmapped === true ? true : undefined,
       critical: CRITICAL_LOCAL_TASK_IDS.has(t.taskId),
     });
   }
@@ -335,7 +433,10 @@ async function main() {
   let heartbeatError = null;
   if (existsSync(HEARTBEAT_JSON)) {
     try {
-      heartbeat = JSON.parse(readFileSync(HEARTBEAT_JSON, 'utf8'));
+      // BOM耐性必須: この heartbeat はローカルWindows側が書くためBOM付きになる。
+      // 2026-08-23、素のJSON.parseがBOMで落ち、localRunner監視が盲目になり
+      // ローカルタスク9件が偽の 'never-fired' になっていた。
+      heartbeat = readJson(HEARTBEAT_JSON);
     } catch (e) {
       heartbeatError = e.message;
     }
@@ -412,6 +513,11 @@ async function main() {
   await upsertGithubIssue({ title, bodyLines, stale: isCritical });
 }
 
-main().catch((e) => {
-  console.error('[automation-health] fatal (non-blocking, exiting 0):', e);
-});
+// 直接実行されたときだけ走らせる。
+// import しただけで main() が動くと、adapter関数の単体テストが
+// 本番台帳を書きに行って失敗する（2026-08-23 の回帰テスト追加時に判明）。
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  main().catch((e) => {
+    console.error('[automation-health] fatal (non-blocking, exiting 0):', e);
+  });
+}

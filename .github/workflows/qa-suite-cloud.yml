@@ -66,6 +66,21 @@ jobs:
         working-directory: config
         run: node scripts/qa-gate.mjs gate --ui-clean true --critical-unknown 0
 
+      # 2026-08-23: config側 qa-gate.yml の paths-ignore が腐っていないかを実測する。
+      # あの除外リストは「Gate結果に影響しないと実証済みのパス」しか載せない約束だが、
+      # 新しいテストが状態ファイルを読み始めた瞬間に約束は静かに壊れ、
+      # 壊れたまま緑になる（＝FALSE PASS）。Promptでの約束ではなくコードで縛る。
+      # private側で回すとまさに枯渇させた分数を食うので、無料枠のここで日次実行する。
+      # 直前の full regression は実台帳へ書き込むのでcloneはdirtyになる。
+      # 検証器は未コミット変更を壊さないようdirtyだと実行を拒否するので、
+      # 使い捨てcloneをここで基準状態へ戻してから渡す。
+      - name: Verify qa-gate paths-ignore is still inert
+        working-directory: config
+        run: |
+          git checkout -- .
+          git clean -fdq
+          node scripts/qa-paths-ignore-verify.mjs
+
       - name: Upload evidence
         if: always()
         uses: actions/upload-artifact@v4

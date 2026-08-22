@@ -26,6 +26,7 @@
 // フィード取得失敗を検知してskipするだけで済むよう既に実装済み)。
 
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
+import { readJson } from './read-json.mjs';
 
 const SYSTEMS_JSON = process.env.SYSTEMS_JSON || 'config/memory/systems.json';
 const OUT_PATH = process.env.PUBLIC_FEED_OUT || 'public-feed/systems-live.json';
@@ -37,7 +38,7 @@ function main() {
     console.error(`[publish-public-feed] SYSTEMS_JSON not found at ${SYSTEMS_JSON}, skip`);
     return;
   }
-  const catalog = JSON.parse(readFileSync(SYSTEMS_JSON, 'utf8'));
+  const catalog = readJson(SYSTEMS_JSON); // BOM耐性(2026-08-23 automation-heartbeat事故の一般化)
   const all = catalog.systems || [];
   const live = all
     .filter((s) => s.status === 'live')

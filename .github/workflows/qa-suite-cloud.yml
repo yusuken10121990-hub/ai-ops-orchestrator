@@ -53,6 +53,13 @@ jobs:
       - name: Loop self-heal regression (orchestrator-local)
         run: node scripts/loop-self-heal-e2e.mjs
 
+      # 2026-08-23: automation-health-cloud は毎回 success なのに、中身は
+      # localRunner=unknown（BOMでheartbeatがparse不能）＋ heartbeat由来12タスクが
+      # t.taskId=undefined で監視対象から丸ごと抜けていた。ワークフローが緑なので
+      # 誰も気づけない＝監視のFALSE PASS。同じ壊れ方を二度させないための回帰。
+      - name: Automation health BOM/schema regression (orchestrator-local)
+        run: node scripts/automation-health-bom-e2e.mjs
+
       - name: Build required test manifest (full)
         working-directory: config
         run: node scripts/qa-gate.mjs manifest --tier R4

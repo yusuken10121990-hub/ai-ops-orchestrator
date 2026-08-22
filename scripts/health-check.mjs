@@ -45,6 +45,7 @@
 
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
+import { readJson } from './read-json.mjs';
 
 const SYSTEMS_JSON = process.env.SYSTEMS_JSON || 'config/memory/systems.json';
 const HEALTH_STATUS_JSON = process.env.HEALTH_STATUS_JSON || 'config/memory/health-status.json';
@@ -258,13 +259,13 @@ async function main() {
     console.error(`ERROR: SYSTEMS_JSON not found at ${SYSTEMS_JSON}`);
     return;
   }
-  const catalog = JSON.parse(readFileSync(SYSTEMS_JSON, 'utf8'));
+  const catalog = readJson(SYSTEMS_JSON); // BOM耐性(2026-08-23 automation-heartbeat事故の一般化)
   const all = catalog.systems || [];
 
   let prev = {};
   if (existsSync(HEALTH_STATUS_JSON)) {
     try {
-      prev = JSON.parse(readFileSync(HEALTH_STATUS_JSON, 'utf8')).systems || {};
+      prev = readJson(HEALTH_STATUS_JSON).systems || {};
     } catch {
       prev = {};
     }

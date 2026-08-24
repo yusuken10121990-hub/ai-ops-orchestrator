@@ -164,15 +164,85 @@ USAGE_LIMIT_PATTERN='hit your (weekly|[0-9]+-hour|usage|opus|sonnet) limit|hit y
 # shellcheck source=scripts/ensure-claude-cli.sh
 . "${RUN_LOOP_DIR}/ensure-claude-cli.sh"
 
+# 5.7 (2026-08-24): claude 実行そのものに、ジョブ全体のtimeout-minutesより手前で切れる
+#   独自タイムアウト・実行量の上限・逐次出力を持たせる。
+#   ── なぜ必要か（実測。推測ではない）────────────────────────────────────
+#   zerosys-ad-pdca が 2026-08-24 に3回連続で "timeout-minutes: 30" のジョブ強制終了に
+#   巻き込まれた(run 32682137730 / 32687261496 / 32690323464、いずれも実行時間 30m18〜20s)。
+#   ログは "claude CLI: npx ..." の直後から30分間 一切出力が無いまま Terminate orphan
+#   process (claude) で終わっていた。原因はデフォルトの `--output-format text` が
+#   完了時まで何も出力しないこと、claude自身にタイムアウト/実行量上限が無くジョブの
+#   30分に丸ごと巻き込まれること、および強制終了により後続の「Commit & push generated
+#   learnings」ステップに到達できずその回の観測・作業が全て失われることの3点。
+#   （直接原因の切り分けは decisions.md 2026-08-24エントリを参照。断定できない部分は
+#   「特定できない」として記録している）。
+#   ── 対策（既定値は現行動作を変えない・環境変数でループ別に上書き可能）───────
+#   - CLAUDE_TIMEOUT_SECONDS を設定したループだけ、claude 実行を `timeout` で包む。
+#     ジョブの timeout-minutes より十分手前の秒数に設定すること（呼び出し側workflowの
+#     責務）。timeout はまず SIGTERM を送り、30秒後も生きていれば SIGKILL する
+#     （--kill-after）。時間切れは exit 124 で判別する。
+#   - CLAUDE_MAX_BUDGET_USD を設定したループだけ、`--max-budget-usd` で実行量に
+#     上限を持たせる（claude CLI 組み込みの支出上限。--max-turns 相当のフラグは
+#     このCLIバージョンに存在しないため採用。サブスクリプションOAuth認証での挙動は
+#     未検証のため既定は未設定＝現行動作のまま）。
+#   - CLAUDE_STREAM_PROGRESS=1 を設定したループだけ、`--output-format stream-json
+#     --verbose` に切り替える。GitHub Actions は元々ログの各行にUTCタイムスタンプを
+#     付与するため、text形式(完了時まで無出力)から stream-json(ターン/ツール呼び出し
+#     ごとに1行出力)へ変えるだけで「どこまで進んだか」が時刻付きで分かるようになる
+#     （JSON整形パーサは持たせない＝壊れても本体の可否に影響しない設計）。
+#   - CLAUDE_TIMEOUT_SECONDS 到達（exit 124）は、既存の「利用上限=SKIPPED」と同じ
+#     考え方で本物の失敗と区別し、GitHub Actions の notice/サマリにだけ出す
+#     （Slack/LINE通知はしない＝SHARED_RULES 8章）。かつ exit 0 のまま後段の
+#     「6. 生成物をconfig checkoutへ同期」まで必ず到達させる。ここまでの変更（ファイル
+#     書き込みは同期的なので、打ち切り時点までの分は既にディスクへ反映済み）を
+#     ワークフロー側の「Commit & push」ステップへ渡す。
+CLAUDE_ARGS=(-p "${PROMPT}" --dangerously-skip-permissions --model "${CLAUDE_MODEL:-sonnet}")
+if [ -n "${CLAUDE_MAX_BUDGET_USD:-}" ]; then
+  CLAUDE_ARGS+=(--max-budget-usd "${CLAUDE_MAX_BUDGET_USD}")
+fi
+if [ "${CLAUDE_STREAM_PROGRESS:-}" = "1" ]; then
+  CLAUDE_ARGS+=(--output-format stream-json --verbose)
+fi
+
 CLAUDE_LOG="$(mktemp)"
 set +e
-${CLAUDE_CMD} -p "${PROMPT}" \
-  --dangerously-skip-permissions \
-  --model "${CLAUDE_MODEL:-sonnet}" 2>&1 | tee "${CLAUDE_LOG}"
+if [ -n "${CLAUDE_TIMEOUT_SECONDS:-}" ]; then
+  echo "claude timeout budget: ${CLAUDE_TIMEOUT_SECONDS}s (SIGTERM, then SIGKILL after 30s if needed)"
+  timeout --signal=TERM --kill-after=30s "${CLAUDE_TIMEOUT_SECONDS}s" \
+    ${CLAUDE_CMD} "${CLAUDE_ARGS[@]}" 2>&1 | tee "${CLAUDE_LOG}"
+else
+  ${CLAUDE_CMD} "${CLAUDE_ARGS[@]}" 2>&1 | tee "${CLAUDE_LOG}"
+fi
 CLAUDE_EXIT="${PIPESTATUS[0]}"
 set -e
 
-if [ "${CLAUDE_EXIT}" -ne 0 ]; then
+# `timeout` reports 124 when its own SIGTERM ended the command, but if the
+# command ignores SIGTERM and needs the --kill-after SIGKILL, GNU coreutils
+# reports 128+9=137 instead (verified locally: a `trap '' TERM; sleep 30`
+# child under `timeout --kill-after=5s 2s ...` exits 137, not 124). Treat
+# both as a timeout — this branch only runs when CLAUDE_TIMEOUT_SECONDS was
+# explicitly opted into, so a stray real 137 (e.g. external OOM kill) being
+# misclassified as "timeout" is an acceptable, narrow trade-off.
+CLAUDE_TIMED_OUT=0
+if [ -n "${CLAUDE_TIMEOUT_SECONDS:-}" ] && { [ "${CLAUDE_EXIT}" -eq 124 ] || [ "${CLAUDE_EXIT}" -eq 137 ]; }; then
+  CLAUDE_TIMED_OUT=1
+fi
+
+if [ "${CLAUDE_TIMED_OUT}" -eq 1 ]; then
+  rm -f "${CLAUDE_LOG}"
+  echo "== TIMEOUT: claude が実行予算(${CLAUDE_TIMEOUT_SECONDS}s)を超えたため打ち切り(exit=124) =="
+  echo "   ここまでの成果物(ファイル変更)は既にディスクへ書き込まれているため、後続の"
+  echo "   commit & push ステップで保存される。本物の失敗ではないので job は失敗にしない。"
+  echo "::warning title=TIMEOUT (claude budget exceeded)::${LOOP_NAME}: ${CLAUDE_TIMEOUT_SECONDS}s budget exceeded, terminated. Partial progress will still be committed."
+  if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
+    {
+      printf '### \xe2\x8f\xb1 TIMEOUT: claude budget exceeded (partial run)\n\n'
+      printf -- '- loop: `%s`\n' "${LOOP_NAME}"
+      printf -- '- budget: `%ss`\n' "${CLAUDE_TIMEOUT_SECONDS}"
+      printf -- '- ここまでの変更は保存され、後続のcommit & pushに反映されます（失敗ではありません）。\n'
+    } >> "${GITHUB_STEP_SUMMARY}"
+  fi
+elif [ "${CLAUDE_EXIT}" -ne 0 ]; then
   if grep -Eqi "${USAGE_LIMIT_PATTERN}" "${CLAUDE_LOG}"; then
     LIMIT_LINE="$(grep -Eim1 "${USAGE_LIMIT_PATTERN}" "${CLAUDE_LOG}" || true)"
     rm -f "${CLAUDE_LOG}"
@@ -198,10 +268,11 @@ if [ "${CLAUDE_EXIT}" -ne 0 ]; then
   rm -f "${CLAUDE_LOG}"
   echo "ERROR: claude run failed (exit=${CLAUDE_EXIT})" >&2
   exit "${CLAUDE_EXIT}"
+else
+  rm -f "${CLAUDE_LOG}"
 fi
-rm -f "${CLAUDE_LOG}"
 
-echo "== claude run finished, syncing generated changes back to config checkout =="
+echo "== claude run finished (or was timed out), syncing generated changes back to config checkout =="
 
 # 6. Copy back only the directories/files we manage. We deliberately do NOT
 #    copy the whole $HOME/.claude back — anything Claude wrote outside

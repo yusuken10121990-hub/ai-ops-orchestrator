@@ -73,7 +73,7 @@ jobs:
           # +commit&push+sync) ~9s)から逆算した安全なclaude予算。過去の正常成功run
           # 32438939884(2026-08-21)がclaudeフェーズだけで26m43sかかっていた実績があるため、
           # それより余裕を持たせつつ job timeout 手前で必ず切れる 1650s(27.5分)とした。
-          CLAUDE_TIMEOUT_SECONDS: "60"  # TEMP: deliberate-timeout verification run, will be set to production value next commit
+          CLAUDE_TIMEOUT_SECONDS: "1650"
           # stream-json + verboseに切り替え、GitHub Actionsの行タイムスタンプと組み合わせて
           # 「どこまで進んだか」を時系列で追えるようにする(2026-08-24の3連続タイムアウトは
           # text形式のバッファリングにより30分間ログが完全に空白だったため診断不能だった)。

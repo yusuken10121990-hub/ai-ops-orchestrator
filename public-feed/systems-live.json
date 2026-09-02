@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-09-02T06:25:21.479Z",
+  "generated_at": "2026-09-02T11:44:39.635Z",
   "note": "systems.json(非公開)のうちstatus:liveの監視に必要な安全なフィールドのみを公開したサブセット。哨戒B(Netlify Scheduled Function)が認証なしで参照する。",
   "systems": [
     {
@@ -240,6 +240,16 @@
       "healthPath": "/api/health",
       "marker": "\"status\": \"ok\"",
       "deploy": "Railway (project aim / service aim-app, GitHub main auto-deploy)",
+      "status": "live"
+    },
+    {
+      "id": "zerosys-store-os",
+      "name": "ZEROSYS 多店舗AI経営OS",
+      "url": "https://zerosys-store-os.netlify.app",
+      "kind": "site",
+      "healthPath": "/",
+      "marker": "ZEROSYS",
+      "deploy": "netlify",
       "status": "live"
     }
   ]

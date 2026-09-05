@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-09-05T04:56:19.418Z",
+  "generated_at": "2026-09-05T09:02:44.614Z",
   "note": "systems.json(非公開)のうちstatus:liveの監視に必要な安全なフィールドのみを公開したサブセット。哨戒B(Netlify Scheduled Function)が認証なしで参照する。",
   "systems": [
     {
@@ -250,6 +250,16 @@
       "healthPath": "/",
       "marker": "ZEROSYS",
       "deploy": "netlify",
+      "status": "live"
+    },
+    {
+      "id": "arbito-order-audit",
+      "name": "Arbito Temu注文日次監査",
+      "url": "",
+      "kind": "backend",
+      "healthPath": "",
+      "marker": "",
+      "deploy": "Windows Task AIOps-ArbitoOrderAudit(毎朝8:20)",
       "status": "live"
     }
   ]

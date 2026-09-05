@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-09-05T09:02:44.614Z",
+  "generated_at": "2026-09-05T12:41:03.203Z",
   "note": "systems.json(非公開)のうちstatus:liveの監視に必要な安全なフィールドのみを公開したサブセット。哨戒B(Netlify Scheduled Function)が認証なしで参照する。",
   "systems": [
     {
@@ -260,6 +260,16 @@
       "healthPath": "",
       "marker": "",
       "deploy": "Windows Task AIOps-ArbitoOrderAudit(毎朝8:20)",
+      "status": "live"
+    },
+    {
+      "id": "mail-task-app",
+      "name": "メールタスク管理（スプシ+モバイルWebアプリ）",
+      "url": "https://script.google.com/macros/s/AKfycbzBY8lOv7ySujo2pnOPXz2RmF0nThzjCgfpWIgewdZ2CGB-t7lbpaiyyGQ4TxaYyitu/exec",
+      "kind": "site",
+      "healthPath": "",
+      "marker": "",
+      "deploy": "Apps Script ウェブアプリデプロイ(アクセス=本人のみ・要ログインのため外形監視対象外)",
       "status": "live"
     }
   ]

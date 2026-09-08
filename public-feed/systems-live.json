@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-09-08T13:36:06.590Z",
+  "generated_at": "2026-09-08T17:30:24.096Z",
   "note": "systems.json(非公開)のうちstatus:liveの監視に必要な安全なフィールドのみを公開したサブセット。哨戒B(Netlify Scheduled Function)が認証なしで参照する。",
   "systems": [
     {
@@ -280,6 +280,26 @@
       "healthPath": "/api/health",
       "marker": "ok",
       "deploy": "Railway(railway up)",
+      "status": "live"
+    },
+    {
+      "id": "zerosys-leads",
+      "name": "ZEROSYS企業リスト収集システム",
+      "url": "https://zerosys-leads-production.up.railway.app",
+      "kind": "backend",
+      "healthPath": "/api/health",
+      "marker": "ok",
+      "deploy": "Railway (railway up, project zerosys-leads, volume /app/data)",
+      "status": "live"
+    },
+    {
+      "id": "science-inquiry-ai",
+      "name": "ZEROSYS AI問い合わせ自動化システム(サイエンス株式会社向け)",
+      "url": "https://science-inquiry-ai-production.up.railway.app",
+      "kind": "site",
+      "healthPath": "/api/health",
+      "marker": "ok",
+      "deploy": "railway up (project science-inquiry-ai, Dockerfile, volume /app/data)",
       "status": "live"
     }
   ]

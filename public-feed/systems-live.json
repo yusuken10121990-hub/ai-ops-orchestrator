@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-09-11T00:33:14.298Z",
+  "generated_at": "2026-09-11T05:15:48.618Z",
   "note": "systems.json(非公開)のうちstatus:liveの監視に必要な安全なフィールドのみを公開したサブセット。哨戒B(Netlify Scheduled Function)が認証なしで参照する。",
   "systems": [
     {
@@ -300,6 +300,16 @@
       "healthPath": "/api/health",
       "marker": "ok",
       "deploy": "railway up (project science-inquiry-ai, Dockerfile, volume /app/data)",
+      "status": "live"
+    },
+    {
+      "id": "meo-review-rpa",
+      "name": "OMAKASE MEO口コミ返信RPA(Playwright headless、claude-in-chrome版の代替)",
+      "url": "",
+      "kind": "backend",
+      "healthPath": "",
+      "marker": "",
+      "deploy": "windows-task AIOps-MeoReviewRpa (daily 07:20, conhost headless, dry-run=下書きのみの並走検証モード)",
       "status": "live"
     }
   ]

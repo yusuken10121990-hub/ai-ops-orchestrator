@@ -1,0 +1,127 @@
+name: seo-daily-zerosys
+
+# Daily SEO for the ZEROSYS main site (https://zerosys.jp).
+# Owner instruction 2026-09-16: "run SEO for zerosys.jp every day".
+# Repo: yusuken10121990-hub/lp-ai-system-saas (private) -> requires
+# LP_AI_SYSTEM_SAAS_DEPLOY_KEY (receptacle added to setup-ssh-keys.sh on
+# 2026-08-20). Until that secret is provisioned this workflow skips cleanly
+# (notice, exit 0) instead of failing.
+# JST 7:30 = UTC 22:30 (prev day). seo-daily (research.zerosys.jp) runs at
+# UTC 22:00; offset avoids concurrent Claude usage spikes.
+on:
+  schedule:
+    - cron: "30 22 * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: seo-daily-zerosys
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - name: Checkout orchestrator (public, scripts only)
+        uses: actions/checkout@v7
+
+      - name: Gate on LP deploy key (skip cleanly until provisioned)
+        env:
+          LP_KEY: ${{ secrets.LP_AI_SYSTEM_SAAS_DEPLOY_KEY }}
+        run: |
+          if [ -z "${LP_KEY}" ]; then
+            echo "SKIP_RUN=1" >> "$GITHUB_ENV"
+            echo "::notice title=SKIPPED (no LP deploy key)::LP_AI_SYSTEM_SAAS_DEPLOY_KEY is not provisioned yet (owner-todos: lp-ai-system-saas-cloud-deploy-key-20260820). Nothing to do."
+          else
+            echo "SKIP_RUN=0" >> "$GITHUB_ENV"
+          fi
+
+      - name: Setup SSH deploy keys (config + ai-business trio + lp-ai-system-saas)
+        if: env.SKIP_RUN != '1'
+        env:
+          CONFIG_DEPLOY_KEY: ${{ secrets.CONFIG_DEPLOY_KEY }}
+          AI_BUSINESS_OPS_DEPLOY_KEY: ${{ secrets.AI_BUSINESS_OPS_DEPLOY_KEY }}
+          SALES_RESEARCH_DEPLOY_KEY: ${{ secrets.SALES_RESEARCH_DEPLOY_KEY }}
+          META_ADS_DEPLOY_KEY: ${{ secrets.META_ADS_DEPLOY_KEY }}
+          LP_AI_SYSTEM_SAAS_DEPLOY_KEY: ${{ secrets.LP_AI_SYSTEM_SAAS_DEPLOY_KEY }}
+        run: |
+          chmod +x scripts/setup-ssh-keys.sh
+          scripts/setup-ssh-keys.sh
+
+      - name: Checkout private config repo via deploy key (SSH)
+        if: env.SKIP_RUN != '1'
+        run: |
+          git clone --depth 1 --branch main git@config-gh:yusuken10121990-hub/ai-ops-config.git config
+
+      - name: Checkout ai-business (ai-business-ops + sales-research-tool + meta-ads)
+        if: env.SKIP_RUN != '1'
+        run: |
+          chmod +x scripts/checkout-ai-business.sh
+          scripts/checkout-ai-business.sh
+
+      - name: Checkout lp-ai-system-saas into ai-business tree (writable clone)
+        if: env.SKIP_RUN != '1'
+        run: |
+          mkdir -p "${AI_BUSINESS_DIR}/campaigns"
+          git clone --depth 1 --branch main \
+            git@lp-ai-system-saas-gh:yusuken10121990-hub/lp-ai-system-saas.git \
+            "${AI_BUSINESS_DIR}/campaigns/ai-system-saas-lp"
+          git -C "${AI_BUSINESS_DIR}/campaigns/ai-system-saas-lp" config user.name "github-actions[bot]"
+          git -C "${AI_BUSINESS_DIR}/campaigns/ai-system-saas-lp" config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Setup Node.js
+        if: env.SKIP_RUN != '1'
+        uses: actions/setup-node@v7
+        with:
+          node-version: "20"
+
+      - name: Run seo-daily-zerosys
+        if: env.SKIP_RUN != '1'
+        env:
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
+          ZEROSYS_NETLIFY_SITE_ID: "ffa43196-afda-4695-8a56-34d362e153c9"
+          CLAUDE_TIMEOUT_SECONDS: "1800"
+          CLAUDE_STREAM_PROGRESS: "1"
+        run: |
+          chmod +x scripts/run-loop.sh
+          bash scripts/run-loop.sh seo-daily-zerosys
+
+      - name: Safety net -- commit & push any uncommitted LP changes
+        if: env.SKIP_RUN != '1'
+        run: |
+          LP_DIR="${AI_BUSINESS_DIR}/campaigns/ai-system-saas-lp"
+          cd "${LP_DIR}"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "no leftover LP changes (loop pushed its own work or made none)"
+          else
+            git commit -m "chore: seo-daily-zerosys auto update ($(TZ=Asia/Tokyo date '+%Y-%m-%d %H:%M JST'))"
+            git push git@lp-ai-system-saas-gh:yusuken10121990-hub/lp-ai-system-saas.git HEAD:main
+          fi
+
+      - name: Commit & push generated learnings to private config repo (SSH)
+        if: env.SKIP_RUN != '1'
+        working-directory: config
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "no changes to commit"
+          else
+            git commit -m "chore: seo-daily-zerosys auto update ($(TZ=Asia/Tokyo date '+%Y-%m-%d %H:%M JST'))"
+            bash ../scripts/git-push-retry.sh git@config-gh:yusuken10121990-hub/ai-ops-config.git main
+          fi
+
+      - name: Sync ai-business changes back (marketing seo plan/log)
+        if: env.SKIP_RUN != '1'
+        run: |
+          chmod +x scripts/sync-ai-business.sh
+          scripts/sync-ai-business.sh
+# Note: no failure notifications to Slack/LINE by design (owner rule:
+# approval-money only). Failure visibility = Actions history / dashboard.

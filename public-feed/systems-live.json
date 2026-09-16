@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-09-16T01:25:25.379Z",
+  "generated_at": "2026-09-16T06:45:54.916Z",
   "note": "systems.json(非公開)のうちstatus:liveの監視に必要な安全なフィールドのみを公開したサブセット。哨戒B(Netlify Scheduled Function)が認証なしで参照する。",
   "systems": [
     {
@@ -310,6 +310,16 @@
       "healthPath": "",
       "marker": "",
       "deploy": "windows-task AIOps-MeoReviewRpa (daily 07:20, conhost headless, dry-run=下書きのみの並走検証モード)",
+      "status": "live"
+    },
+    {
+      "id": "seo-daily-zerosys",
+      "name": "zerosys.jp 日次SEOループ",
+      "url": "https://github.com/yusuken10121990-hub/ai-ops-orchestrator/actions/workflows/seo-daily-zerosys.yml",
+      "kind": "backend",
+      "healthPath": "",
+      "marker": "",
+      "deploy": "github-actions-cron (daily JST 07:30 = UTC 22:30 前日)",
       "status": "live"
     }
   ]

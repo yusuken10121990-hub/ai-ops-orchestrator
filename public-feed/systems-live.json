@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-09-18T06:39:25.049Z",
+  "generated_at": "2026-09-18T09:48:20.330Z",
   "note": "systems.json(非公開)のうちstatus:liveの監視に必要な安全なフィールドのみを公開したサブセット。哨戒B(Netlify Scheduled Function)が認証なしで参照する。",
   "systems": [
     {
@@ -320,6 +320,26 @@
       "healthPath": "",
       "marker": "",
       "deploy": "github-actions-cron (daily JST 07:30 = UTC 22:30 前日)",
+      "status": "live"
+    },
+    {
+      "id": "kyoshin-logistics",
+      "name": "共進運輸 物流業務自動化・配車支援システム",
+      "url": "https://app-production-4f25.up.railway.app",
+      "kind": "backend",
+      "healthPath": "/api/v1/operations/health",
+      "marker": "OK",
+      "deploy": "railway up (project 8d0b139a / service app)",
+      "status": "live"
+    },
+    {
+      "id": "pascal-kids-inquiry",
+      "name": "パスカルキッズ AI問い合わせ対応・講習案内自動化システム",
+      "url": "https://web-production-308cb.up.railway.app",
+      "kind": "site",
+      "healthPath": "/api/health",
+      "marker": "ok",
+      "deploy": "Railway (project: pascal-kids, services: web + worker + Postgres). Web=`railway up --service web`, Worker=`railway up --service worker`。単一package.jsonのstartスクリプトをscripts/start-dispatch.mjsに変更し、PROCESS_ROLE環境変数(web/worker)で分岐する方式。SESSION_SECRET/TOKEN_ENCRYPTION_KEYはAppSecretテーブルへ自動生成保存(railway variable setで投入していない)。DATABASE_URLはPostgresサービスの参照変数。外部APIキー(Resend/Anthropic/Gmail)は未投入・DEMO_MODE=true固定。",
       "status": "live"
     }
   ]

@@ -53,6 +53,52 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: node scripts/health-check.mjs | tee health-check.log
 
+      # P1オーナー通知（2026-09-18オーナー指示）: 2連続確定障害はGitHub Issueを作成し、
+      # GitHubの通知メール/モバイルpushでオーナーへ届ける（新規secrets不要・24/365）。
+      # 同名のopen Issueがあれば重複作成しない（30分毎の連投防止）。復旧判断・closeは人間かmaintenanceループ。
+      - name: P1 alert (create GitHub Issue for confirmed outages)
+        if: always()
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          grep -oP '(?<=^P1_ALERT=).*' health-check.log | while IFS= read -r line; do
+            id="${line%%:*}"
+            reason="${line#*:}"
+            title="P1本番障害: ${id}"
+            existing=$(gh issue list -R "${GITHUB_REPOSITORY}" --state open --search "in:title \"${title}\"" --json number --jq 'length')
+            if [ "${existing}" = "0" ]; then
+              gh issue create -R "${GITHUB_REPOSITORY}" \
+                --title "${title}" \
+                --label "p1-alert" \
+                --body "自動検知(system-health-cloud): ${id} が2回連続の死活チェックで停止確定。理由: ${reason}。復旧後はこのIssueをcloseしてください。詳細: config/memory/health-status.json"
+            else
+              echo "open issue already exists for ${id}, skip"
+            fi
+          done
+
+      # キー期限14日前警告（2026-09-18）: key-expiry.json由来の警告もIssue化（同名open Issueはスキップ）
+      - name: Key expiry warning (create GitHub Issue)
+        if: always()
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          grep -oP '(?<=^KEY_EXPIRY_WARN=).*' health-check.log | while IFS= read -r line; do
+            id="${line%%:*}"
+            detail="${line#*:}"
+            title="キー期限警告: ${id}"
+            existing=$(gh issue list -R "${GITHUB_REPOSITORY}" --state open --search "in:title \"${title}\"" --json number --jq 'length')
+            if [ "${existing}" = "0" ]; then
+              gh issue create -R "${GITHUB_REPOSITORY}" \
+                --title "${title}" \
+                --label "key-expiry" \
+                --body "自動検知(system-health-cloud): ${detail}。更新後は config/memory/key-expiry.json のexpiresAtを新しい日付に直し、このIssueをcloseしてください。"
+            else
+              echo "open issue already exists for ${id}, skip"
+            fi
+          done
+
       # Business OS が「静かに止まる」のを検知する（2026-08-16追加）。
       # workflow失敗はIssueで気づけるが、一度も起動しなくなる場合はエラーが
       # 1件も出ないままAI CEOだけが沈黙する。鮮度で見張るのはここだけ。

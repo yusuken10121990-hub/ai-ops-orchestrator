@@ -409,6 +409,44 @@ async function main() {
   for (const id of remediateCandidates) {
     console.log(`SHOULD_REMEDIATE=${id}`);
   }
+
+  // P1オーナー通知（2026-09-18オーナー指示「P1障害だけのプッシュ通知」）:
+  // 前回チェック時点でもngだった稼働中システムが、今回もhttp>=500/timeout/marker欠落でngのままなら
+  // 2連続確定障害としてP1_ALERT行を出力する。ワークフロー側がGitHub Issueを作成し、
+  // GitHubの通知メール/モバイルpushでオーナーへ届く（新規secretsなしで24/365動作）。
+  // provider-wide suspect（誤検知疑い）と復旧済みは除外。
+  for (const [id, entry] of Object.entries(out)) {
+    if (entry.status !== 'ng' || entry.suspect === 'provider-wide') continue;
+    const hardFail =
+      (entry.http != null && entry.http >= 500) ||
+      entry.reason === 'marker-missing' ||
+      String(entry.reason || '').startsWith('error:');
+    const prevNg = prev[id] && prev[id].status === 'ng';
+    if (hardFail && prevNg) {
+      console.log(`P1_ALERT=${id}:${String(entry.reason || entry.http || 'down').replace(/[\r\n]/g, ' ').slice(0, 120)}`);
+    }
+  }
+
+  // 外部APIキー/トークンの期限監視（2026-09-18オーナー指示「キー期限棚卸しの自動化」）:
+  // config/memory/key-expiry.json の expiresAt が14日以内に迫った項目を警告する。
+  // 期限が book of record にある項目のみ対象（日付不明の項目は監視対象外＝UNKNOWNのまま保持）。
+  try {
+    const keyLedgerPath = dirname(SYSTEMS_JSON) + '/key-expiry.json';
+    if (existsSync(keyLedgerPath)) {
+      const ledger = readJson(keyLedgerPath);
+      const soonMs = 14 * 24 * 3600 * 1000;
+      for (const k of ledger.keys || []) {
+        if (!k.expiresAt) continue;
+        const remain = new Date(k.expiresAt).getTime() - Date.now();
+        if (remain < soonMs) {
+          const days = Math.floor(remain / 86400000);
+          console.log(`KEY_EXPIRY_WARN=${k.id}:残り${days}日(期限${k.expiresAt}) ${String(k.note || '').slice(0, 80)}`);
+        }
+      }
+    }
+  } catch (e) {
+    console.log(`[health-check] key-expiry check skipped: ${e.message}`);
+  }
 }
 
 main().catch((e) => {

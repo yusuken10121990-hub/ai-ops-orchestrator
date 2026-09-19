@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-09-18T23:36:39.561Z",
+  "generated_at": "2026-09-19T01:37:20.494Z",
   "note": "systems.json(非公開)のうちstatus:liveの監視に必要な安全なフィールドのみを公開したサブセット。哨戒B(Netlify Scheduled Function)が認証なしで参照する。",
   "systems": [
     {
@@ -217,8 +217,8 @@
       "name": "funvest-os (Funvest向け AI融資・貸付債権・ファンド統合管理システム)",
       "url": "https://funvest-os-production.up.railway.app",
       "kind": "backend",
-      "healthPath": "/api/integrity",
-      "marker": "violations",
+      "healthPath": "/",
+      "marker": "Funvest",
       "deploy": "cd C:/Users/user/funvest-os && railway up --detach（Railway project: funvest-os / 永続ボリューム /data・DB_PATH=/data/demo.db）",
       "status": "live"
     },

@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-09-20T00:23:36.459Z",
+  "generated_at": "2026-09-20T05:24:59.844Z",
   "note": "systems.json(非公開)のうちstatus:liveの監視に必要な安全なフィールドのみを公開したサブセット。哨戒B(Netlify Scheduled Function)が認証なしで参照する。",
   "systems": [
     {
@@ -340,6 +340,16 @@
       "healthPath": "/api/health",
       "marker": "ok",
       "deploy": "Railway (project: pascal-kids, services: web + worker + Postgres). Web=`railway up --service web`, Worker=`railway up --service worker`。単一package.jsonのstartスクリプトをscripts/start-dispatch.mjsに変更し、PROCESS_ROLE環境変数(web/worker)で分岐する方式。SESSION_SECRET/TOKEN_ENCRYPTION_KEYはAppSecretテーブルへ自動生成保存(railway variable setで投入していない)。DATABASE_URLはPostgresサービスの参照変数。外部APIキー(Resend/Anthropic/Gmail)は未投入・DEMO_MODE=true固定。",
+      "status": "live"
+    },
+    {
+      "id": "klar-portal",
+      "name": "Klar 顧客ポータル(アカウント制ダッシュボード)",
+      "url": "https://klar-portal-production.up.railway.app",
+      "kind": "site",
+      "healthPath": "/health",
+      "marker": "ok",
+      "deploy": "railway up (project klar-portal, volume /app/data)",
       "status": "live"
     }
   ]

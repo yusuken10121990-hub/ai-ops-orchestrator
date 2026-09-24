@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-09-24T06:09:31.292Z",
+  "generated_at": "2026-09-24T11:43:39.923Z",
   "note": "systems.json(非公開)のうちstatus:liveの監視に必要な安全なフィールドのみを公開したサブセット。哨戒B(Netlify Scheduled Function)が認証なしで参照する。",
   "systems": [
     {
@@ -350,6 +350,16 @@
       "healthPath": "/health",
       "marker": "ok",
       "deploy": "railway up (project klar-portal, volume /app/data)",
+      "status": "live"
+    },
+    {
+      "id": "kimono-remake",
+      "name": "着物リメイクEC＋運営ダッシュボード",
+      "url": "https://web-production-74d8f.up.railway.app",
+      "kind": "site",
+      "healthPath": "/api/health/live",
+      "marker": "",
+      "deploy": "railway up (project: kimono-remake, services: web+worker+postgres+redis)",
       "status": "live"
     }
   ]

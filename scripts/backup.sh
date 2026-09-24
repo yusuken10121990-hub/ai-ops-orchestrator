@@ -60,6 +60,7 @@ SIZE_BLOBS=""
 SHA_GATE=""
 SHA_SUPABASE=""
 SHA_BLOBS=""
+ERR_GATE=""
 UPLOADED_ANY=0
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
@@ -94,6 +95,13 @@ else
     echo "[backup] gate: pg_dump FAILED" >&2
     cat "${WORKDIR}/gate.err" >&2
     STATUS_GATE="ng(pg_dump-failed)"
+    # 2026-09-14追記(金銭実行経路プリフライトルール④準拠): 一過性のActions
+    # ログだけに残すと、次回セッションがgh認証を持たない限り原因を再調査
+    # できず、同じ仮説検証を繰り返す(実際に07-29〜09-14の47日間発生)。
+    # エラー全文(先頭300字、DSN等の秘密文字列は含まれない標準pg_dump
+    # エラー書式のみを想定)をbackup-status.jsonへ保存し、次回セッションが
+    # ログイン不要で読めるようにする。
+    ERR_GATE=$(tr '\n' ' ' < "${WORKDIR}/gate.err" | head -c 300 | sed 's/"/\\"/g')
   fi
 fi
 
@@ -223,7 +231,7 @@ cat > "${BACKUP_STATUS_JSON}" <<EOF
   "last_run": "${NOW_JST}",
   "retention_daily": ${RETENTION_DAILY},
   "targets": {
-    "gate": { "status": "${STATUS_GATE}", "size_bytes": "${SIZE_GATE}", "sha256": "${SHA_GATE}", "release": "${BACKUP_DEST_LABEL}" },
+    "gate": { "status": "${STATUS_GATE}", "size_bytes": "${SIZE_GATE}", "sha256": "${SHA_GATE}", "release": "${BACKUP_DEST_LABEL}", "last_error": "${ERR_GATE}" },
     "supabase": { "status": "${STATUS_SUPABASE}", "size_bytes": "${SIZE_SUPABASE}", "sha256": "${SHA_SUPABASE}", "release": "${BACKUP_DEST_LABEL}" },
     "blobs": { "status": "${STATUS_BLOBS}", "size_bytes": "${SIZE_BLOBS}", "sha256": "${SHA_BLOBS}", "release": "${BACKUP_DEST_LABEL}" }
   }

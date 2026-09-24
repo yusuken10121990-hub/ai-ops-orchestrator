@@ -46,8 +46,19 @@ jobs:
       - name: Checkout orchestrator (public, scripts only)
         uses: actions/checkout@v7
 
-      - name: Install postgresql-client (pg_dump)
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client
+      # 2026-09-14 (backup-admin, 実ログ確認で確定): gate=ng(pg_dump-failed)が
+      # 2026-07-29から47日間継続していた根本原因は
+      # "pg_dump: error: aborting because of server version mismatch
+      #  server version: 18.6 (Debian) ; pg_dump version: 16.15 (Ubuntu 24.04 apt既定)"。
+      # pg_dumpはクライアント>=サーバが必須(Railway Postgresが18系へ更新済み)。
+      # PGDG公式リポジトリ経由で最新postgresql-client(19時点で18系以降)を入れる。
+      - name: Install postgresql-client (pg_dump, via PGDG for latest major version)
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq postgresql-common
+          yes '' | sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
+          sudo apt-get install -y -qq postgresql-client
+          pg_dump --version
 
       - name: Setup Node (for Netlify Blobs export, Batch4 2026-07-24追加)
         uses: actions/setup-node@v4

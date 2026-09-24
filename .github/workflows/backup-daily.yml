@@ -60,6 +60,16 @@ jobs:
       # "postgresql-client-<N>" のようにバージョンを明示指定する必要があった。
       # Railwayのメジャーバージョンが将来さらに上がっても追従できるよう、
       # PGDGが提供する最新のバージョン番号を動的に検出してそれを明示指定でインストールする。
+      #
+      # 2026-09-24追記2(engineer, 実行ログで再確認): postgresql-client-18を
+      # 明示インストールしても "pg_dump --version" は依然16.15のままだった。
+      # 原因はGitHub Actions ubuntu-latest(24.04)ランナーイメージに
+      # PostgreSQL 16クライアントが標準搭載済みで、実体が /usr/bin/pg_dump に
+      # 直接インストールされているため(update-alternativesを介さない)、$PATH の
+      # 解決順で /usr/bin が PGDG版の /usr/lib/postgresql/<N>/bin より先に
+      # ヒットしてしまう。PGDG版のバイナリディレクトリを $GITHUB_PATH の先頭に
+      # 追加し、以降の全ステップ(backup.sh含む)で確実にPGDG版pg_dumpが
+      # 使われるようにする。
       - name: Install postgresql-client (pg_dump, via PGDG for latest major version)
         run: |
           sudo apt-get update -qq
@@ -69,7 +79,8 @@ jobs:
           LATEST_PG_CLIENT_VERSION=$(apt-cache search '^postgresql-client-[0-9]+$' | awk '{print $1}' | sed -E 's/^postgresql-client-([0-9]+)$/\1/' | sort -n | tail -1)
           echo "Latest PGDG postgresql-client major version available: ${LATEST_PG_CLIENT_VERSION}"
           sudo apt-get install -y -qq "postgresql-client-${LATEST_PG_CLIENT_VERSION}"
-          pg_dump --version
+          echo "/usr/lib/postgresql/${LATEST_PG_CLIENT_VERSION}/bin" >> "$GITHUB_PATH"
+          "/usr/lib/postgresql/${LATEST_PG_CLIENT_VERSION}/bin/pg_dump" --version
 
       - name: Setup Node (for Netlify Blobs export, Batch4 2026-07-24追加)
         uses: actions/setup-node@v4

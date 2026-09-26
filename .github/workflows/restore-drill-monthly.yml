@@ -1,0 +1,444 @@
+name: restore-drill-monthly
+
+# 月次復元ドリル(backup-adminエージェント提案・2026-07-25/08-07/08-13/08-14/
+# 08-15/08-24/09-14の7回にわたり「実装すべき」と提案されながら一度もworkflow
+# として実装されていなかった穴を埋める(2026-09-26、`find`での実機確認で
+# workflow数ゼロと確定)。backup-daily.yml(scripts/backup.sh)が生成した最新の
+# 暗号化dumpを実際に復元し検証することで、「バックアップは取れているが
+# 戻せない」という事故を月次で機械的に防ぐ。
+#
+# gate=ng(pg_dump-failed)問題は2026-09-24にengineerが根本原因(PGDGパッケージの
+# バージョン解決順)を修正しgreen化済み(backup-status.json実測でgate/supabase/
+# blobs全対象ok)。今回はその上に月次復元ドリルを新規実装する。
+#
+# 対象3点:
+#   (a) Railway Postgres(承認ゲート) — gate-<DATE>.sql.gz.gpg。現行dumpは
+#       `pg_dump --no-owner --no-privileges -f gate.sql` による**平文SQL
+#       (plain format)**であり custom format(-Fc)ではない(2026-07-25の
+#       -Fc統一提案は実際には未適用のまま現在に至ることを2026-09-26に実機で
+#       再確認)。よって復元は`pg_restore`ではなく`psql -f`を使う。
+#   (b) Supabase(認証+クレジット台帳) — supabase-<DATE>.json.gz.gpg
+#       ({ users:[], tables:{ credits:[], credit_transactions:[] } } 形式、
+#       scripts/backup-supabase-export.mjs参照)
+#   (c) Netlify Blobs — blobs-<DATE>.json.gz.gpg
+#       ({ stores:{ <storeName>: { <key>: <value> } } } 形式、
+#       scripts/backup-blobs-export.mjs参照)
+#
+# 3対象とも「復元コマンドの終了コード0だけをPASSにしない」設計にする
+# (空DBへの復元も終了コード0で完了する既知の落とし穴。根拠は
+# memory/learnings/backup-admin.md 2026-09-26エントリ参照)。復元後に必ず
+# 実テーブル数/行数(gate)・JSON要素数(supabase/blobs)を機械的にアサートし、
+# 加えてbackup-status.json記録済みのsha256とも突合して改ざん/破損を検知する。
+#
+# GitHub ActionsのService Container(jobs.<id>.services.<id>.image)は
+# jobs.<id>.services.<id>.imageで参照できるcontextがgithub/needs/strategy/
+# matrix/vars/inputsに限られ、同一job内のsteps.outputsは参照できない
+# (公式ドキュメント: docs.github.com/actions/reference/workflows-and-actions/
+# contexts の Context availability 表で確認)。そのためgate dumpのメジャー
+# バージョンを検出する`detect-pg-version` jobと、実際に復元検証する
+# `restore-verify` jobの2job構成にし、needs経由でバージョンを渡す。
+#
+# 絶対にやらないこと:
+#   - 本番のRailway Postgres/Supabaseへ接続・書き戻しするコードは一切書かない
+#     (復元は必ずこのjobの使い捨てservice containerのみ、job終了と同時に破棄)。
+#   - 新規secretは追加しない(既存のCONFIG_DEPLOY_KEY/BACKUPS_REPO_DEPLOY_KEY/
+#     BACKUP_GPG_PASSPHRASEのみを使う)。
+#   - 復号した平文はmktemp配下にのみ置き、ログ/stdoutへ内容を出力しない
+#     (バージョンコメント行など秘密情報を含まない1行だけは診断のためログに出す)。
+#
+# 毎月1日 04:10 JST(=前日19:10 UTC) + workflow_dispatchで随時検証可能。
+on:
+  schedule:
+    - cron: "10 19 1 * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: restore-drill-monthly
+  cancel-in-progress: false
+
+jobs:
+  # Job1: 復元対象(最新のdumps/YYYY-MM-DD)を特定し、gate dumpの冒頭コメント
+  # (`-- Dumped from database version X.Y`)からPostgresのメジャーバージョンを
+  # 検出する。値そのものに秘密情報は含まれないため、needs経由でjob2の
+  # service container imageタグへ渡してよい。
+  detect-pg-version:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      pg_version: ${{ steps.detect.outputs.pg_version }}
+      dump_date: ${{ steps.detect.outputs.dump_date }}
+    steps:
+      - name: Checkout orchestrator (public, scripts only)
+        uses: actions/checkout@v7
+
+      - name: Setup SSH deploy key (ai-ops-backups, read-only clone)
+        env:
+          BACKUPS_REPO_DEPLOY_KEY: ${{ secrets.BACKUPS_REPO_DEPLOY_KEY }}
+        run: |
+          chmod +x scripts/setup-ssh-keys.sh
+          scripts/setup-ssh-keys.sh
+
+      - name: Detect latest dump date and gate Postgres major version
+        id: detect
+        env:
+          BACKUP_GPG_PASSPHRASE: ${{ secrets.BACKUP_GPG_PASSPHRASE }}
+        run: |
+          set -uo pipefail
+          if [ ! -f "$HOME/.ssh/id_ai-ops-backups" ]; then
+            echo "[restore-drill] BACKUPS_REPO_DEPLOY_KEY not set, cannot run drill" >&2
+            exit 1
+          fi
+          if [ -z "${BACKUP_GPG_PASSPHRASE:-}" ]; then
+            echo "[restore-drill] BACKUP_GPG_PASSPHRASE not set, cannot run drill" >&2
+            exit 1
+          fi
+
+          WORKDIR=$(mktemp -d)
+          trap 'rm -rf "${WORKDIR}"' EXIT
+
+          if ! git clone --depth 50 --branch main git@ai-ops-backups-gh:yusuken10121990-hub/ai-ops-backups.git "${WORKDIR}/backups" 2>"${WORKDIR}/clone.err"; then
+            echo "[restore-drill] git clone of ai-ops-backups FAILED" >&2
+            cat "${WORKDIR}/clone.err" >&2
+            exit 1
+          fi
+
+          DUMP_DATE=$(find "${WORKDIR}/backups/dumps" -maxdepth 1 -mindepth 1 -type d -printf '%f\n' 2>/dev/null | grep -E '^[0-9]{4}-[0-9]{2}-[0-9]{2}$' | sort -r | head -1)
+          if [ -z "${DUMP_DATE}" ]; then
+            echo "[restore-drill] no dumps/YYYY-MM-DD directories found in ai-ops-backups" >&2
+            exit 1
+          fi
+          echo "[restore-drill] latest dump date: ${DUMP_DATE}"
+
+          GATE_ENC="${WORKDIR}/backups/dumps/${DUMP_DATE}/gate-${DUMP_DATE}.sql.gz.gpg"
+          if [ ! -f "${GATE_ENC}" ]; then
+            echo "[restore-drill] gate dump not found for ${DUMP_DATE}: ${GATE_ENC}" >&2
+            exit 1
+          fi
+
+          # 平文は一旦ファイルへ書き出してからgrepする(パイプの途中でheadやgrep -m1
+          # が早期終了すると上流のgpg/gunzipがSIGPIPEでpipefail扱いになるため、
+          # 「全部書き出してから通常ファイルとしてgrepする」方が安全)。
+          GATE_PLAIN="${WORKDIR}/gate-${DUMP_DATE}.sql"
+          if ! gpg --batch --yes --passphrase "${BACKUP_GPG_PASSPHRASE}" -d "${GATE_ENC}" 2>"${WORKDIR}/gpg.err" | gunzip -c > "${GATE_PLAIN}"; then
+            echo "[restore-drill] decrypt/gunzip of gate dump FAILED" >&2
+            cat "${WORKDIR}/gpg.err" >&2 || true
+            exit 1
+          fi
+
+          # メタコメント1行だけをログに出す(PII/DBの中身は一切出力しない)
+          VERSION_LINE=$(grep -m1 '^-- Dumped from database version' "${GATE_PLAIN}" || true)
+          if [ -z "${VERSION_LINE}" ]; then
+            echo "[restore-drill] could not find '-- Dumped from database version' header in gate dump" >&2
+            exit 1
+          fi
+          echo "[restore-drill] ${VERSION_LINE}"
+
+          PG_MAJOR=$(echo "${VERSION_LINE}" | grep -oP '(?<=version )\d+')
+          if [ -z "${PG_MAJOR}" ]; then
+            echo "[restore-drill] could not parse major version from: ${VERSION_LINE}" >&2
+            exit 1
+          fi
+
+          echo "dump_date=${DUMP_DATE}" >> "$GITHUB_OUTPUT"
+          echo "pg_version=${PG_MAJOR}" >> "$GITHUB_OUTPUT"
+
+  # Job2: job1が検出したdump_date/pg_versionを使い、使い捨てpostgres service
+  # containerへ実際に復元して検証する。本番DBへは一切接続しない。
+  restore-verify:
+    needs: detect-pg-version
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    services:
+      postgres:
+        image: postgres:${{ needs.detect-pg-version.outputs.pg_version }}-alpine
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        # GitHub公式パターン: health-cmdを指定するだけでActions側が自動的に
+        # ヘルシーになるまで後続ステップを待機させる(自前のwait-for不要)。
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - name: Checkout orchestrator (public, scripts only)
+        uses: actions/checkout@v7
+
+      # 復元先のpsqlクライアントはランナー既定のv16のままでよい(pg_dumpと違い
+      # psqlの接続プロトコルはサーバより新しいクライアントを要求しない。
+      # backup-daily.ymlがPGDGで最新版を明示インストールしているのはpg_dump側の
+      # 「クライアント>=サーバ必須」制約のためで、psql -fでのSQL実行には該当しない)。
+      - name: Setup Node (for JSON element-count asserts)
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Setup SSH deploy keys (config + ai-ops-backups)
+        env:
+          CONFIG_DEPLOY_KEY: ${{ secrets.CONFIG_DEPLOY_KEY }}
+          BACKUPS_REPO_DEPLOY_KEY: ${{ secrets.BACKUPS_REPO_DEPLOY_KEY }}
+        run: |
+          chmod +x scripts/setup-ssh-keys.sh
+          scripts/setup-ssh-keys.sh
+
+      - name: Checkout private config repo via deploy key (SSH)
+        run: |
+          git clone --branch main git@config-gh:yusuken10121990-hub/ai-ops-config.git config
+
+      - name: Clone ai-ops-backups and locate the drill target
+        env:
+          DUMP_DATE: ${{ needs.detect-pg-version.outputs.dump_date }}
+        run: |
+          set -euo pipefail
+          WORKDIR=$(mktemp -d)
+          echo "WORKDIR=${WORKDIR}" >> "$GITHUB_ENV"
+          echo "DUMP_DATE=${DUMP_DATE}" >> "$GITHUB_ENV"
+          git clone --depth 50 --branch main git@ai-ops-backups-gh:yusuken10121990-hub/ai-ops-backups.git "${WORKDIR}/backups"
+          SRC="${WORKDIR}/backups/dumps/${DUMP_DATE}"
+          if [ ! -d "${SRC}" ]; then
+            echo "[restore-drill] dump dir not found: ${SRC}" >&2
+            exit 1
+          fi
+          echo "SRC=${SRC}" >> "$GITHUB_ENV"
+
+      - name: Verify gate (decrypt -> psql restore into ephemeral container -> real table/row-count assert)
+        env:
+          BACKUP_GPG_PASSPHRASE: ${{ secrets.BACKUP_GPG_PASSPHRASE }}
+        run: |
+          set -uo pipefail
+          mark_ng() { if [ "${STATUS}" = "ok" ]; then STATUS="ng($1)"; fi; }
+
+          ENC="${SRC}/gate-${DUMP_DATE}.sql.gz.gpg"
+          PLAIN="${WORKDIR}/gate-${DUMP_DATE}.sql"
+          STATUS="ok"
+          TABLE_COUNT=0
+          NONZERO_TABLES=0
+          CHECKSUM_MATCH=false
+
+          if [ ! -f "${ENC}" ]; then
+            mark_ng "missing-dump"
+          else
+            ACTUAL_SHA=$(sha256sum "${ENC}" | cut -d' ' -f1)
+            EXPECTED_SHA=$(node -e "const fs=require('fs'); const d=JSON.parse(fs.readFileSync('config/memory/backup-status.json','utf8')); console.log((d.targets && d.targets.gate && d.targets.gate.sha256) || '')")
+            if [ -n "${EXPECTED_SHA}" ] && [ "${ACTUAL_SHA}" = "${EXPECTED_SHA}" ]; then
+              CHECKSUM_MATCH=true
+            else
+              echo "[restore-drill] gate: checksum mismatch actual=${ACTUAL_SHA} expected=${EXPECTED_SHA}" >&2
+              mark_ng "checksum-mismatch"
+            fi
+
+            if ! gpg --batch --yes --passphrase "${BACKUP_GPG_PASSPHRASE}" -d "${ENC}" 2>"${WORKDIR}/gate.gpg.err" | gunzip -c > "${PLAIN}"; then
+              echo "[restore-drill] gate: decrypt/gunzip FAILED" >&2
+              cat "${WORKDIR}/gate.gpg.err" >&2 || true
+              mark_ng "decrypt-failed"
+            elif [ ! -s "${PLAIN}" ]; then
+              mark_ng "empty-plaintext"
+            else
+              if ! PGPASSWORD=postgres psql -h localhost -U postgres -v ON_ERROR_STOP=1 -f "${PLAIN}" > "${WORKDIR}/psql-restore.log" 2>&1; then
+                echo "[restore-drill] gate: psql restore FAILED (last 2000 chars of log)" >&2
+                tail -c 2000 "${WORKDIR}/psql-restore.log" >&2 || true
+                mark_ng "restore-failed"
+              else
+                echo "[restore-drill] gate: psql restore command completed. Asserting real table/row counts now"
+                echo "[restore-drill] gate: exit-code-0 alone is NOT trusted as PASS (empty-DB restores also exit 0, see memory/learnings/backup-admin.md 2026-09-26)"
+                PGPASSWORD=postgres psql -h localhost -U postgres -c '\dt' || true
+
+                # 実テーブル名はdumpの中身から機械抽出する(推測で名前を決め打ちしない)
+                mapfile -t TABLES < <(grep -oP '^CREATE TABLE (ONLY )?\K[^\s(]+' "${PLAIN}" | tr -d ';' | sort -u)
+                TABLE_COUNT=${#TABLES[@]}
+                for t in "${TABLES[@]}"; do
+                  CNT=$(PGPASSWORD=postgres psql -h localhost -U postgres -tAc "SELECT count(*) FROM ${t}" 2>/dev/null | tr -d '[:space:]')
+                  if [ -n "${CNT}" ] && [ "${CNT}" -gt 0 ] 2>/dev/null; then
+                    NONZERO_TABLES=$((NONZERO_TABLES + 1))
+                  fi
+                done
+                echo "[restore-drill] gate: table_count=${TABLE_COUNT} nonzero_tables=${NONZERO_TABLES}"
+                if [ "${TABLE_COUNT}" -eq 0 ] || [ "${NONZERO_TABLES}" -eq 0 ]; then
+                  mark_ng "zero-rows"
+                fi
+              fi
+            fi
+            rm -f "${PLAIN}"
+          fi
+
+          echo "[restore-drill] gate: status=${STATUS} table_count=${TABLE_COUNT} nonzero_tables=${NONZERO_TABLES} checksum_match=${CHECKSUM_MATCH}"
+          echo "GATE_STATUS=${STATUS}" >> "$GITHUB_ENV"
+          echo "GATE_TABLE_COUNT=${TABLE_COUNT}" >> "$GITHUB_ENV"
+          echo "GATE_NONZERO_TABLES=${NONZERO_TABLES}" >> "$GITHUB_ENV"
+          echo "GATE_CHECKSUM_MATCH=${CHECKSUM_MATCH}" >> "$GITHUB_ENV"
+
+      - name: Verify supabase (decrypt -> JSON element-count assert)
+        env:
+          BACKUP_GPG_PASSPHRASE: ${{ secrets.BACKUP_GPG_PASSPHRASE }}
+        run: |
+          set -uo pipefail
+          mark_ng() { if [ "${STATUS}" = "ok" ]; then STATUS="ng($1)"; fi; }
+
+          ENC="${SRC}/supabase-${DUMP_DATE}.json.gz.gpg"
+          PLAIN="${WORKDIR}/supabase-${DUMP_DATE}.json"
+          STATUS="ok"
+          ELEMENT_COUNT=0
+          CHECKSUM_MATCH=false
+
+          if [ ! -f "${ENC}" ]; then
+            mark_ng "missing-dump"
+          else
+            ACTUAL_SHA=$(sha256sum "${ENC}" | cut -d' ' -f1)
+            EXPECTED_SHA=$(node -e "const fs=require('fs'); const d=JSON.parse(fs.readFileSync('config/memory/backup-status.json','utf8')); console.log((d.targets && d.targets.supabase && d.targets.supabase.sha256) || '')")
+            if [ -n "${EXPECTED_SHA}" ] && [ "${ACTUAL_SHA}" = "${EXPECTED_SHA}" ]; then
+              CHECKSUM_MATCH=true
+            else
+              echo "[restore-drill] supabase: checksum mismatch actual=${ACTUAL_SHA} expected=${EXPECTED_SHA}" >&2
+              mark_ng "checksum-mismatch"
+            fi
+
+            if ! gpg --batch --yes --passphrase "${BACKUP_GPG_PASSPHRASE}" -d "${ENC}" 2>"${WORKDIR}/supabase.gpg.err" | gunzip -c > "${PLAIN}"; then
+              echo "[restore-drill] supabase: decrypt/gunzip FAILED" >&2
+              cat "${WORKDIR}/supabase.gpg.err" >&2 || true
+              mark_ng "decrypt-failed"
+            elif [ ! -s "${PLAIN}" ]; then
+              mark_ng "empty-plaintext"
+            else
+              # 主要配列(users / tables.credits / tables.credit_transactions)の
+              # 要素数を合算してアサートする(0件はドリル失敗)。構造は
+              # scripts/backup-supabase-export.mjsの出力仕様に対応。
+              ELEMENT_COUNT=$(SUPABASE_JSON_PATH="${PLAIN}" node -e "
+                const fs = require('fs');
+                const d = JSON.parse(fs.readFileSync(process.env.SUPABASE_JSON_PATH, 'utf8'));
+                const users = Array.isArray(d.users) ? d.users.length : 0;
+                const tbl = d.tables || {};
+                const credits = Array.isArray(tbl.credits) ? tbl.credits.length : 0;
+                const tx = Array.isArray(tbl.credit_transactions) ? tbl.credit_transactions.length : 0;
+                console.log(users + credits + tx);
+              ")
+              echo "[restore-drill] supabase: element_count=${ELEMENT_COUNT}"
+              if [ -z "${ELEMENT_COUNT}" ] || [ "${ELEMENT_COUNT}" -eq 0 ] 2>/dev/null; then
+                mark_ng "zero-elements"
+                ELEMENT_COUNT=${ELEMENT_COUNT:-0}
+              fi
+            fi
+            rm -f "${PLAIN}"
+          fi
+
+          echo "[restore-drill] supabase: status=${STATUS} element_count=${ELEMENT_COUNT} checksum_match=${CHECKSUM_MATCH}"
+          echo "SUPABASE_STATUS=${STATUS}" >> "$GITHUB_ENV"
+          echo "SUPABASE_ELEMENT_COUNT=${ELEMENT_COUNT}" >> "$GITHUB_ENV"
+          echo "SUPABASE_CHECKSUM_MATCH=${CHECKSUM_MATCH}" >> "$GITHUB_ENV"
+
+      - name: Verify blobs (decrypt -> JSON element-count assert)
+        env:
+          BACKUP_GPG_PASSPHRASE: ${{ secrets.BACKUP_GPG_PASSPHRASE }}
+        run: |
+          set -uo pipefail
+          mark_ng() { if [ "${STATUS}" = "ok" ]; then STATUS="ng($1)"; fi; }
+
+          ENC="${SRC}/blobs-${DUMP_DATE}.json.gz.gpg"
+          PLAIN="${WORKDIR}/blobs-${DUMP_DATE}.json"
+          STATUS="ok"
+          ELEMENT_COUNT=0
+          CHECKSUM_MATCH=false
+
+          if [ ! -f "${ENC}" ]; then
+            mark_ng "missing-dump"
+          else
+            ACTUAL_SHA=$(sha256sum "${ENC}" | cut -d' ' -f1)
+            EXPECTED_SHA=$(node -e "const fs=require('fs'); const d=JSON.parse(fs.readFileSync('config/memory/backup-status.json','utf8')); console.log((d.targets && d.targets.blobs && d.targets.blobs.sha256) || '')")
+            if [ -n "${EXPECTED_SHA}" ] && [ "${ACTUAL_SHA}" = "${EXPECTED_SHA}" ]; then
+              CHECKSUM_MATCH=true
+            else
+              echo "[restore-drill] blobs: checksum mismatch actual=${ACTUAL_SHA} expected=${EXPECTED_SHA}" >&2
+              mark_ng "checksum-mismatch"
+            fi
+
+            if ! gpg --batch --yes --passphrase "${BACKUP_GPG_PASSPHRASE}" -d "${ENC}" 2>"${WORKDIR}/blobs.gpg.err" | gunzip -c > "${PLAIN}"; then
+              echo "[restore-drill] blobs: decrypt/gunzip FAILED" >&2
+              cat "${WORKDIR}/blobs.gpg.err" >&2 || true
+              mark_ng "decrypt-failed"
+            elif [ ! -s "${PLAIN}" ]; then
+              mark_ng "empty-plaintext"
+            else
+              # 主要構造 stores.<storeName> はキー=blobキー, 値=中身のマップ
+              # (scripts/backup-blobs-export.mjsの出力仕様)。全ストア合算の
+              # キー数をアサートする(0件はドリル失敗)。
+              ELEMENT_COUNT=$(BLOBS_JSON_PATH="${PLAIN}" node -e "
+                const fs = require('fs');
+                const d = JSON.parse(fs.readFileSync(process.env.BLOBS_JSON_PATH, 'utf8'));
+                const stores = d.stores || {};
+                let total = 0;
+                for (const k of Object.keys(stores)) {
+                  total += Object.keys(stores[k] || {}).length;
+                }
+                console.log(total);
+              ")
+              echo "[restore-drill] blobs: element_count=${ELEMENT_COUNT}"
+              if [ -z "${ELEMENT_COUNT}" ] || [ "${ELEMENT_COUNT}" -eq 0 ] 2>/dev/null; then
+                mark_ng "zero-elements"
+                ELEMENT_COUNT=${ELEMENT_COUNT:-0}
+              fi
+            fi
+            rm -f "${PLAIN}"
+          fi
+
+          echo "[restore-drill] blobs: status=${STATUS} element_count=${ELEMENT_COUNT} checksum_match=${CHECKSUM_MATCH}"
+          echo "BLOBS_STATUS=${STATUS}" >> "$GITHUB_ENV"
+          echo "BLOBS_ELEMENT_COUNT=${ELEMENT_COUNT}" >> "$GITHUB_ENV"
+          echo "BLOBS_CHECKSUM_MATCH=${CHECKSUM_MATCH}" >> "$GITHUB_ENV"
+
+      - name: Write restore-drill-status.json
+        run: |
+          set -euo pipefail
+          NOW_JST=$(TZ=Asia/Tokyo date '+%Y-%m-%d %H:%M JST')
+          mkdir -p config/memory
+          cat > config/memory/restore-drill-status.json <<EOF
+          {
+            "last_drill": "${NOW_JST}",
+            "dump_date": "${DUMP_DATE}",
+            "targets": {
+              "gate": { "status": "${GATE_STATUS}", "table_count": ${GATE_TABLE_COUNT}, "nonzero_tables": ${GATE_NONZERO_TABLES}, "checksum_match": ${GATE_CHECKSUM_MATCH} },
+              "supabase": { "status": "${SUPABASE_STATUS}", "element_count": ${SUPABASE_ELEMENT_COUNT}, "checksum_match": ${SUPABASE_CHECKSUM_MATCH} },
+              "blobs": { "status": "${BLOBS_STATUS}", "element_count": ${BLOBS_ELEMENT_COUNT}, "checksum_match": ${BLOBS_CHECKSUM_MATCH} }
+            }
+          }
+          EOF
+          cat config/memory/restore-drill-status.json
+
+      - name: Commit & push restore-drill-status.json to config repo
+        working-directory: config
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add memory/restore-drill-status.json
+          if git diff --cached --quiet; then
+            echo "no changes to commit"
+          else
+            git commit -q -m "chore: restore-drill-monthly status update ($(TZ=Asia/Tokyo date '+%Y-%m-%d %H:%M JST'))"
+            bash ../scripts/git-push-retry.sh git@config-gh:yusuken10121990-hub/ai-ops-config.git main
+          fi
+
+      - name: Cleanup plaintext workdir (defense in depth; runner is destroyed anyway)
+        if: always()
+        run: rm -rf "${WORKDIR}"
+
+      - name: Fail the job if any target did not pass (real row/element-count asserts, not exit codes alone)
+        run: |
+          set -euo pipefail
+          echo "[restore-drill] gate=${GATE_STATUS} supabase=${SUPABASE_STATUS} blobs=${BLOBS_STATUS}"
+          FAIL=0
+          [ "${GATE_STATUS}" = "ok" ] || FAIL=1
+          [ "${SUPABASE_STATUS}" = "ok" ] || FAIL=1
+          [ "${BLOBS_STATUS}" = "ok" ] || FAIL=1
+          if [ "${FAIL}" -eq 1 ]; then
+            echo "[restore-drill] one or more targets failed the monthly restore drill (see restore-drill-status.json committed above for details)" >&2
+            exit 1
+          fi
+          echo "[restore-drill] all targets ok"
+# Note: 本番のRailway Postgres/Supabaseへの書き戻しはこのworkflowには一切
+# 実装しない。復元は常に上記の使い捨てpostgres service containerのみ
+# (job終了と同時に破棄)。LINE通知はしない(承認通知ルール対象外のため)。
+# 結果はrestore-drill-status.json経由でダッシュボードに反映される。

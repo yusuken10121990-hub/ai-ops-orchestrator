@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-09-27T01:48:09.313Z",
+  "generated_at": "2026-09-27T08:06:09.775Z",
   "note": "systems.json(非公開)のうちstatus:liveの監視に必要な安全なフィールドのみを公開したサブセット。哨戒B(Netlify Scheduled Function)が認証なしで参照する。",
   "systems": [
     {
@@ -358,7 +358,7 @@
       "url": "https://web-production-74d8f.up.railway.app",
       "kind": "site",
       "healthPath": "/api/health/ready",
-      "marker": "KIMONO",
+      "marker": "ready",
       "deploy": "railway (project kimono-remake, web+worker+postgres+redis)",
       "status": "live"
     },

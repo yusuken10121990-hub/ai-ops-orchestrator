@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-09-28T05:19:45.189Z",
+  "generated_at": "2026-09-28T11:59:49.632Z",
   "note": "systems.json(非公開)のうちstatus:liveの監視に必要な安全なフィールドのみを公開したサブセット。哨戒B(Netlify Scheduled Function)が認証なしで参照する。",
   "systems": [
     {
@@ -370,6 +370,16 @@
       "healthPath": "/api/health/live",
       "marker": "",
       "deploy": "railway up (project: kimono-remake, services: web+worker+postgres+redis)",
+      "status": "live"
+    },
+    {
+      "id": "sueta-case-manager",
+      "name": "スエタ不動産 案件管理（売却案件の進捗・次作業管理デモ）",
+      "url": "https://sueta-app-production.up.railway.app",
+      "kind": "site",
+      "healthPath": "/api/health",
+      "marker": "ok",
+      "deploy": "Railway(project sueta-case-manager / service sueta-app / Volume /data, git archive HEAD → railway up)",
       "status": "live"
     }
   ]

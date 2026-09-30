@@ -54,6 +54,16 @@ function main() {
     systems: live,
   };
 
+  // 2026-09-30 営業台帳(Apps Script)用: 受託先(client)が入っている開発中/稼働中システムの一覧。
+  // 営業台帳がこれを15分ごとに読み、新しい受託システムを案件として自動追加する。
+  const clients = all
+    .filter((s) => s.client && (s.status === 'building' || s.status === 'live'))
+    .map((s) => ({ id: s.id, name: s.name, client: s.client, url: s.url || '', status: s.status, addedAt: s.addedAt || '' }));
+  const CLIENTS_OUT = process.env.PUBLIC_CLIENTS_OUT || 'public-feed/systems-clients.json';
+  mkdirSync(CLIENTS_OUT.slice(0, CLIENTS_OUT.lastIndexOf('/')), { recursive: true });
+  writeFileSync(CLIENTS_OUT, JSON.stringify({ generated_at: new Date().toISOString(), note: '受託システムの一覧(営業台帳の自動追加用・公開して問題ない項目のみ)', systems: clients }, null, 2) + '\n', 'utf8');
+  console.log(`[publish-public-feed] wrote ${CLIENTS_OUT} (${clients.length} client systems)`);
+
   mkdirSync(OUT_PATH.includes('/') ? OUT_PATH.slice(0, OUT_PATH.lastIndexOf('/')) : '.', { recursive: true });
   writeFileSync(OUT_PATH, JSON.stringify(payload, null, 2) + '\n', 'utf8');
   console.log(`[publish-public-feed] wrote ${OUT_PATH} (${live.length} live systems)`);

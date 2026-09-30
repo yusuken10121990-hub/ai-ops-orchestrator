@@ -1,0 +1,94 @@
+{
+  "generated_at": "2026-09-30T12:04:42.963Z",
+  "note": "受託システムの一覧(営業台帳の自動追加用・公開して問題ない項目のみ)",
+  "systems": [
+    {
+      "id": "fundops-demo",
+      "name": "FundOps (ファンド運営・AI審査・顧客管理システム デモ)",
+      "client": "ファンド運営会社（会社名未入力）",
+      "url": "https://fundops-demo.netlify.app",
+      "status": "live",
+      "addedAt": "2026-08-07"
+    },
+    {
+      "id": "funvest-os",
+      "name": "funvest-os (Funvest向け AI融資・貸付債権・ファンド統合管理システム)",
+      "client": "Funvest",
+      "url": "https://funvest-os-production.up.railway.app",
+      "status": "live",
+      "addedAt": "2026-08-20"
+    },
+    {
+      "id": "estimate-system",
+      "name": "官公庁イベント見積管理システム",
+      "client": "官公庁イベント案件（会社名未入力）",
+      "url": "http://localhost:4680",
+      "status": "building",
+      "addedAt": "2026-09-03"
+    },
+    {
+      "id": "terramatch",
+      "name": "TerraMatch（住宅会社向け顧客管理・土地AIマッチング）",
+      "client": "崎山組",
+      "url": "https://terramatch-production.up.railway.app",
+      "status": "live",
+      "addedAt": "2026-09-07"
+    },
+    {
+      "id": "science-inquiry-ai",
+      "name": "ZEROSYS AI問い合わせ自動化システム(サイエンス株式会社向け)",
+      "client": "サイエンス株式会社",
+      "url": "https://science-inquiry-ai-production.up.railway.app",
+      "status": "live",
+      "addedAt": "2026-09-08"
+    },
+    {
+      "id": "kyoshin-logistics",
+      "name": "共進運輸 物流業務自動化・配車支援システム",
+      "client": "共進運輸",
+      "url": "https://app-production-4f25.up.railway.app",
+      "status": "live",
+      "addedAt": "2026-09-17"
+    },
+    {
+      "id": "pascal-kids-inquiry",
+      "name": "パスカルキッズ AI問い合わせ対応・講習案内自動化システム",
+      "client": "パスカルキッズ",
+      "url": "https://web-production-308cb.up.railway.app",
+      "status": "live",
+      "addedAt": "2026-09-18"
+    },
+    {
+      "id": "klar-portal",
+      "name": "Klar 顧客ポータル(アカウント制ダッシュボード)",
+      "client": "Klar",
+      "url": "https://klar-portal-production.up.railway.app",
+      "status": "live",
+      "addedAt": "2026-09-19"
+    },
+    {
+      "id": "kimono-remake-ec",
+      "name": "着物リメイクEC+運営ダッシュボード(仮称KIMONO ATELIER)",
+      "client": "着物リメイク事業者（会社名未入力）",
+      "url": "https://web-production-74d8f.up.railway.app",
+      "status": "live",
+      "addedAt": "2026-09-24"
+    },
+    {
+      "id": "kimono-remake",
+      "name": "着物リメイクEC＋運営ダッシュボード",
+      "client": "着物リメイク事業者（会社名未入力）",
+      "url": "https://web-production-74d8f.up.railway.app",
+      "status": "live",
+      "addedAt": "2026-09-24"
+    },
+    {
+      "id": "sueta-case-manager",
+      "name": "スエタ不動産 案件管理（売却案件の進捗・次作業管理デモ）",
+      "client": "スエタ不動産",
+      "url": "https://sueta-app-production.up.railway.app",
+      "status": "live",
+      "addedAt": "2026-09-28"
+    }
+  ]
+}

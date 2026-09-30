@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-09-30T00:46:30.665Z",
+  "generated_at": "2026-09-30T06:41:03.082Z",
   "note": "systems.json(非公開)のうちstatus:liveの監視に必要な安全なフィールドのみを公開したサブセット。哨戒B(Netlify Scheduled Function)が認証なしで参照する。",
   "systems": [
     {
@@ -380,6 +380,16 @@
       "healthPath": "/api/health",
       "marker": "ok",
       "deploy": "Railway(project sueta-case-manager / service sueta-app / Volume /data, git archive HEAD → railway up)",
+      "status": "live"
+    },
+    {
+      "id": "sales-pipeline",
+      "name": "ZEROSYS 営業台帳(制作→納品→テスト→受注→契約・メール自動追跡・対応遅れアラート)",
+      "url": "https://script.google.com/macros/s/AKfycbzFKkBR7NhUdU1fCzYZBzxrP5cl_jIuVicO1zuQu7Gn_gy1axRrgh3tgpLlbfvwenCTGA/exec",
+      "kind": "site",
+      "healthPath": "?dbg=1",
+      "marker": "",
+      "deploy": "clasp push && clasp deploy -i AKfycbzFKkBR7NhUdU1fCzYZBzxrP5cl_jIuVicO1zuQu7Gn_gy1axRrgh3tgpLlbfvwenCTGA",
       "status": "live"
     }
   ]

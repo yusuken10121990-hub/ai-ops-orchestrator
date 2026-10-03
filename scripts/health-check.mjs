@@ -447,6 +447,30 @@ async function main() {
   } catch (e) {
     console.log(`[health-check] key-expiry check skipped: ${e.message}`);
   }
+
+  // PC側Railwayバックアップ(AIOps-BackupDaily-Headless → backup-status-railway.json)の監視（2026-10-04追加）:
+  // conhost --headless経由のWindowsタスクは子プロセスが失敗しても結果0を返すため、
+  // terramatchのバックアップが10日間失敗しても誰も気づかなかった。ここで台帳を読み、
+  // 台帳自体の更新停止(36h超=PC停止/タスク停止)と、対象ごとの2回以上連続失敗を警告する。
+  try {
+    const bkPath = dirname(SYSTEMS_JSON) + '/backup-status-railway.json';
+    if (!existsSync(bkPath)) {
+      console.log(`BACKUP_ALERT=railway-ledger:台帳 backup-status-railway.json が存在しない(未作成=監視不能)`);
+    } else {
+      const bk = readJson(bkPath);
+      const ageH = (Date.now() - new Date(bk.runAt).getTime()) / 3600000;
+      if (!(ageH < 36)) {
+        console.log(`BACKUP_ALERT=railway-ledger:最終実行から${Math.floor(ageH)}時間更新なし(runAt=${bk.runAt})。PC停止またはタスク停止の疑い`);
+      }
+      for (const r of bk.results || []) {
+        if ((r.failStreak || 0) >= 2) {
+          console.log(`BACKUP_ALERT=${r.name}:${r.failStreak}回連続失敗 最終成功=${r.lastOkAt || 'UNKNOWN'} 理由=${String(r.error || '').replace(/[\r\n]/g, ' ').slice(0, 120)}`);
+        }
+      }
+    }
+  } catch (e) {
+    console.log(`BACKUP_ALERT=railway-ledger:台帳の読込に失敗(${e.message})`);
+  }
 }
 
 main().catch((e) => {

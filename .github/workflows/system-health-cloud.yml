@@ -99,6 +99,28 @@ jobs:
             fi
           done
 
+      # PC側Railwayバックアップの連続失敗/更新停止をIssue化（2026-10-04追加・同名open Issueはスキップ）
+      - name: Backup failure alert (create GitHub Issue)
+        if: always()
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          grep -oP '(?<=^BACKUP_ALERT=).*' health-check.log | while IFS= read -r line; do
+            id="${line%%:*}"
+            detail="${line#*:}"
+            title="バックアップ失敗: ${id}"
+            existing=$(gh issue list -R "${GITHUB_REPOSITORY}" --state open --search "in:title \"${title}\"" --json number --jq 'length')
+            if [ "${existing}" = "0" ]; then
+              gh issue create -R "${GITHUB_REPOSITORY}" \
+                --title "${title}" \
+                --label "p1-alert" \
+                --body "自動検知(system-health-cloud): ${detail}。詳細: config/memory/backup-status-railway.json。復旧(次回バックアップ成功)後はこのIssueをcloseしてください。"
+            else
+              echo "open issue already exists for ${id}, skip"
+            fi
+          done
+
       # Business OS が「静かに止まる」のを検知する（2026-08-16追加）。
       # workflow失敗はIssueで気づけるが、一度も起動しなくなる場合はエラーが
       # 1件も出ないままAI CEOだけが沈黙する。鮮度で見張るのはここだけ。

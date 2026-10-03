@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-10-03T20:43:16.012Z",
+  "generated_at": "2026-10-03T20:49:34.070Z",
   "note": "受託システムの一覧(営業台帳の自動追加用・公開して問題ない項目のみ)",
   "systems": [
     {
@@ -69,14 +69,6 @@
     {
       "id": "kimono-remake-ec",
       "name": "着物リメイクEC+運営ダッシュボード(仮称KIMONO ATELIER)",
-      "client": "着物リメイク事業者（会社名未入力）",
-      "url": "https://web-production-74d8f.up.railway.app",
-      "status": "live",
-      "addedAt": "2026-09-24"
-    },
-    {
-      "id": "kimono-remake",
-      "name": "着物リメイクEC＋運営ダッシュボード",
       "client": "着物リメイク事業者（会社名未入力）",
       "url": "https://web-production-74d8f.up.railway.app",
       "status": "live",

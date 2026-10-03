@@ -178,6 +178,12 @@ jobs:
           SYSTEMS_JSON=config/memory/systems.json HEALTH_STATUS_JSON=config/memory/health-status.json \
             node scripts/health-check.mjs
 
+      # 運用カバレッジ一覧(死活×バックアップ×復元試験)を台帳から再生成（2026-10-04追加・LLM不使用）
+      - name: Regenerate ops-coverage.md
+        if: always()
+        continue-on-error: true
+        run: node config/scripts/ops-coverage.mjs
+
       - name: Commit & push health-status.json (+ remediate log) to config repo
         working-directory: config
         run: |

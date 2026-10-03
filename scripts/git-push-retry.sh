@@ -62,7 +62,8 @@ MAX_ATTEMPTS=5
 
 # Paths safe to auto-resolve as "keep ours" on conflict: wholesale-regenerated
 # snapshot/cache files only, never narrative logs.
-CACHE_ONLY_PATTERN='^memory/ad-metrics/.*\.json$|^memory/[^/]*-status\.json$'
+# public-feed/*.json is regenerated wholesale from systems.json every run (2026-10-04).
+CACHE_ONLY_PATTERN='^memory/ad-metrics/.*\.json$|^memory/[^/]*-status\.json$|^public-feed/[^/]*\.json$'
 
 # keep-ours では壊れるファイル。累積カウンタを持つので意味を理解して統合する。
 # 2026-08-21: ad-money-guard-state.json の衝突で ad-pdca-daily の schedule 実行が
@@ -121,7 +122,10 @@ for i in $(seq 1 "${MAX_ATTEMPTS}"); do
   fi
   echo "[git-push-retry] attempt ${i} rejected, fetching + rebasing onto ${BRANCH}..."
   git fetch "${REMOTE_URL}" "${BRANCH}"
-  if ! git rebase FETCH_HEAD; then
+  # --autostash (2026-10-04): a run queued behind another starts from its stale
+  # trigger sha, and earlier steps leave other tracked files modified; a plain
+  # rebase then refused ("cannot rebase: You have unstaged changes") 5/5 times.
+  if ! git rebase --autostash FETCH_HEAD; then
     echo "[git-push-retry] rebase had conflicts, aborting rebase and trying a plain merge instead"
     git rebase --abort || true
     if ! git merge FETCH_HEAD --no-edit; then

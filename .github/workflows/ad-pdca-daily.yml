@@ -17,6 +17,10 @@ concurrency:
 jobs:
   run:
     runs-on: ubuntu-latest
+    env:
+      # 2026-10-04 オーナー方針: 広告の通常の自動変更は停止（読み取り分析・異常検知・ad-money-guard・承認済み安全停止は継続）。
+      # 変更系の広告API呼び出しはオーナー明示依頼(ADS_OWNER_ORDER_ID)か安全停止(一時停止のみ+ADS_SAFETY_STOP_REASON)だけ通る。
+      NODE_OPTIONS: --import ${{ github.workspace }}/scripts/ads-change-gate-preload.mjs
     timeout-minutes: 30
     steps:
       - name: Checkout orchestrator (public, scripts only)

@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-10-04T08:25:51.502Z",
+  "generated_at": "2026-10-04T14:22:36.020Z",
   "note": "systems.json(非公開)のうちstatus:liveの監視に必要な安全なフィールドのみを公開したサブセット。哨戒B(Netlify Scheduled Function)が認証なしで参照する。",
   "systems": [
     {
@@ -380,6 +380,16 @@
       "healthPath": "?dbg=1",
       "marker": "",
       "deploy": "clasp push && clasp deploy -i AKfycbzFKkBR7NhUdU1fCzYZBzxrP5cl_jIuVicO1zuQu7Gn_gy1axRrgh3tgpLlbfvwenCTGA",
+      "status": "live"
+    },
+    {
+      "id": "zerosys-dots-bridge",
+      "name": "Dot(ZEROSYS Commander)→Claude タスク受付ブリッジ(非公開GitHub Issue経由)",
+      "url": "https://zerosys-leads-production.up.railway.app/api/outreach/executor",
+      "kind": "automation",
+      "healthPath": "/api/outreach/executor",
+      "marker": "",
+      "deploy": "Railway zerosys-leads 同居(サーバー内60秒ループ)。実行権=OUTREACH_ACTIVE_EXECUTOR",
       "status": "live"
     }
   ]

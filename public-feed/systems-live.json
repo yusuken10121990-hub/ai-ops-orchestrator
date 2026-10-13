@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-10-13T02:01:11.460Z",
+  "generated_at": "2026-10-13T09:23:21.266Z",
   "note": "systems.json(非公開)のうちstatus:liveの監視に必要な安全なフィールドのみを公開したサブセット。哨戒B(Netlify Scheduled Function)が認証なしで参照する。",
   "systems": [
     {
@@ -360,6 +360,16 @@
       "healthPath": "/api/outreach/executor",
       "marker": "",
       "deploy": "Railway zerosys-leads 同居(サーバー内60秒ループ)。実行権=OUTREACH_ACTIVE_EXECUTOR",
+      "status": "live"
+    },
+    {
+      "id": "ops-auto-repair",
+      "name": "運用保守 自動検知→自動修理(監視NG/依存脆弱性→code-task-queue)",
+      "url": "",
+      "kind": "backend",
+      "healthPath": "",
+      "marker": "",
+      "deploy": "cloud: ai-ops-orchestrator ops-auto-repair-cloud.yml (毎時:50, Railway GraphQL) + local: Windowsタスク AIOps-OpsAutoRepair-Headless (毎時, npm audit等PC専用分)",
       "status": "live"
     }
   ]

@@ -19,10 +19,6 @@ concurrency:
 jobs:
   run:
     runs-on: ubuntu-latest
-    env:
-      # 2026-10-04 オーナー方針: 広告の通常の自動変更は停止（読み取り分析・異常検知・ad-money-guard・承認済み安全停止は継続）。
-      # 変更系の広告API呼び出しはオーナー明示依頼(ADS_OWNER_ORDER_ID)か安全停止(一時停止のみ+ADS_SAFETY_STOP_REASON)だけ通る。
-      NODE_OPTIONS: --import ${{ github.workspace }}/scripts/ads-change-gate-preload.mjs
     timeout-minutes: 30
     steps:
       - name: Checkout orchestrator (public, scripts only)
@@ -71,6 +67,12 @@ jobs:
 
       - name: Run zerosys-ad-pdca
         env:
+          # 2026-10-04 オーナー方針: 広告の通常の自動変更は停止（読み取り分析・異常検知・ad-money-guard・承認済み安全停止は継続）。
+          # 変更系の広告API呼び出しはオーナー明示依頼(ADS_OWNER_ORDER_ID)か安全停止(一時停止のみ+ADS_SAFETY_STOP_REASON)だけ通る。
+          # 2026-10-13修正: job-level envだとcheckout前のactions/checkout自体にも伝播し、
+          # ファイルが存在せずERR_MODULE_NOT_FOUNDで落ちていた(run 38364031139等)。
+          # checkout後に実行されるこのstepのみに限定する。
+          NODE_OPTIONS: --import ${{ github.workspace }}/scripts/ads-change-gate-preload.mjs
           # 2026-08-24: run-loop.sh の共有タイムアウト機構をこのループだけ有効化する
           # (既定は現行動作維持・環境変数での明示opt-inのみ他ループに影響)。
           # timeout-minutes: 30 に対し、直近runの実測(setup ~16s / tail(ad-money-guard

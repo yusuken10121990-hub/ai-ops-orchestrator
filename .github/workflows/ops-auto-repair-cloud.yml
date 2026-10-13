@@ -54,7 +54,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           ALERT_REPO: ${{ github.repository }}
         run: |
-          railway whoami >/dev/null 2>&1 && echo "railway auth ok" || echo "railway auth NG"
+          n=$(railway list --json 2>/tmp/rl.err | node -e "let d='';process.stdin.on('data',x=>d+=x).on('end',()=>{try{console.log(JSON.parse(d).length)}catch{console.log(0)}})"); echo "railway projects visible: $n"; [ "$n" = "0" ] && head -c 200 /tmp/rl.err; true
           node config/scripts/ops-auto-repair-detector.mjs
 
       - name: Commit & push queue/state to config repo

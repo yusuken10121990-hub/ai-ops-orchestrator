@@ -54,7 +54,8 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           ALERT_REPO: ${{ github.repository }}
         run: |
-          n=$(railway list --json 2>/tmp/rl.err | node -e "let d='';process.stdin.on('data',x=>d+=x).on('end',()=>{try{console.log(JSON.parse(d).length)}catch{console.log(0)}})"); echo "railway projects visible: $n"; [ "$n" = "0" ] && head -c 200 /tmp/rl.err; true
+          curl -s -o /tmp/g.json -w "graphql http %{http_code}
+" https://backboard.railway.com/graphql/v2 -H "Authorization: Bearer $RAILWAY_API_TOKEN" -H "Content-Type: application/json" -d "{\"query\":\"{ projects { edges { node { name } } } }\"}"; head -c 160 /tmp/g.json | sed -E "s/\"name\":\"[^\"]*\"/name/g"; echo
           node config/scripts/ops-auto-repair-detector.mjs
 
       - name: Commit & push queue/state to config repo

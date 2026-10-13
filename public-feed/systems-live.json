@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-10-13T09:23:21.266Z",
+  "generated_at": "2026-10-13T17:08:52.026Z",
   "note": "systems.json(非公開)のうちstatus:liveの監視に必要な安全なフィールドのみを公開したサブセット。哨戒B(Netlify Scheduled Function)が認証なしで参照する。",
   "systems": [
     {
@@ -370,6 +370,86 @@
       "healthPath": "",
       "marker": "",
       "deploy": "cloud: ai-ops-orchestrator ops-auto-repair-cloud.yml (毎時:50, Railway GraphQL) + local: Windowsタスク AIOps-OpsAutoRepair-Headless (毎時, npm audit等PC専用分)",
+      "status": "live"
+    },
+    {
+      "id": "ai-sales-agent-v2",
+      "name": "AI営業エージェント v2",
+      "url": "https://ai-sales-agent-v2-production.up.railway.app",
+      "kind": "backend",
+      "healthPath": "/",
+      "marker": "",
+      "deploy": "railway-up",
+      "status": "live"
+    },
+    {
+      "id": "ai-call-system",
+      "name": "AIコールシステム",
+      "url": "https://ai-call-web-production.up.railway.app",
+      "kind": "backend",
+      "healthPath": "/",
+      "marker": "",
+      "deploy": "railway-git",
+      "status": "live"
+    },
+    {
+      "id": "torasaburo-vms",
+      "name": "トラサブロー車両管理システム(VMS)",
+      "url": "https://torasaburo-vms-production.up.railway.app",
+      "kind": "backend",
+      "healthPath": "/",
+      "marker": "",
+      "deploy": "railway-git",
+      "status": "live"
+    },
+    {
+      "id": "iwill-erp-app",
+      "name": "アイウィル統合業務システム(フェーズ0・ZEROSYS案件)",
+      "url": "https://iwill-erp-production.up.railway.app",
+      "kind": "backend",
+      "healthPath": "/health",
+      "marker": "",
+      "deploy": "railway-git",
+      "status": "live"
+    },
+    {
+      "id": "commander-autonomous-agent",
+      "name": "司令塔AI(Phase6自律エージェント・広告運用提案)",
+      "url": "https://commander-production-4d93.up.railway.app",
+      "kind": "backend",
+      "healthPath": "/",
+      "marker": "",
+      "deploy": "railway-git",
+      "status": "live"
+    },
+    {
+      "id": "biz-erp-5-f4d454cd",
+      "name": "業務システム試作\"5\"(運送/レンタカー/整備・Railway f4d454cd)",
+      "url": "https://5-production-bcf3.up.railway.app",
+      "kind": "backend",
+      "healthPath": "/",
+      "marker": "",
+      "deploy": "railway-git",
+      "status": "live"
+    },
+    {
+      "id": "biz-erp-5-6d2e0e34",
+      "name": "業務システム試作\"5\"(運送/レンタカー/整備・Railway 6d2e0e34)",
+      "url": "https://5-production-3f9d.up.railway.app",
+      "kind": "backend",
+      "healthPath": "/",
+      "marker": "",
+      "deploy": "railway-git",
+      "status": "live"
+    },
+    {
+      "id": "biz-erp-5-6c7f35ac",
+      "name": "業務システム試作\"5\"(運送/レンタカー/整備・Railway 6c7f35ac)",
+      "url": "https://5-production-1100.up.railway.app",
+      "kind": "backend",
+      "healthPath": "/",
+      "marker": "",
+      "deploy": "railway-git",
       "status": "live"
     }
   ]

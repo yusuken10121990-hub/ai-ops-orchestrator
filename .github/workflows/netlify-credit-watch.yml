@@ -1,0 +1,74 @@
+name: netlify-credit-watch
+
+# Cloud migration (2026-10-14, owner instruction: "KeepAwake以外、MEO以外のローカル
+# 自動タスクはクラウドでできるはず") of the PC-only Windows task
+# AIOps-NetlifyCreditWatch-Headless (.claude/scripts/netlify-credit-watch.mjs,
+# 1x/day 9:10 JST). Pure API/HTTP monitor, no browser/local-session dependency,
+# so it is cloud-feasible as-is. Logic ported 1:1 to scripts/netlify-credit-watch-cloud.mjs;
+# see that file's header comment for the two PC->cloud substitutions (approval queue,
+# health state file). Uses only already-registered secrets (NETLIFY_AUTH_TOKEN,
+# CONFIG_DEPLOY_KEY, GATE_URL, GATE_AGENT_KEY) -- no new secret added.
+#
+# The PC task AIOps-NetlifyCreditWatch-Headless is left untouched/running; this is an
+# additional, independent cloud path (not a cutover) per the runner's hard constraints.
+#
+# JST 9:10 = UTC 00:10
+on:
+  schedule:
+    - cron: "10 0 * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: netlify-credit-watch
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout orchestrator (public, scripts only)
+        uses: actions/checkout@v7
+
+      - name: Setup SSH deploy key (config)
+        env:
+          CONFIG_DEPLOY_KEY: ${{ secrets.CONFIG_DEPLOY_KEY }}
+        run: |
+          chmod +x scripts/setup-ssh-keys.sh
+          scripts/setup-ssh-keys.sh
+
+      - name: Checkout private config repo via deploy key (SSH)
+        run: |
+          git clone --depth 1 --branch main git@config-gh:yusuken10121990-hub/ai-ops-config.git config
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: "20"
+
+      - name: Install Netlify CLI
+        run: npm install -g netlify-cli@19
+
+      - name: Run netlify-credit-watch (decision-only, no Claude)
+        env:
+          NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
+          GATE_URL: ${{ secrets.GATE_URL }}
+          GATE_AGENT_KEY: ${{ secrets.GATE_AGENT_KEY }}
+          HEALTH_STATUS_JSON: config/memory/health-status.json
+        run: node scripts/netlify-credit-watch-cloud.mjs
+
+      - name: Commit & push health-status.json to config repo
+        working-directory: config
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A memory/health-status.json
+          if git diff --cached --quiet; then
+            echo "no changes to commit"
+          else
+            git commit -m "chore: netlify-credit-watch update ($(TZ=Asia/Tokyo date '+%Y-%m-%d %H:%M JST'))"
+            bash ../scripts/git-push-retry.sh git@config-gh:yusuken10121990-hub/ai-ops-config.git main
+          fi

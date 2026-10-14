@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-10-14T01:12:39.848Z",
+  "generated_at": "2026-10-14T01:51:41.148Z",
   "note": "受託システムの一覧(営業台帳の自動追加用・公開して問題ない項目のみ)",
   "systems": [
     {
@@ -81,6 +81,30 @@
       "url": "https://sueta-app-production.up.railway.app",
       "status": "live",
       "addedAt": "2026-09-28"
+    },
+    {
+      "id": "korekara-payroll",
+      "name": "スナック コレカラ 給与・勤怠システム v2（GAS Webアプリ＋Airシフト RPA）",
+      "client": "スナック コレカラ",
+      "url": "",
+      "status": "building",
+      "addedAt": "2026-10-14"
+    },
+    {
+      "id": "shodensha-page-assistant",
+      "name": "株式会社松電舎 製品ページ作成アシスタント(試作)",
+      "client": "株式会社松電舎",
+      "url": "https://web-production-97e8c.up.railway.app",
+      "status": "building",
+      "addedAt": "2026-10-14"
+    },
+    {
+      "id": "luflos-satei-assist",
+      "name": "LUFLOS 査定アシスト(時計の概算相場・真贋確認支援 社内試作)",
+      "client": "LUFLOS株式会社",
+      "url": "",
+      "status": "building",
+      "addedAt": "2026-10-14"
     }
   ]
 }

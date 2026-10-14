@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-10-14T01:51:41.148Z",
+  "generated_at": "2026-10-14T06:11:15.201Z",
   "note": "受託システムの一覧(営業台帳の自動追加用・公開して問題ない項目のみ)",
   "systems": [
     {
@@ -86,7 +86,7 @@
       "id": "korekara-payroll",
       "name": "スナック コレカラ 給与・勤怠システム v2（GAS Webアプリ＋Airシフト RPA）",
       "client": "スナック コレカラ",
-      "url": "",
+      "url": "https://script.google.com/macros/s/AKfycbypmUAbmd4isPrwsEKU3w_k_Fz5YM87VoBr1dtL4fXv74CQddWSo-kj-W1VMoizpq7g/exec",
       "status": "building",
       "addedAt": "2026-10-14"
     },
@@ -95,7 +95,7 @@
       "name": "株式会社松電舎 製品ページ作成アシスタント(試作)",
       "client": "株式会社松電舎",
       "url": "https://web-production-97e8c.up.railway.app",
-      "status": "building",
+      "status": "live",
       "addedAt": "2026-10-14"
     },
     {

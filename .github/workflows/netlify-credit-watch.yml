@@ -9,13 +9,17 @@ name: netlify-credit-watch
 # health state file). Uses only already-registered secrets (NETLIFY_AUTH_TOKEN,
 # CONFIG_DEPLOY_KEY, GATE_URL, GATE_AGENT_KEY) -- no new secret added.
 #
-# The PC task AIOps-NetlifyCreditWatch-Headless is left untouched/running; this is an
-# additional, independent cloud path (not a cutover) per the runner's hard constraints.
-#
-# JST 9:10 = UTC 00:10
+# 2026-10-14 cutover (engineer, this queue task): a workflow_dispatch run of this
+# workflow (run 38516102062) was verified success with meaningful output (real
+# credit%+site statuses, health-status.json committed back to ai-ops-config) --
+# see decisions.md. PC task AIOps-NetlifyCreditWatch-Headless disabled
+# (schtasks /DISABLE, reversible via /ENABLE) now that this is the sole active
+# schedule. Cadence matches the PC task exactly: daily 9:10 AND 21:10 JST (JST
+# 9:10 = UTC 00:10, JST 21:10 = UTC 12:10) -- the original cron here only covered
+# the 9:10 run; added the missing 21:10 run to avoid a 12h monitoring gap.
 on:
   schedule:
-    - cron: "10 0 * * *"
+    - cron: "10 0,12 * * *"
   workflow_dispatch: {}
 
 permissions:

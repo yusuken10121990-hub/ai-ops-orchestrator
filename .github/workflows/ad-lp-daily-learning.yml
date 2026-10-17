@@ -22,7 +22,11 @@ jobs:
     # 2026-07-25: rotation now runs 2 agents (heatmap-analyst -> abtest-designer)
     # back-to-back in the 21:45 JST slot (see SKILL.md rotation table), so the
     # old 25min budget (sized for 1 agent) is no longer enough headroom.
-    timeout-minutes: 40
+    # 2026-10-17: raised 40->60. Run 38983874535 (2026-10-16T23:55:01Z) hit the
+    # 40min ceiling (ran 40m16s) and was cancelled by the runner timeout; every
+    # other run in the last 20 succeeded. 60 gives margin for occasional
+    # LLM-runtime spikes (claude-haiku-4-5 agent loop) while staying bounded.
+    timeout-minutes: 60
     steps:
       - name: Checkout orchestrator (public, scripts only)
         uses: actions/checkout@v7

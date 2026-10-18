@@ -157,6 +157,41 @@ try {
     [],
   ).find((r) => r.id === 'brand-visual-learning');
   check('cadence不明の日次相当は24.5hで偽stalledにしない', daily?.status, 'ok');
+
+  // 2026-10-18 false-positive修正の回帰テスト:
+  // AIOps-KeepAwake-Headless はログオン起動の無限while($true)keep-awakeデーモン。
+  // lastRunTime はログオン時(2026-10-14)で固定され進まないが、Windowsの
+  // lastResult=267009(0x00041301=SCHED_S_TASK_RUNNING)が「今も実行中」を示す。
+  // これを鮮度だけで判定すると必ず stalled 誤検知になってはならない。
+  const keepAwakeHb = {
+    generatedAt: '2026-10-18T00:46:46Z',
+    tasks: [{
+      name: 'AIOps-KeepAwake-Headless',
+      enabled: true,
+      lastRunTime: '2026/10/14 9:00:45',
+      nextRunTime: 'N/A',
+      lastResult: '267009',
+    }],
+  };
+  const keepAwake = checkLocalTasks(keepAwakeHb, []).find((r) => r.id === 'AIOps-KeepAwake-Headless');
+  check('KeepAwake(lastResult=267009, 実行中)は stalled にしない', keepAwake?.status !== 'stalled', true);
+  check('KeepAwake(lastResult=267009)は running と判定する', keepAwake?.status, 'running');
+
+  // 対照実験: 同じ古いlastRunTimeでも、lastResultが「実行中」コード以外(終了済み/
+  // エラー)なら、従来通りちゃんと stalled に到達できること(267009だけを免除する
+  // ピンポイント修正であり、鮮度判定そのものを無効化していないことの確認)。
+  const deadHb = {
+    generatedAt: '2026-10-18T00:46:46Z',
+    tasks: [{
+      name: 'AIOps-SomeOtherTask-Headless',
+      enabled: true,
+      lastRunTime: '2026/10/14 9:00:45',
+      nextRunTime: 'N/A',
+      lastResult: '0',
+    }],
+  };
+  const dead = checkLocalTasks(deadHb, []).find((r) => r.id === 'AIOps-SomeOtherTask-Headless');
+  check('対照: lastResult=0(終了済み)かつ古いlastRunTimeは引き続き stalled', dead?.status, 'stalled');
 } finally {
   rmSync(work, { recursive: true, force: true });
 }

@@ -241,6 +241,19 @@ export function parseWindowsLocalTime(text) {
 // Windowsタスクスケジューラが返す実行状態のうち「動いていない」と読むべきもの。
 const WINDOWS_BAD_STATUSES = new Set(['not_run_or_terminated', 'nonzero_result', 'failed']);
 
+// 2026-10-18 false-positive修正: Windowsの lastResult=267009 (0x00041301) は
+// SCHED_S_TASK_RUNNING、つまり「このタスクは今まさに実行中」を意味する公式コード。
+// AIOps-KeepAwake-Headless はログオン起動トリガーの無限 while($true) keep-awake
+// デーモン(ops/keep-awake.ps1)で、ログオン時に一度起動したあとは終了せず動き続ける
+// 設計のため lastRunTime はログオン時刻のまま進まない(2026-10-14で固定)。これを
+// 「鮮度」だけで判定すると必ず stalled 誤検知になる。OSが「実行中」と明言している
+// ものを鮮度計算で上書きしてはならない(WINDOWS_BAD_STATUSESの明示Factと同じ考え方)。
+const SCHED_S_TASK_RUNNING = 267009;
+function isWindowsTaskRunning(lastResult) {
+  if (lastResult === null || lastResult === undefined || lastResult === '') return false;
+  return Number(lastResult) === SCHED_S_TASK_RUNNING;
+}
+
 /**
  * heartbeat.tasks を { taskId, cronExpression, lastRunAt, nextRunAt, enabled,
  * runnerReported } に揃える。
@@ -263,6 +276,13 @@ export function normalizeHeartbeatTasks(heartbeat, knownTaskIds = new Set()) {
       nextRunAt: parseWindowsLocalTime(t?.nextRunTime) ?? t?.nextRunAt ?? null,
       enabled: t?.enabled,
       runnerReported: t?.status ?? null,
+      // 2026-10-18 false-positive修正: 旧実装はここでWindowsの生lastResultを
+      // 落としていたため、AIOps-KeepAwake-Headless(ログオン起動の無限while($true)
+      // keep-awakeデーモン)のような「実行中=正常」なタスクでも稼働中フラグが
+      // 失われ、下のcheckLocalTasksで鮮度だけからstalled誤判定されていた。
+      // taskId分岐(上のifブランチ)は {...t} でlastResultを素通しできているため、
+      // この分岐でも同様に伝播させる。
+      lastResult: t?.lastResult ?? null,
       // scheduled-tasks/ に実体が無い＝Windows専用の保守タスク等。
       // 存在しないIDへ紐付けたことにしない。
       unmapped: !known,
@@ -309,6 +329,13 @@ export function checkLocalTasks(heartbeat, cloudWorkflows = []) {
       // ランナー本人が「動いていない」と明示している。
       // 明示Factは推論より上位なので、鮮度計算で上書きしない。
       status = 'stalled';
+    } else if (isWindowsTaskRunning(t.lastResult)) {
+      // 2026-10-18 false-positive修正: OSが SCHED_S_TASK_RUNNING(267009) と
+      // 明言している=現在実行中。ログオン起動の無限ループ(KeepAwake等)は
+      // lastRunAtが古くても正常なので、鮮度計算より先にここで確定させる。
+      // 267009以外(0=終了済み/エラーコード)はここを通らず、下のage判定で
+      // 従来どおりstalled化できる(exempt対象を267009だけに絞る)。
+      status = 'running';
     } else if (!t.lastRunAt) {
       // 一度も発火していない: SKILL.mdの初回コミットからの経過で「新規で猶予期間内」か
       // 「本当に発火していない異常」かを切り分ける。

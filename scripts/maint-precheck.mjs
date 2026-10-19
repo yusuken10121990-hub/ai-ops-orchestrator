@@ -59,25 +59,69 @@ async function gql(query, variables = {}) {
   return j.data;
 }
 
+// 2026-10-19 run 39212354359: one nested query (projects->services->serviceInstances->domains)
+// came back "Not Authorized" for the whole tree, so nothing was checked. Query step by step
+// instead (same minimal projects query ops-auto-repair-cloud already succeeds with), and
+// keep going when one project/service is refused. Stage errors are kept for diagnosis.
+const stageErrors = {};
+function noteErr(stage, e) {
+  const k = `${stage}:${String(e.message).replace(/^railway-gql-/, '').slice(0, 70)}`;
+  stageErrors[k] = (stageErrors[k] || 0) + 1;
+}
+
 async function railwayInstances() {
-  const data = await gql(`query {
-    projects { edges { node { name services { edges { node { name serviceInstances { edges { node {
-      environmentId
-      domains { serviceDomains { domain } customDomains { domain } }
-      latestDeployment { id status createdAt }
-    } } } } } } } } }
-  }`);
+  const data = await gql(`query { projects { edges { node { id name } } } }`);
   const list = [];
-  for (const p of data.projects?.edges || []) {
-    for (const s of p.node.services?.edges || []) {
-      for (const i of s.node.serviceInstances?.edges || []) {
-        const n = i.node;
-        const hosts = [...(n.domains?.serviceDomains || []), ...(n.domains?.customDomains || [])].map((d) => d.domain);
-        list.push({ project: p.node.name, service: s.node.name, hosts, deployment: n.latestDeployment });
-      }
+  for (const pe of data.projects?.edges || []) {
+    const p = pe.node;
+    let proj;
+    try {
+      proj = (await gql(`query($id: String!) { project(id: $id) {
+        environments { edges { node { id name } } }
+        services { edges { node { id name } } }
+      } }`, { id: p.id })).project;
+    } catch (e) { noteErr('project', e); continue; }
+    const envs = (proj.environments?.edges || []).map((x) => x.node);
+    const env = envs.find((x) => x.name === 'production') || envs[0];
+    if (!env) continue;
+    for (const se of proj.services?.edges || []) {
+      const s = se.node;
+      let hosts = [];
+      try {
+        const d = (await gql(`query($p: String!, $e: String!, $s: String!) { domains(projectId: $p, environmentId: $e, serviceId: $s) {
+          serviceDomains { domain } customDomains { domain } } }`, { p: p.id, e: env.id, s: s.id })).domains;
+        hosts = [...(d?.serviceDomains || []), ...(d?.customDomains || [])].map((x) => x.domain);
+      } catch (e) { noteErr('domains', e); }
+      if (!hosts.length) continue;
+      let deployment = null;
+      try {
+        const d = await gql(`query($p: String!, $e: String!, $s: String!) { deployments(first: 1, input: { projectId: $p, environmentId: $e, serviceId: $s }) {
+          edges { node { id status createdAt } } } }`, { p: p.id, e: env.id, s: s.id });
+        deployment = d.deployments?.edges?.[0]?.node || null;
+      } catch (e) { noteErr('deployments', e); }
+      list.push({ project: p.name, service: s.name, hosts, deployment });
     }
   }
   return list;
+}
+
+// Netlify: no log API, but deploy history shows build/deploy failures (the "deploy failure"
+// part of check ①). Uses NETLIFY_AUTH_TOKEN (already given to this workflow).
+async function netlifySites() {
+  const tok = process.env.NETLIFY_AUTH_TOKEN;
+  if (!tok) throw new Error('no-netlify-token');
+  const h = { Authorization: `Bearer ${tok}` };
+  const res = await fetch('https://api.netlify.com/api/v1/sites?per_page=200', { headers: h, signal: AbortSignal.timeout(30000) });
+  if (!res.ok) throw new Error(`netlify-${res.status}`);
+  return { sites: await res.json(), h };
+}
+
+async function netlifyDeploys(site, h) {
+  const res = await fetch(`https://api.netlify.com/api/v1/sites/${site.id}/deploys?per_page=20`, { headers: h, signal: AbortSignal.timeout(30000) });
+  if (!res.ok) throw new Error(`netlify-deploys-${res.status}`);
+  const deps = (await res.json()).filter((d) => d.created_at >= WEEK_AGO);
+  const failed = deps.filter((d) => d.state === 'error');
+  return { deploys7d: deps.length, failed7d: failed.length, samples: [...new Set(failed.map((d) => String(d.error_message || '').slice(0, 140)))].slice(0, 3), publishedAt: site.published_deploy?.published_at || null };
 }
 
 async function railwayLogs(deploymentId) {
@@ -116,6 +160,11 @@ async function main() {
   else {
     try { instances = await railwayInstances(); } catch (e) { railwayError = e.message; }
   }
+  let netlify = null;
+  let netlifyError = null;
+  try { netlify = await netlifySites(); } catch (e) { netlifyError = e.message; }
+  const netlifyHost = (s) => [s.url, s.ssl_url, s.custom_domain, ...(s.domain_aliases || [])].filter(Boolean).map((x) => { try { return new URL(/^https?:/.test(x) ? x : `https://${x}`).hostname; } catch { return ''; } });
+  const netlifyCache = new Map();
 
   const systems = {};
   const logCache = new Map();
@@ -151,6 +200,17 @@ async function main() {
           ...(l.httpError ? { httpError: l.httpError } : {}),
         };
       }
+    } else if (/netlify/i.test(`${sys.deploy || ''}`) || /\.netlify\.app$/.test(host)) {
+      const site = netlify && netlify.sites.find((s) => netlifyHost(s).includes(host));
+      if (netlifyError) e.logs = { status: 'skipped', reason: netlifyError };
+      else if (!site) e.logs = { status: 'skipped', reason: 'netlify-site-not-found-for-host' };
+      else {
+        try {
+          if (!netlifyCache.has(site.id)) netlifyCache.set(site.id, await netlifyDeploys(site, netlify.h));
+          const d = netlifyCache.get(site.id);
+          e.logs = { status: d.failed7d > 0 ? 'finding' : 'green', source: 'netlify-deploys', site: site.name, ...d, note: 'デプロイ失敗の有無(関数の実行ログはAPI非提供)' };
+        } catch (err) { e.logs = { status: 'skipped', reason: err.message }; }
+      }
     }
 
     // backup / rollback source
@@ -175,12 +235,14 @@ async function main() {
   const result = {
     generatedAt: new Date().toISOString(),
     window: { since: WEEK_AGO },
-    railway: { reachable: !railwayError, error: railwayError, instances: instances ? instances.length : 0 },
+    railway: { reachable: !railwayError, error: railwayError, instances: instances ? instances.length : 0, stageErrors },
+    netlify: { reachable: !netlifyError, error: netlifyError, sites: netlify ? netlify.sites.length : 0 },
     summary: { logs: count('logs'), backup: count('backup'), audit: count('audit') },
     systems,
   };
   writeFileSync(OUT, JSON.stringify(result, null, 2) + '\n', 'utf8');
-  console.log(`[maint-precheck] railway reachable=${!railwayError}${railwayError ? ` (${railwayError})` : ''} instances=${result.railway.instances}`);
+  console.log(`[maint-precheck] railway reachable=${!railwayError}${railwayError ? ` (${railwayError})` : ''} instances=${result.railway.instances} stageErrors=${JSON.stringify(stageErrors)}`);
+  console.log(`[maint-precheck] netlify reachable=${!netlifyError}${netlifyError ? ` (${netlifyError})` : ''} sites=${result.netlify.sites}`);
   for (const [k, v] of Object.entries(result.summary)) console.log(`  ${k}: ${JSON.stringify(v)}`);
 }
 

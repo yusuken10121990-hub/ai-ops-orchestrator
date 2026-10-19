@@ -71,6 +71,9 @@ jobs:
           python3 -m pip install --user --quiet pip-audit || true
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
+      - name: Guard against mojibake in scripts
+        run: node scripts/check-no-mojibake.mjs
+
       - name: Run security-daily (decision-only, no Claude)
         env:
           SYSTEMS_JSON: config/memory/systems.json

@@ -183,9 +183,18 @@ async function originChecks(origin) {
   }
   for (const p of ADMIN_PATHS) {
     const res = await get(origin + p, { redirect: 'manual' });
-    if (res.status === 200 && res.text && res.text !== root.text && res.text !== notFound.text && /admin|邂｡逅・dashboard|login/i.test(res.text.slice(0, 20000))) {
-      const looksLogin = /type=["']?password|繝ｭ繧ｰ繧､繝ｳ|sign in|log in/i.test(res.text);
-      if (!looksLogin) r.exposure.findings.push({ sev: 'warn', kind: 'admin-path-200-without-login-form', path: p });
+    if (res.status === 200 && res.text && res.text !== root.text && res.text !== notFound.text && /admin|管理|dashboard|login/i.test(res.text.slice(0, 20000))) {
+      const looksLogin = /type=["']?password|ログイン|sign in|log in/i.test(res.text);
+      if (looksLogin) continue;
+      // Client-rendered admin shells (Next.js 'use client' etc.) return 200 HTML with no data;
+      // the real gate is the API. If a matching admin API refuses anonymous calls, it's not exposed.
+      let apiGate = null;
+      for (const a of [`/api${p}`, `/api${p}/status`, `/api${p}/users`, `/api${p}/me`]) {
+        const ar = await get(origin + a, { redirect: 'manual' });
+        if (ar.status === 401 || ar.status === 403) { apiGate = { path: a, http: ar.status }; break; }
+      }
+      if (apiGate) r.exposure.notes = [...(r.exposure.notes || []), { kind: 'admin-shell-api-gated', path: p, api: apiGate.path, http: apiGate.http }];
+      else r.exposure.findings.push({ sev: 'warn', kind: 'admin-path-200-without-login-form', path: p });
     }
   }
   r.exposure.status = r.exposure.findings.reduce((s, f) => worst(s, f.sev), 'ok');

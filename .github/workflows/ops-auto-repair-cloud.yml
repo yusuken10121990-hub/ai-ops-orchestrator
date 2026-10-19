@@ -60,6 +60,29 @@ jobs:
           echo "railway graphql http=$code projects=$(grep -o '"id"' /tmp/g.json | wc -l) err=$(grep -o '"message":"[^"]*"' /tmp/g.json | head -1)"
           node config/scripts/ops-auto-repair-detector.mjs
 
+      # 2026-10-19: a rejected Railway token used to look like "0 projects, all registered".
+      # The detector now records state.railwayError; surface it as an annotation + one open issue
+      # (no comment spam on the hourly cron; auto-closed once enumeration works again).
+      - name: Alert on Railway enumeration failure
+        if: always()
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          err=$(node -e "const s=require('./config/memory/ops-auto-repair-state.json');process.stdout.write(s.railwayError?'1':'')" 2>/dev/null || true)
+          title="ops-auto-repair: Railwayプロジェクト一覧を取得できません"
+          existing=$(gh issue list -R "${GITHUB_REPOSITORY}" --state open --search "in:title \"${title}\"" --json number --jq '.[0].number // empty')
+          if [ -n "${err}" ]; then
+            echo "::error::Railway project enumeration failed (details: config/memory/ops-auto-repair-state.json railwayError)"
+            if [ -z "${existing}" ]; then
+              gh issue create -R "${GITHUB_REPOSITORY}" --title "${title}" --label "p1-alert" \
+                --body "自動検知(ops-auto-repair-cloud): Railway API/CLIでプロジェクト一覧が取れず、台帳照合が止まっています。詳細は非公開台帳 config/memory/ops-auto-repair-state.json の railwayError。復旧を検知すると自動でcloseします。"
+            fi
+          elif [ -n "${existing}" ]; then
+            gh issue comment -R "${GITHUB_REPOSITORY}" "${existing}" --body "Railwayプロジェクト一覧の取得が復旧しました。自動closeします。"
+            gh issue close -R "${GITHUB_REPOSITORY}" "${existing}"
+          fi
+
       - name: Commit & push queue/state to config repo
         working-directory: config
         run: |

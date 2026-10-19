@@ -58,6 +58,16 @@ const REPOS = [
   { key: 'meo-backend', dir: 'meo-backend', match: /meo-backend/ },
   { key: 'jobqueue-backend', dir: 'jobqueue-backend', match: /jobqueue/ },
   { key: 'meta-ads', dir: 'meta-ads', match: /meta-ads/ },
+  // read-only keys added 2026-10-19 (skipped until the owner provisions them)
+  { key: 'lp-camp-c7faa7c45e', dir: 'lp-camp-c7faa7c45e', match: /campaigns[\\/]camp_c7faa7c45e\s*$/ },
+  { key: 'aim', dir: 'aim', match: /hub\/aim\b|user[\\/]aim\b/ },
+  { key: 'ai-call-system', dir: 'ai-call-system', match: /ai-call-system/ },
+  { key: 'torasaburo-vms', dir: 'torasaburo-vms', match: /torasaburo-vms/ },
+  { key: 'iwill-erp', dir: 'iwill-erp', match: /iwill-erp/ },
+  { key: 'commander', dir: 'commander', match: /[\\/]commander\s*$/ },
+  { key: 'biz-erp-5', dir: 'biz-erp-5', match: /Desktop[\\/]5\s*$/ },
+  { key: 'shodensha-page-assistant', dir: 'shodensha-page-assistant', match: /shodensha-page-assistant/ },
+  { key: 'zerosys-dots-tasks', dir: 'zerosys-dots-tasks', match: /zerosys-dots-tasks/ },
 ];
 // Hosts whose TLS/edge is run by a platform we cannot misconfigure (skip TLS/exposure).
 const PLATFORM_HOSTS = new Set(['github.com', 'script.google.com']);
@@ -143,6 +153,11 @@ function scanText(text, withLines) {
       if (/x{6,}|\.\.\.|your[_-]|example|dummy|placeholder|<|REDACTED/i.test(v)) continue;
       // real keys are random: upper + lower + digit. Lowercase slugs/IDs are not keys.
       if (p.mixed && !(/[A-Z]/.test(v) && /[a-z]/.test(v) && /\d/.test(v))) continue;
+      // test fixtures label themselves on the same line (FAKE_XOXB = "...", # dummy)
+      const ls = text.lastIndexOf('\n', m.index) + 1;
+      const le = text.indexOf('\n', m.index);
+      const lineText = text.slice(ls, le === -1 ? undefined : le);
+      if (/fake|dummy|ダミー|mock|fixture/i.test(lineText)) continue;
       const hit = { pattern: p.name, sev: p.sev };
       if (withLines) hit.line = text.slice(0, m.index).split('\n').length;
       hits.push(hit);

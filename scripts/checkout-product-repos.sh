@@ -21,6 +21,15 @@ REPOS=(
   "jobqueue-backend:jobqueue-backend:jobqueue-backend"
   "meo-backend:meo-backend:meo-backend"
   "lp-ai-system-saas:lp-ai-system-saas:lp-ai-system-saas"
+  "lp-camp-meo:lp-camp-c7faa7c45e:lp-camp-c7faa7c45e"
+  "aim:aim:aim"
+  "ai-call-system:ai-call-system:ai-call-system"
+  "torasaburo-vms:torasaburo-vms:torasaburo-vms"
+  "iwill-erp:iwill-erp:iwill-erp"
+  "commander:commander:commander"
+  "biz-erp-5:5:biz-erp-5"
+  "shodensha:shodensha-page-assistant:shodensha-page-assistant"
+  "zerosys-dots-tasks:zerosys-dots-tasks:zerosys-dots-tasks"
 )
 
 ok=0; skip=0

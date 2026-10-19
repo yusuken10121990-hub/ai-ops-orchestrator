@@ -37,6 +37,14 @@ const REPOS = [
   { dir: 'ai-business-ops', match: /ai-business-ops/ },
   { dir: 'meo-backend', match: /meo-backend/ },
   { dir: 'jobqueue-backend', match: /jobqueue/ },
+  { dir: 'lp-camp-c7faa7c45e', match: /campaigns[\\/]camp_c7faa7c45e\s*$/ },
+  { dir: 'aim', match: /hub\/aim\b|user[\\/]aim\b/ },
+  { dir: 'ai-call-system', match: /ai-call-system/ },
+  { dir: 'torasaburo-vms', match: /torasaburo-vms/ },
+  { dir: 'iwill-erp', match: /iwill-erp/ },
+  { dir: 'commander', match: /[\\/]commander\s*$/ },
+  { dir: 'biz-erp-5', match: /Desktop[\\/]5\s*$/ },
+  { dir: 'shodensha-page-assistant', match: /shodensha-page-assistant/ },
 ];
 
 async function gql(query, variables = {}) {

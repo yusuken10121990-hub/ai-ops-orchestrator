@@ -100,3 +100,15 @@ add_key "clients" "${CLIENTS_DEPLOY_KEY:-}"
 # uses this alias yet; provisioning the key only unblocks a future cloud
 # apply step, it does not itself run anything.
 add_key "lp-ai-system-saas" "${LP_AI_SYSTEM_SAAS_DEPLOY_KEY:-}"
+# 2026-10-19: read-only keys for security-daily / maintenance-weekly (npm audit,
+# secret scan, rollback source). Provisioned by the owner's one-Enter script
+# ops/provision-readonly-deploy-keys.ps1; each skips cleanly until then.
+add_key "lp-camp-meo" "${LP_CAMP_MEO_DEPLOY_KEY:-}"
+add_key "aim" "${AIM_DEPLOY_KEY:-}"
+add_key "ai-call-system" "${AI_CALL_SYSTEM_DEPLOY_KEY:-}"
+add_key "torasaburo-vms" "${TORASABURO_VMS_DEPLOY_KEY:-}"
+add_key "iwill-erp" "${IWILL_ERP_DEPLOY_KEY:-}"
+add_key "commander" "${COMMANDER_DEPLOY_KEY:-}"
+add_key "biz-erp-5" "${BIZ_ERP_5_DEPLOY_KEY:-}"
+add_key "shodensha" "${SHODENSHA_DEPLOY_KEY:-}"
+add_key "zerosys-dots-tasks" "${ZEROSYS_DOTS_TASKS_DEPLOY_KEY:-}"

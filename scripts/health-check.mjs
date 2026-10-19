@@ -254,6 +254,90 @@ async function ghActionsCheck(sys) {
   }
 }
 
+// 2026-10-19: 6 live systems stayed "skipped(no-gh-repo-slug-in-_deploy_note)" forever because
+// they have no HTTP endpoint and no "GitHub: owner/repo" note. Ledger-driven methods instead:
+//   healthMethod:"gh-workflow"  + ghRepo, ghWorkflow(file name), maxAgeHours
+//     -> latest run of that one workflow must be recent and the latest completed run success.
+//   healthMethod:"local-task"   + taskName, maxAgeHours
+//     -> reads automation-heartbeat.json (pushed from the owner's PC): heartbeat fresh,
+//        task enabled, last run recent, last result 0. PC off = ng (the task really is not running).
+//   healthMethod:"login-redirect" + expectRedirectHost
+//     -> owner-only web apps (Apps Script "only me"): anonymous GET must 3xx to the login host.
+//        A deleted deployment answers 404, a page opened to the public answers 200: both ng.
+async function ghWorkflowCheck(sys) {
+  const maxH = typeof sys.maxAgeHours === 'number' ? sys.maxAgeHours : 36;
+  try {
+    const headers = { Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28' };
+    if (GITHUB_TOKEN) headers.Authorization = `Bearer ${GITHUB_TOKEN}`;
+    const res = await fetch(`https://api.github.com/repos/${sys.ghRepo}/actions/workflows/${sys.ghWorkflow}/runs?per_page=10`, {
+      headers,
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+    });
+    if (!res.ok) return { status: 'ng', reason: `gh-api-${res.status}` };
+    const runs = (await res.json()).workflow_runs || [];
+    if (runs.length === 0) return { status: 'ng', reason: 'no-run-history' };
+    const ageH = (Date.now() - new Date(runs[0].run_started_at || runs[0].created_at).getTime()) / 3600000;
+    const done = runs.find((r) => r.status === 'completed');
+    if (ageH > maxH) return { status: 'ng', reason: `latest run ${ageH.toFixed(1)}h ago(>${maxH}h)`, url: runs[0].html_url };
+    if (!done) return { status: 'ok', note: 'running', url: runs[0].html_url };
+    if (done.conclusion !== 'success') return { status: 'ng', reason: `latest completed run ${done.conclusion}`, url: done.html_url };
+    return { status: 'ok', url: done.html_url, last_run_at: done.run_started_at };
+  } catch (e) {
+    return { status: 'ng', reason: `gh-api-unreachable:${e.message}` };
+  }
+}
+
+// automation-heartbeat.json writes Windows local time (JST) like "2026/10/19 14:36:25"
+function parseJstLocal(s) {
+  const m = String(s || '').match(/^(\d{4})\/(\d{1,2})\/(\d{1,2}) (\d{1,2}):(\d{2}):(\d{2})$/);
+  if (!m) return null;
+  return new Date(Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4] - 9, +m[5], +m[6]));
+}
+
+function localTaskCheck(sys) {
+  const maxH = typeof sys.maxAgeHours === 'number' ? sys.maxAgeHours : 26;
+  const hbPath = dirname(SYSTEMS_JSON) + '/automation-heartbeat.json';
+  if (!existsSync(hbPath)) return { status: 'ng', reason: 'automation-heartbeat.json missing' };
+  let hb;
+  try { hb = readJson(hbPath); } catch (e) { return { status: 'ng', reason: `heartbeat-unreadable:${e.message}` }; }
+  const hbAgeH = (Date.now() - new Date(hb.generatedAt).getTime()) / 3600000;
+  if (!(hbAgeH < 6)) return { status: 'ng', reason: `pc-heartbeat-stale(${Number.isFinite(hbAgeH) ? hbAgeH.toFixed(1) : '?'}h, PC off or reporter stopped)` };
+  const t = (hb.tasks || []).find((x) => x.taskName === sys.taskName || x.name === sys.taskName);
+  if (!t) return { status: 'ng', reason: `task ${sys.taskName} not registered on PC` };
+  if (!t.enabled) return { status: 'ng', reason: `task ${sys.taskName} disabled` };
+  const last = parseJstLocal(t.lastRunTime);
+  const ageH = last ? (Date.now() - last.getTime()) / 3600000 : Infinity;
+  if (!(ageH <= maxH)) return { status: 'ng', reason: `last run ${t.lastRunTime || 'never'}(>${maxH}h)` };
+  if (String(t.lastResult) !== '0' && String(t.lastResult) !== '267009') {
+    // 267009 = SCHED_S_TASK_RUNNING (still running is not a failure)
+    return { status: 'ng', reason: `last result ${t.lastResult}`, last_run_at: t.lastRunTime };
+  }
+  return { status: 'ok', last_run_at: t.lastRunTime, heartbeat_at: hb.generatedAtJst || hb.generatedAt };
+}
+
+async function loginRedirectCheckOnce(sys) {
+  try {
+    const res = await fetch(sys.url, { redirect: 'manual', signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
+    const loc = res.headers.get('location') || '';
+    let host = '';
+    try { host = new URL(loc, sys.url).hostname; } catch {}
+    if (res.status >= 300 && res.status < 400 && host === sys.expectRedirectHost) return { status: 'ok', http: res.status };
+    if (res.status >= 200 && res.status < 300) return { status: 'ng', http: res.status, reason: 'served-without-login(公開されている)' };
+    return { status: 'ng', http: res.status, reason: res.status === 404 ? 'deployment-not-found' : `unexpected-${res.status}${host ? '->' + host : ''}` };
+  } catch (e) {
+    return { status: 'ng', http: null, reason: `error:${e.message}` };
+  }
+}
+
+async function loginRedirectCheck(sys) {
+  let r = await loginRedirectCheckOnce(sys);
+  if (r.status === 'ng' && (r.http == null || r.http >= 500)) {
+    await new Promise((res) => setTimeout(res, retryWaitMs()));
+    r = await loginRedirectCheckOnce(sys);
+  }
+  return r;
+}
+
 async function main() {
   if (!existsSync(SYSTEMS_JSON)) {
     console.error(`ERROR: SYSTEMS_JSON not found at ${SYSTEMS_JSON}`);
@@ -293,6 +377,12 @@ async function main() {
         url: sys.url,
         checked_at: jstNow(),
       };
+    } else if (sys.healthMethod === 'gh-workflow' || sys.healthMethod === 'local-task' || sys.healthMethod === 'login-redirect') {
+      const r =
+        sys.healthMethod === 'gh-workflow' ? await ghWorkflowCheck(sys)
+        : sys.healthMethod === 'local-task' ? localTaskCheck(sys)
+        : await loginRedirectCheck(sys);
+      entry = { method: sys.healthMethod, ...r, url: r.url || sys.url, checked_at: jstNow() };
     } else if (!sys.healthPath) {
       // HTTPで叩けないシステム(gh-actions駆動のバックエンド等)はGH Actions実行履歴で代替判定
       const r = await ghActionsCheck(sys);

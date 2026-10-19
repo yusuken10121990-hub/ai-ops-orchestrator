@@ -1,0 +1,106 @@
+name: security-daily
+
+# 2026-10-19: daily security sweep over every systems.json status:live system
+# (TLS expiry, publicly served secrets/.env/.git, anonymous AI endpoints,
+# secrets committed to repos, npm/pip dependency vulnerabilities).
+# Before this nothing ran security checks daily, and maintenance-weekly's npm
+# audit was skipped in the cloud because no repo was checked out.
+# Pure script (scripts/security-daily.mjs), no Claude call.
+#
+# This repo is public, so are its Actions logs: the script prints counts only,
+# details go to the private config repo (memory/security-status.json), and the
+# Issue raised on ng carries no URLs/paths.
+# JST 06:37 = UTC 21:37 (previous day). Clear of the :13/:43 health checks.
+on:
+  schedule:
+    - cron: "37 21 * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: security-daily
+  cancel-in-progress: false
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout orchestrator (public, scripts only)
+        uses: actions/checkout@v7
+
+      - name: Setup SSH deploy keys (every repo this orchestrator can read)
+        env:
+          CONFIG_DEPLOY_KEY: ${{ secrets.CONFIG_DEPLOY_KEY }}
+          AI_BUSINESS_OPS_DEPLOY_KEY: ${{ secrets.AI_BUSINESS_OPS_DEPLOY_KEY }}
+          SALES_RESEARCH_DEPLOY_KEY: ${{ secrets.SALES_RESEARCH_DEPLOY_KEY }}
+          META_ADS_DEPLOY_KEY: ${{ secrets.META_ADS_DEPLOY_KEY }}
+          CRUDTEST1_DEPLOY_KEY: ${{ secrets.CRUDTEST1_DEPLOY_KEY }}
+          JOBQUEUE_BACKEND_DEPLOY_KEY: ${{ secrets.JOBQUEUE_BACKEND_DEPLOY_KEY }}
+          MEO_BACKEND_DEPLOY_KEY: ${{ secrets.MEO_BACKEND_DEPLOY_KEY }}
+          LP_AI_SYSTEM_SAAS_DEPLOY_KEY: ${{ secrets.LP_AI_SYSTEM_SAAS_DEPLOY_KEY }}
+        run: |
+          chmod +x scripts/setup-ssh-keys.sh
+          scripts/setup-ssh-keys.sh
+
+      - name: Checkout private config repo via deploy key (SSH)
+        run: git clone --branch main git@config-gh:yusuken10121990-hub/ai-ops-config.git config
+
+      - name: Checkout product repos (read-only, best-effort)
+        run: bash scripts/checkout-product-repos.sh repos
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: "20"
+
+      - name: Install pip-audit (best-effort)
+        run: |
+          python3 -m pip install --user --quiet pip-audit || true
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Run security-daily (decision-only, no Claude)
+        env:
+          SYSTEMS_JSON: config/memory/systems.json
+          SECURITY_STATUS_JSON: config/memory/security-status.json
+          REPOS_DIR: repos
+        run: node scripts/security-daily.mjs | tee security-daily.log
+
+      - name: Alert on ng (GitHub Issue, no details in public repo)
+        if: always()
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          n=$(grep -oP '(?<=^SECURITY_ALERT=)\d+' security-daily.log | tail -1 || true)
+          title="セキュリティ点検: 要対応あり"
+          existing=$(gh issue list -R "${GITHUB_REPOSITORY}" --state open --search "in:title \"${title}\"" --json number --jq '.[0].number // empty')
+          if [ -n "${n}" ]; then
+            if [ -z "${existing}" ]; then
+              gh issue create -R "${GITHUB_REPOSITORY}" --title "${title}" --label "p1-alert" \
+                --body "自動検知(security-daily): 要対応 ${n} 件。公開リポジトリのため詳細はここに書きません。非公開台帳 config/memory/security-status.json を参照してください。解消を検知すると自動でcloseします。"
+            else
+              gh issue comment -R "${GITHUB_REPOSITORY}" "${existing}" --body "$(TZ=Asia/Tokyo date '+%Y-%m-%d %H:%M JST') 継続: 要対応 ${n} 件"
+            fi
+          elif [ -n "${existing}" ]; then
+            gh issue comment -R "${GITHUB_REPOSITORY}" "${existing}" --body "要対応0件になりました。自動closeします。"
+            gh issue close -R "${GITHUB_REPOSITORY}" "${existing}"
+          fi
+
+      - name: Commit & push security-status.json to config repo
+        if: always()
+        working-directory: config
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add memory/security-status.json
+          if git diff --cached --quiet; then
+            echo "no changes to commit"
+          else
+            git commit -m "chore: security-daily update ($(TZ=Asia/Tokyo date '+%Y-%m-%d %H:%M JST'))"
+            bash ../scripts/git-push-retry.sh git@config-gh:yusuken10121990-hub/ai-ops-config.git main
+          fi
+# Note: no LINE notification (LINE is for money approvals only).

@@ -107,6 +107,20 @@ jobs:
           chmod +x scripts/run-loop.sh
           bash scripts/run-loop.sh maintenance-weekly
 
+      # 2026-10-19: deterministic safety net for the "expiry" monitoring hole (44/44 skipped,
+      # 2 consecutive runs -- see scripts/maint-fill-expiry.mjs header for the measured root
+      # cause). Patches memory/maintenance-status.json with the TLS-handshake expiry data
+      # maint-precheck.mjs already gathered, for any system the SKILL left without a
+      # checks.expiry value. Never overwrites a value the SKILL did write, so a future SKILL
+      # fix is not clobbered. Best-effort (exit 0 always) -- must not block the commit step.
+      - name: Fill missing per-system expiry (deterministic safety net)
+        if: ${{ !inputs.precheck_only }}
+        continue-on-error: true
+        env:
+          STATUS_JSON: config/memory/maintenance-status.json
+          PRECHECK_JSON: config/memory/maintenance-precheck.json
+        run: node scripts/maint-fill-expiry.mjs
+
       - name: Commit & push generated status/learnings to private config repo (SSH)
         working-directory: config
         run: |

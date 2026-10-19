@@ -12,6 +12,16 @@
 //   backup : product repos cloned by checkout-product-repos.sh -> remote HEAD sha/date
 //            (= the rollback source exists and is reachable).
 //   audit  : copied from memory/security-status.json (security-daily, same day).
+//   expiry : (2026-10-19 added, see decisions.md "expiry 44/44 skipped" fix) direct TLS
+//            handshake to each live system's public https URL -> certificate notAfter / days
+//            remaining. No credentials needed, works identically on the owner's PC and the
+//            cloud runner. Root cause of the 44/44 skip: the SKILL used to free-text this
+//            check every run (no deterministic source), and on 2026-10-19 it collapsed into
+//            one aggregate "http_tls" string duplicated onto all systems instead of a real
+//            per-system "expiry" value -- see memory/maintenance-status.json history
+//            (commit 93569ff1 had real per-system "expiry", commits 82e3250a/b0fd71eb replaced
+//            it with the duplicated aggregate). This script gives expiry the same deterministic,
+//            credential-free execution path logs/backup/audit already have.
 //
 // Public repo / public logs: stdout prints counts only. No secrets are printed.
 // Exit code is always 0.
@@ -19,7 +29,44 @@
 import { existsSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { execFileSync } from 'node:child_process';
+import { connect as tlsConnect } from 'node:tls';
+import { fileURLToPath } from 'node:url';
 import { readJson } from './read-json.mjs';
+
+// -- expiry (TLS certificate) ------------------------------------------------
+// Pure helpers are exported so maint-expiry-test.mjs can check the
+// classification thresholds without opening any real socket.
+
+/** days remaining until `notAfterLike` (anything `new Date()` accepts), as a signed integer. */
+export function daysUntil(notAfterLike, now = Date.now()) {
+  return Math.floor((new Date(notAfterLike).getTime() - now) / 86400000);
+}
+
+/** SKILL.md step 5 thresholds: 残30日以下=P2、14日以下=P1。 */
+export function classifyExpiry(days) {
+  if (!Number.isFinite(days)) return { status: 'skipped', severity: null };
+  if (days <= 14) return { status: 'finding', severity: 'P1' };
+  if (days <= 30) return { status: 'finding', severity: 'P2' };
+  return { status: 'green', severity: null };
+}
+
+/**
+ * One TLS handshake to host:443, no credentials. Resolves to the peer
+ * certificate's notAfter / days-remaining, or throws with a short reason
+ * (caller turns that into status:"skipped").
+ */
+export function tlsExpiry(host, { port = 443, timeoutMs = 8000 } = {}) {
+  return new Promise((resolve, reject) => {
+    const sock = tlsConnect(port, host, { servername: host, timeout: timeoutMs }, () => {
+      const cert = sock.getPeerCertificate();
+      sock.end();
+      if (!cert || !cert.valid_to) return reject(new Error('no-peer-certificate'));
+      resolve({ notAfter: cert.valid_to, days: daysUntil(cert.valid_to) });
+    });
+    sock.on('error', (e) => reject(new Error(`tls-error:${String(e.code || e.message).slice(0, 60)}`)));
+    sock.on('timeout', () => { sock.destroy(); reject(new Error('tls-timeout')); });
+  });
+}
 
 const SYSTEMS_JSON = process.env.SYSTEMS_JSON || 'config/memory/systems.json';
 const MEM = dirname(SYSTEMS_JSON);
@@ -168,11 +215,32 @@ async function main() {
 
   const systems = {};
   const logCache = new Map();
+  const expiryCache = new Map();
   for (const sys of live) {
     const e = {};
     let host = '';
     try { host = new URL(sys.url).hostname; } catch {}
     const isRailway = /railway/i.test(`${sys.deploy || ''}`) || /\.up\.railway\.app$/.test(host);
+
+    // expiry (TLS certificate notAfter) -- credential-free, works from any network.
+    if (!/^https:/.test(String(sys.url || ''))) {
+      e.expiry = { status: 'skipped', reason: 'no-https-url' };
+    } else if (host) {
+      if (!expiryCache.has(host)) {
+        expiryCache.set(host, tlsExpiry(host).then(
+          (r) => ({ ok: true, ...r }),
+          (err) => ({ ok: false, reason: err.message }),
+        ));
+      }
+      const r = await expiryCache.get(host);
+      if (!r.ok) e.expiry = { status: 'skipped', reason: r.reason, host };
+      else {
+        const c = classifyExpiry(r.days);
+        e.expiry = { status: c.status, severity: c.severity, daysRemaining: r.days, notAfter: r.notAfter, host, source: 'tls-handshake' };
+      }
+    } else {
+      e.expiry = { status: 'skipped', reason: 'unparseable-url' };
+    }
 
     // logs
     if (isRailway) {
@@ -237,7 +305,7 @@ async function main() {
     window: { since: WEEK_AGO },
     railway: { reachable: !railwayError, error: railwayError, instances: instances ? instances.length : 0, stageErrors },
     netlify: { reachable: !netlifyError, error: netlifyError, sites: netlify ? netlify.sites.length : 0 },
-    summary: { logs: count('logs'), backup: count('backup'), audit: count('audit') },
+    summary: { logs: count('logs'), backup: count('backup'), audit: count('audit'), expiry: count('expiry') },
     systems,
   };
   writeFileSync(OUT, JSON.stringify(result, null, 2) + '\n', 'utf8');
@@ -246,4 +314,10 @@ async function main() {
   for (const [k, v] of Object.entries(result.summary)) console.log(`  ${k}: ${JSON.stringify(v)}`);
 }
 
-main().catch((e) => console.error('[maint-precheck] unexpected error (non-fatal):', String(e && e.message).slice(0, 200)));
+// Run only when executed directly (`node scripts/maint-precheck.mjs`), not when imported
+// (e.g. by maint-precheck-expiry-test.mjs for the pure daysUntil/classifyExpiry helpers) --
+// otherwise importing this module for its exports would have the side effect of hitting
+// Railway/Netlify/TLS over the network and overwriting memory/maintenance-precheck.json.
+if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
+  main().catch((e) => console.error('[maint-precheck] unexpected error (non-fatal):', String(e && e.message).slice(0, 200)));
+}

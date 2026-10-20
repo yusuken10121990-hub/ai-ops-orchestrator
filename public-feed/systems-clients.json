@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-10-19T22:19:32.925Z",
+  "generated_at": "2026-10-20T01:16:49.170Z",
   "note": "受託システムの一覧(営業台帳の自動追加用・公開して問題ない項目のみ)",
   "systems": [
     {
@@ -17,14 +17,6 @@
       "url": "https://funvest-os-production.up.railway.app",
       "status": "live",
       "addedAt": "2026-08-20"
-    },
-    {
-      "id": "estimate-system",
-      "name": "官公庁イベント見積管理システム",
-      "client": "官公庁イベント案件（会社名未入力）",
-      "url": "http://localhost:4680",
-      "status": "building",
-      "addedAt": "2026-09-03"
     },
     {
       "id": "terramatch",

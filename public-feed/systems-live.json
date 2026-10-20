@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-10-20T12:12:19.630Z",
+  "generated_at": "2026-10-20T14:14:57.526Z",
   "note": "systems.json(非公開)のうちstatus:liveの監視に必要な安全なフィールドのみを公開したサブセット。哨戒B(Netlify Scheduled Function)が認証なしで参照する。",
   "systems": [
     {
@@ -450,6 +450,16 @@
       "healthPath": "",
       "marker": "",
       "deploy": "github-actions-cron (daily JST 06:37 = UTC 21:37)",
+      "status": "live"
+    },
+    {
+      "id": "hotel-inquiry-ai",
+      "name": "Lodgeline ホテル・宴会場 複数施設AI問い合わせ一次対応(複数予約システム連携)",
+      "url": "https://lodgeline-production.up.railway.app",
+      "kind": "backend",
+      "healthPath": "/api/health",
+      "marker": "",
+      "deploy": "railway-up",
       "status": "live"
     }
   ]

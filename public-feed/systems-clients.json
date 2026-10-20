@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-10-20T01:16:49.170Z",
+  "generated_at": "2026-10-20T04:54:05.561Z",
   "note": "受託システムの一覧(営業台帳の自動追加用・公開して問題ない項目のみ)",
   "systems": [
     {
@@ -97,6 +97,14 @@
       "url": "https://app-production-7737.up.railway.app",
       "status": "building",
       "addedAt": "2026-10-14"
+    },
+    {
+      "id": "hotel-inquiry-ai",
+      "name": "Lodgeline ホテル・宴会場 複数施設AI問い合わせ一次対応(複数予約システム連携)",
+      "client": "wasuki(和すき)系施設 想定・未契約/内部システム未確認",
+      "url": "",
+      "status": "building",
+      "addedAt": "2026-10-20"
     }
   ]
 }

@@ -286,6 +286,7 @@ LLM proposes → 独立した検証層（Evidence/Scope/Semantic/Temporal/Consis
 - このPCの台帳（memory/decisions.md・systems.json・owner-todos.md）はクラウドからは書けない。作業の最後に「決めたこと・変えたこと・本番確認の結果・オーナーにしかできない残作業」を返信にまとめ、PCの会話で台帳へ記録してもらう。
 - 本番への入れ替え（Railway等へのデプロイ）に要る鍵がクラウドに無ければ、作る・テストする・GitHubに上げるまでで止め、「本番は未反映」とはっきり書く。反映済みと書かない。
 - ログイン済みChromeが要る操作はクラウドではできない。その部分は「PCで要対応」として返信に残す。
+- **新しいルールを決めたら（オーナーの訂正・新しい指示・失敗の再発防止など）、このリポジトリ直下の `RULES-INBOX.md` に「- YYYY-MM-DD 内容（理由）」で1行追記してpushする。** 伝え方のルールは行頭を「- [伝え方] 」にする。オーナーPCが毎時回収して正典へ書き足し、全リポジトリへ配り直す（SHARED_RULES 45章）。このブロック自体は手で書き換えない。
 
 <!-- END shared-rules (auto) -->
 <!-- END shared-rules (auto) -->

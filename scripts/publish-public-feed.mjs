@@ -56,9 +56,14 @@ function main() {
 
   // 2026-09-30 営業台帳(Apps Script)用: 受託先(client)が入っている開発中/稼働中システムの一覧。
   // 営業台帳がこれを15分ごとに読み、新しい受託システムを案件として自動追加する。
+  // 2026-10-21 client の入れ忘れで新システムが載らなかったため、以後に登録されたものは
+  // internal:true(社内用)でない限り client が空でも載せる(会社名は営業台帳側で「未入力」表示)。
+  const AUTO_FROM = '2026-10-21';
+  const INTERNAL_KINDS = new Set(['dashboard', 'gate', 'automation']);
   const clients = all
-    .filter((s) => s.client && (s.status === 'building' || s.status === 'live'))
-    .map((s) => ({ id: s.id, name: s.name, client: s.client, url: s.url || '', status: s.status, addedAt: s.addedAt || '' }));
+    .filter((s) => s.status === 'building' || s.status === 'live')
+    .filter((s) => s.client || (!s.internal && !INTERNAL_KINDS.has(s.kind) && (s.addedAt || '') >= AUTO_FROM))
+    .map((s) => ({ id: s.id, name: s.name, client: s.client || '', url: s.url || '', status: s.status, addedAt: s.addedAt || '' }));
   const CLIENTS_OUT = process.env.PUBLIC_CLIENTS_OUT || 'public-feed/systems-clients.json';
   mkdirSync(CLIENTS_OUT.slice(0, CLIENTS_OUT.lastIndexOf('/')), { recursive: true });
   writeFileSync(CLIENTS_OUT, JSON.stringify({ generated_at: new Date().toISOString(), note: '受託システムの一覧(営業台帳の自動追加用・公開して問題ない項目のみ)', systems: clients }, null, 2) + '\n', 'utf8');

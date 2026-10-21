@@ -48,6 +48,7 @@ async function unregisteredRailwayProjects(systems) {
   const ignorePath = process.env.LEDGER_IGNORE_JSON || 'config/memory/ledger-ignore.json';
   const ignored = new Set((existsSync(ignorePath) ? readJson(ignorePath).railway || [] : []).map((x) => String(x).toLowerCase()));
   const blobs = systems.map((s) => JSON.stringify(s).toLowerCase());
+  console.log(`[publish-public-feed] railway projects seen: ${projects.length}`);
   return projects.filter((p) => {
     const n = String(p.name || '').toLowerCase();
     if (!n || ignored.has(n) || ignored.has(String(p.id))) return false;

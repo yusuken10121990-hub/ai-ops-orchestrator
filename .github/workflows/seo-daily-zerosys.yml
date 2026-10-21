@@ -101,7 +101,7 @@ jobs:
             echo "no leftover LP changes (loop pushed its own work or made none)"
           else
             git commit -m "chore: seo-daily-zerosys auto update ($(TZ=Asia/Tokyo date '+%Y-%m-%d %H:%M JST'))"
-            git push git@lp-ai-system-saas-gh:yusuken10121990-hub/lp-ai-system-saas.git HEAD:main
+            bash "$GITHUB_WORKSPACE/scripts/git-push-retry.sh" git@lp-ai-system-saas-gh:yusuken10121990-hub/lp-ai-system-saas.git main
           fi
 
       - name: Commit & push generated learnings to private config repo (SSH)

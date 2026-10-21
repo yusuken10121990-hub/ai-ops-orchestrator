@@ -205,6 +205,8 @@ jobs:
       # 認証済みアクセスを持つジョブ)で安全なサブセットだけをpublicリポジトリ
       # (このリポジトリ自身)へ書き出す。詳細はscripts/publish-public-feed.mjsのコメント参照。
       - name: Publish public-safe systems feed (for 哨戒B, no new secrets)
+        env:
+          RAILWAY_API_TOKEN: ${{ secrets.RAILWAY_API_TOKEN }}
         run: |
           SYSTEMS_JSON=config/memory/systems.json node scripts/publish-public-feed.mjs
 

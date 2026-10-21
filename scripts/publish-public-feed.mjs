@@ -33,7 +33,31 @@ const OUT_PATH = process.env.PUBLIC_FEED_OUT || 'public-feed/systems-live.json';
 
 const SAFE_FIELDS = ['id', 'name', 'url', 'kind', 'healthPath', 'marker', 'deploy', 'status'];
 
-function main() {
+// systems.json に無いRailwayプロジェクト(照合は ops-auto-repair-detector.mjs と同じ規則)。
+// トークン無し・API失敗時は空を返す(フィード全体は止めない)。
+async function unregisteredRailwayProjects(systems) {
+  const token = process.env.RAILWAY_API_TOKEN;
+  if (!token) return [];
+  let projects = [];
+  try {
+    const r = await fetch('https://backboard.railway.com/graphql/v2', { method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ query: '{ projects { edges { node { id name createdAt } } } }' }) });
+    const j = await r.json();
+    if (!r.ok || j.errors?.length) { console.error(`[publish-public-feed] railway api error: ${r.status} ${JSON.stringify(j.errors || '').slice(0, 200)}`); return []; }
+    projects = (j.data?.projects?.edges || []).map((e) => e.node);
+  } catch (e) { console.error(`[publish-public-feed] railway fetch failed: ${e.message}`); return []; }
+  const ignorePath = process.env.LEDGER_IGNORE_JSON || 'config/memory/ledger-ignore.json';
+  const ignored = new Set((existsSync(ignorePath) ? readJson(ignorePath).railway || [] : []).map((x) => String(x).toLowerCase()));
+  const blobs = systems.map((s) => JSON.stringify(s).toLowerCase());
+  return projects.filter((p) => {
+    const n = String(p.name || '').toLowerCase();
+    if (!n || ignored.has(n) || ignored.has(String(p.id))) return false;
+    const hit = systems.some((s) => { const i = s.id.toLowerCase(); return i === n || i.startsWith(n + '-') || n.startsWith(i + '-'); })
+      || blobs.some((b) => b.includes(String(p.id)) || b.includes(`project ${n}`) || b.includes(`${n}-production`) || b.includes(`project:${n}`) || b.includes(`"${n}"`));
+    return !hit;
+  });
+}
+
+async function main() {
   if (!existsSync(SYSTEMS_JSON)) {
     console.error(`[publish-public-feed] SYSTEMS_JSON not found at ${SYSTEMS_JSON}, skip`);
     return;
@@ -56,14 +80,16 @@ function main() {
 
   // 2026-09-30 営業台帳(Apps Script)用: 受託先(client)が入っている開発中/稼働中システムの一覧。
   // 営業台帳がこれを15分ごとに読み、新しい受託システムを案件として自動追加する。
-  // 2026-10-21 client の入れ忘れで新システムが載らなかったため、以後に登録されたものは
-  // internal:true(社内用)でない限り client が空でも載せる(会社名は営業台帳側で「未入力」表示)。
-  const AUTO_FROM = '2026-10-21';
-  const INTERNAL_KINDS = new Set(['dashboard', 'gate', 'automation']);
+  // 2026-10-21 オーナー指示「クライアントのシステムは全部・新規も含めて営業台帳へ」。
+  // client の入れ忘れや台帳登録漏れで載らない事故が続いたため、既定を反転した:
+  // 社内用(internal:true)と明示したもの以外の開発中/稼働中システムは全部載せる(会社名が空なら営業台帳側で「未入力」)。
+  // さらに台帳に登録すらされていないRailwayプロジェクトも、クラウドから直接拾って載せる。
   const clients = all
-    .filter((s) => s.status === 'building' || s.status === 'live')
-    .filter((s) => s.client || (!s.internal && !INTERNAL_KINDS.has(s.kind) && (s.addedAt || '') >= AUTO_FROM))
-    .map((s) => ({ id: s.id, name: s.name, client: s.client || '', url: s.url || '', status: s.status, addedAt: s.addedAt || '' }));
+    .filter((s) => (s.status === 'building' || s.status === 'live') && s.internal !== true)
+    .map((s) => ({ id: s.id, name: s.name, client: s.client || '', url: s.url || '', status: s.status, addedAt: s.addedAt || '', source: 'ledger' }));
+  for (const p of await unregisteredRailwayProjects(all)) {
+    clients.push({ id: `railway-${p.name}`, name: p.name, client: '', url: '', status: 'live', addedAt: (p.createdAt || '').slice(0, 10), source: 'railway' });
+  }
   const CLIENTS_OUT = process.env.PUBLIC_CLIENTS_OUT || 'public-feed/systems-clients.json';
   mkdirSync(CLIENTS_OUT.slice(0, CLIENTS_OUT.lastIndexOf('/')), { recursive: true });
   writeFileSync(CLIENTS_OUT, JSON.stringify({ generated_at: new Date().toISOString(), note: '受託システムの一覧(営業台帳の自動追加用・公開して問題ない項目のみ)', systems: clients }, null, 2) + '\n', 'utf8');
@@ -74,4 +100,4 @@ function main() {
   console.log(`[publish-public-feed] wrote ${OUT_PATH} (${live.length} live systems)`);
 }
 
-main();
+await main();

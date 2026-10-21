@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-10-21T00:44:01.060Z",
+  "generated_at": "2026-10-21T01:22:15.899Z",
   "note": "受託システムの一覧(営業台帳の自動追加用・公開して問題ない項目のみ)",
   "systems": [
     {
@@ -8,7 +8,8 @@
       "client": "ファンド運営会社（会社名未入力）",
       "url": "https://fundops-demo.netlify.app",
       "status": "live",
-      "addedAt": "2026-08-07"
+      "addedAt": "2026-08-07",
+      "source": "ledger"
     },
     {
       "id": "funvest-os",
@@ -16,7 +17,8 @@
       "client": "Funvest",
       "url": "https://funvest-os-production.up.railway.app",
       "status": "live",
-      "addedAt": "2026-08-20"
+      "addedAt": "2026-08-20",
+      "source": "ledger"
     },
     {
       "id": "terramatch",
@@ -24,7 +26,8 @@
       "client": "崎山組",
       "url": "https://terramatch-production.up.railway.app",
       "status": "live",
-      "addedAt": "2026-09-07"
+      "addedAt": "2026-09-07",
+      "source": "ledger"
     },
     {
       "id": "science-inquiry-ai",
@@ -32,7 +35,8 @@
       "client": "サイエンス株式会社",
       "url": "https://science-inquiry-ai-production.up.railway.app",
       "status": "live",
-      "addedAt": "2026-09-08"
+      "addedAt": "2026-09-08",
+      "source": "ledger"
     },
     {
       "id": "kyoshin-logistics",
@@ -40,7 +44,8 @@
       "client": "共進運輸",
       "url": "https://app-production-4f25.up.railway.app",
       "status": "live",
-      "addedAt": "2026-09-17"
+      "addedAt": "2026-09-17",
+      "source": "ledger"
     },
     {
       "id": "pascal-kids-inquiry",
@@ -48,7 +53,8 @@
       "client": "パスカルキッズ",
       "url": "https://web-production-308cb.up.railway.app",
       "status": "live",
-      "addedAt": "2026-09-18"
+      "addedAt": "2026-09-18",
+      "source": "ledger"
     },
     {
       "id": "klar-portal",
@@ -56,7 +62,8 @@
       "client": "Klar",
       "url": "https://klar-portal-production.up.railway.app",
       "status": "live",
-      "addedAt": "2026-09-19"
+      "addedAt": "2026-09-19",
+      "source": "ledger"
     },
     {
       "id": "kimono-remake-ec",
@@ -64,7 +71,8 @@
       "client": "着物リメイク事業者（会社名未入力）",
       "url": "https://web-production-74d8f.up.railway.app",
       "status": "live",
-      "addedAt": "2026-09-24"
+      "addedAt": "2026-09-24",
+      "source": "ledger"
     },
     {
       "id": "sueta-case-manager",
@@ -72,7 +80,26 @@
       "client": "スエタ不動産",
       "url": "https://sueta-app-production.up.railway.app",
       "status": "live",
-      "addedAt": "2026-09-28"
+      "addedAt": "2026-09-28",
+      "source": "ledger"
+    },
+    {
+      "id": "ai-sales-agent-v2",
+      "name": "AI営業エージェント v2",
+      "client": "",
+      "url": "https://ai-sales-agent-v2-production.up.railway.app",
+      "status": "live",
+      "addedAt": "2026-10-13",
+      "source": "ledger"
+    },
+    {
+      "id": "ai-call-system",
+      "name": "AIコールシステム",
+      "client": "",
+      "url": "https://ai-call-web-production.up.railway.app",
+      "status": "live",
+      "addedAt": "2026-10-13",
+      "source": "ledger"
     },
     {
       "id": "torasaburo-vms",
@@ -80,7 +107,26 @@
       "client": "トラサブロー",
       "url": "https://torasaburo-vms-production.up.railway.app",
       "status": "live",
-      "addedAt": "2026-10-13"
+      "addedAt": "2026-10-13",
+      "source": "ledger"
+    },
+    {
+      "id": "iwill-erp-app",
+      "name": "アイウィル統合業務システム(フェーズ0・ZEROSYS案件)",
+      "client": "",
+      "url": "https://iwill-erp-production.up.railway.app",
+      "status": "live",
+      "addedAt": "2026-10-13",
+      "source": "ledger"
+    },
+    {
+      "id": "biz-erp-5-f4d454cd",
+      "name": "業務システム試作\"5\"(運送/レンタカー/整備・Railway f4d454cd)",
+      "client": "",
+      "url": "https://5-production-bcf3.up.railway.app",
+      "status": "live",
+      "addedAt": "2026-10-13",
+      "source": "ledger"
     },
     {
       "id": "korekara-payroll",
@@ -88,7 +134,8 @@
       "client": "スナック コレカラ",
       "url": "https://script.google.com/macros/s/AKfycbypmUAbmd4isPrwsEKU3w_k_Fz5YM87VoBr1dtL4fXv74CQddWSo-kj-W1VMoizpq7g/exec",
       "status": "building",
-      "addedAt": "2026-10-14"
+      "addedAt": "2026-10-14",
+      "source": "ledger"
     },
     {
       "id": "shodensha-page-assistant",
@@ -96,7 +143,8 @@
       "client": "株式会社松電舎",
       "url": "https://web-production-97e8c.up.railway.app",
       "status": "live",
-      "addedAt": "2026-10-14"
+      "addedAt": "2026-10-14",
+      "source": "ledger"
     },
     {
       "id": "luflos-satei-assist",
@@ -104,15 +152,17 @@
       "client": "LUFLOS株式会社",
       "url": "https://app-production-7737.up.railway.app",
       "status": "building",
-      "addedAt": "2026-10-14"
+      "addedAt": "2026-10-14",
+      "source": "ledger"
     },
     {
       "id": "hotel-inquiry-ai",
       "name": "Lodgeline ホテル・宴会場 複数施設AI問い合わせ一次対応(複数予約システム連携)",
-      "client": "wasuki(和すき)系施設 想定・未契約/内部システム未確認",
+      "client": "和すき（想定・未契約）",
       "url": "https://lodgeline-production.up.railway.app",
       "status": "live",
-      "addedAt": "2026-10-20"
+      "addedAt": "2026-10-20",
+      "source": "ledger"
     }
   ]
 }

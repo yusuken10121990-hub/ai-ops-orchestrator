@@ -65,11 +65,28 @@ MAX_ATTEMPTS=5
 # public-feed/*.json is regenerated wholesale from systems.json every run (2026-10-04).
 CACHE_ONLY_PATTERN='^memory/ad-metrics/.*\.json$|^memory/[^/]*-status\.json$|^public-feed/[^/]*\.json$'
 
-# keep-ours では壊れるファイル。累積カウンタを持つので意味を理解して統合する。
+# keep-ours では壊れるファイル。累積カウンタ/構造化台帳を持つので意味を理解して統合する。
 # 2026-08-21: ad-money-guard-state.json の衝突で ad-pdca-daily の schedule 実行が
 # 5回リトライ全敗していた。単に許可リストへ足すと streakDays(広告費を使って成果0の
 # 連続日数)の加算が消え、金銭のP1アラートが遅れるため、専用のマージャを通す。
-SEMANTIC_MERGE_PATTERN='^memory/[^/]*-state\.json$'
+# 2026-10-21: memory/ad-pipeline/strategy-hypotheses.json の衝突で
+# rivet-ux-learning run 39674534249 が5回リトライ全敗していた(rivet-ui-learning
+# 等の並行loopと同時に書き込み)。これも -state.json と同じ理由(keep-oursでは
+# 他方が追加した仮説が消える)で意味統合が必要だが、中身の形(id配列のunion)が
+# 異なるため merge-hypotheses-json.mjs という専用のマージャを別途用意し、ファイル
+# パターンごとに正しいマージャを選ぶ。該当パターンに一致しないファイルは
+# 従来通り allowlist 外として中断する(安全側のフォールバックは弱めない)。
+SEMANTIC_MERGE_PATTERN='^memory/[^/]*-state\.json$|^memory/ad-pipeline/strategy-hypotheses\.json$'
+
+# 衝突ファイルのパスにマッチするパターンから、使うマージャのファイル名を選ぶ。
+# どちらにも一致しなければ空文字を返す(呼び出し側が中断する)。
+merger_for() {
+  case "$1" in
+    memory/ad-pipeline/strategy-hypotheses.json) echo 'merge-hypotheses-json.mjs' ;;
+    *-state.json) echo 'merge-state-json.mjs' ;;
+    *) echo '' ;;
+  esac
+}
 
 resolve_cache_conflicts_or_abort() {
   # Must only be called during a MERGE (not a rebase -- see note (3) above).
@@ -81,13 +98,19 @@ resolve_cache_conflicts_or_abort() {
   if [ -z "${unmerged}" ]; then
     return 0
   fi
-  # (a) 累積カウンタを持つ state ファイルは、意味を理解して統合する
-  local semantic merger f o t
+  # (a) 累積カウンタ/構造化台帳を持つファイルは、意味を理解して統合する
+  # (ファイルごとに正しいマージャを merger_for() で選ぶ)
+  local semantic script_dir merger_name merger f o t
   semantic="$(printf '%s\n' "${unmerged}" | grep -E "${SEMANTIC_MERGE_PATTERN}" || true)"
   if [ -n "${semantic}" ]; then
-    merger="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/merge-state-json.mjs"
+    script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
     while IFS= read -r f; do
       [ -z "${f}" ] && continue
+      merger_name="$(merger_for "${f}")"
+      if [ -z "${merger_name}" ]; then
+        echo "[git-push-retry] どのマージャに対応するか判定できません: ${f}" >&2; return 1
+      fi
+      merger="${script_dir}/${merger_name}"
       o="$(mktemp)"; t="$(mktemp)"
       if ! git show ":2:${f}" > "${o}" 2>/dev/null || ! git show ":3:${f}" > "${t}" 2>/dev/null; then
         echo "[git-push-retry] 衝突した両側を取得できません: ${f}" >&2; rm -f "${o}" "${t}"; return 1

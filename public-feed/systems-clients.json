@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-10-20T23:24:30.214Z",
+  "generated_at": "2026-10-21T00:44:01.060Z",
   "note": "受託システムの一覧(営業台帳の自動追加用・公開して問題ない項目のみ)",
   "systems": [
     {
@@ -73,6 +73,14 @@
       "url": "https://sueta-app-production.up.railway.app",
       "status": "live",
       "addedAt": "2026-09-28"
+    },
+    {
+      "id": "torasaburo-vms",
+      "name": "トラサブロー車両管理システム(VMS)",
+      "client": "トラサブロー",
+      "url": "https://torasaburo-vms-production.up.railway.app",
+      "status": "live",
+      "addedAt": "2026-10-13"
     },
     {
       "id": "korekara-payroll",

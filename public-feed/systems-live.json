@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-10-27T22:54:13.746Z",
+  "generated_at": "2026-10-27T23:54:03.352Z",
   "note": "systems.json(非公開)のうちstatus:liveの監視に必要な安全なフィールドのみを公開したサブセット。哨戒B(Netlify Scheduled Function)が認証なしで参照する。",
   "systems": [
     {
@@ -243,16 +243,6 @@
       "status": "live"
     },
     {
-      "id": "science-inquiry-ai",
-      "name": "ZEROSYS AI問い合わせ自動化システム(サイエンス株式会社向け)",
-      "url": "https://science-inquiry-ai-production.up.railway.app",
-      "kind": "site",
-      "healthPath": "/api/health",
-      "marker": "ok",
-      "deploy": "railway up (project science-inquiry-ai, Dockerfile, volume /app/data)",
-      "status": "live"
-    },
-    {
       "id": "meo-review-rpa",
       "name": "OMAKASE MEO口コミ返信RPA(Playwright headless、claude-in-chrome版の代替)",
       "url": "",
@@ -430,16 +420,6 @@
       "healthPath": "/",
       "marker": "",
       "deploy": "railway-git",
-      "status": "live"
-    },
-    {
-      "id": "shodensha-page-assistant",
-      "name": "株式会社松電舎 製品ページ作成アシスタント(試作)",
-      "url": "https://web-production-97e8c.up.railway.app",
-      "kind": "app",
-      "healthPath": "/api/health",
-      "marker": "",
-      "deploy": "railway-up",
       "status": "live"
     },
     {

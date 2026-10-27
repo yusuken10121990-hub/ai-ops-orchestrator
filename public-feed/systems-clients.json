@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-10-27T22:54:13.990Z",
+  "generated_at": "2026-10-27T23:54:03.539Z",
   "note": "受託システムの一覧(営業台帳の自動追加用・公開して問題ない項目のみ)",
   "systems": [
     {
@@ -27,15 +27,6 @@
       "url": "https://terramatch-production.up.railway.app",
       "status": "live",
       "addedAt": "2026-09-07",
-      "source": "ledger"
-    },
-    {
-      "id": "science-inquiry-ai",
-      "name": "ZEROSYS AI問い合わせ自動化システム(サイエンス株式会社向け)",
-      "client": "サイエンス株式会社",
-      "url": "https://science-inquiry-ai-production.up.railway.app",
-      "status": "live",
-      "addedAt": "2026-09-08",
       "source": "ledger"
     },
     {
@@ -138,15 +129,6 @@
       "source": "ledger"
     },
     {
-      "id": "shodensha-page-assistant",
-      "name": "株式会社松電舎 製品ページ作成アシスタント(試作)",
-      "client": "株式会社松電舎",
-      "url": "https://web-production-97e8c.up.railway.app",
-      "status": "live",
-      "addedAt": "2026-10-14",
-      "source": "ledger"
-    },
-    {
       "id": "luflos-satei-assist",
       "name": "LUFLOS 査定アシスト(時計の概算相場・真贋確認支援 社内試作)",
       "client": "LUFLOS株式会社",
@@ -162,6 +144,15 @@
       "url": "https://lodgeline-production.up.railway.app",
       "status": "live",
       "addedAt": "2026-10-20",
+      "source": "ledger"
+    },
+    {
+      "id": "zerosys-sales-manager",
+      "name": "ZEROSYS 営業管理システム(アポ取込→見込みチェック→試験→見積/メール下書き→契約の一元管理)",
+      "client": "社内(株式会社アイウィル/野中)",
+      "url": "",
+      "status": "building",
+      "addedAt": "2026-10-26",
       "source": "ledger"
     }
   ]

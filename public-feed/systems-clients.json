@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-11-04T03:17:06.401Z",
+  "generated_at": "2026-11-04T11:34:52.863Z",
   "note": "受託システムの一覧(営業台帳の自動追加用・公開して問題ない項目のみ)",
   "systems": [
     {
@@ -150,7 +150,7 @@
       "id": "zerosys-sales-manager",
       "name": "ZEROSYS 営業管理システム(アポ取込→見込みチェック→試験→見積/メール下書き→契約の一元管理)",
       "client": "社内(株式会社アイウィル/野中)",
-      "url": "",
+      "url": "https://web-production-a28c1.up.railway.app",
       "status": "building",
       "addedAt": "2026-10-26",
       "source": "ledger"

@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-11-05T07:24:30.984Z",
+  "generated_at": "2026-11-05T13:54:51.226Z",
   "note": "systems.json(非公開)のうちstatus:liveの監視に必要な安全なフィールドのみを公開したサブセット。哨戒B(Netlify Scheduled Function)が認証なしで参照する。",
   "systems": [
     {
@@ -440,6 +440,16 @@
       "healthPath": "/api/health",
       "marker": "",
       "deploy": "railway-up",
+      "status": "live"
+    },
+    {
+      "id": "school-curriculum",
+      "name": "AIカリキュラム・教材作成管理システム(語学学校の先生が生徒別カリキュラム/教材をAI生成→承認→PDF配布。デモ)",
+      "url": "https://web-production-91534.up.railway.app",
+      "kind": "webapp",
+      "healthPath": "/api/v1/health",
+      "marker": "",
+      "deploy": "railway up (project: school-curriculum 85f0fd5f-40d7-4bee-973d-7a7db603c168)。git archiveデプロイ時はcore.autocrlf=falseでCRLF化回避",
       "status": "live"
     }
   ]

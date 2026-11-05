@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-11-05T07:24:31.103Z",
+  "generated_at": "2026-11-05T13:54:51.496Z",
   "note": "受託システムの一覧(営業台帳の自動追加用・公開して問題ない項目のみ)",
   "systems": [
     {
@@ -153,6 +153,15 @@
       "url": "https://web-production-a28c1.up.railway.app",
       "status": "building",
       "addedAt": "2026-10-26",
+      "source": "ledger"
+    },
+    {
+      "id": "school-curriculum",
+      "name": "AIカリキュラム・教材作成管理システム(語学学校の先生が生徒別カリキュラム/教材をAI生成→承認→PDF配布。デモ)",
+      "client": "デモ(未契約・オーナー提示用)",
+      "url": "https://web-production-91534.up.railway.app",
+      "status": "live",
+      "addedAt": "2026-11-05",
       "source": "ledger"
     }
   ]

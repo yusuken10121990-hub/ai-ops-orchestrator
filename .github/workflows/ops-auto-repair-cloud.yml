@@ -45,7 +45,15 @@ jobs:
           node-version: "20"
 
       - name: Install Railway CLI
-        run: npm install -g @railway/cli
+        continue-on-error: true
+        run: |
+          for i in 1 2 3; do
+            npm install -g @railway/cli && exit 0
+            echo "railway CLI install attempt $i failed; retrying in 15s..."
+            sleep 15
+          done
+          echo "railway CLI install failed after 3 attempts (transient CDN?); detector will record railwayError gracefully"
+          exit 1
 
       - name: Run ops-auto-repair-detector
         env:

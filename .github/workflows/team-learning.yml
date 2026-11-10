@@ -52,6 +52,14 @@ jobs:
           # 2026-08-02 quota-lightening: 全エージェントの持ち回り学習(Web調査→learnings追記)
           # のため軽量モデルへ。
           CLAUDE_MODEL: claude-haiku-4-5-20251001
+          # 2026-11-11 自動保守: run 42844914872でclaudeがハングし job timeout-minutes: 20
+          # に達してjobがcancelされ赤になった(通常は4-5分で正常終了)。run-loop.shの既存
+          # opt-inセルフタイムアウトを有効化し、ハング時はjob cancel(20m)の前にSIGTERM
+          # (→30s後SIGKILL)で打ち切ってexit 0させ、部分進捗もcommit&pushされるようにする。
+          # 1020s(17分)はjob 20分からSIGKILL猶予30s+Commit&pushステップ分の余裕を残した値
+          # (zerosys-ad-pdca.yml 30m->1650s, seo-daily-zerosys.yml 35m->1800sと同じ考え方)。
+          CLAUDE_TIMEOUT_SECONDS: "1020"
+          CLAUDE_STREAM_PROGRESS: "1"
         run: |
           chmod +x scripts/run-loop.sh
           bash scripts/run-loop.sh team-learning-loop

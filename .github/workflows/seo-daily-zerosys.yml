@@ -6,6 +6,7 @@ name: seo-daily-zerosys
 # LP_AI_SYSTEM_SAAS_DEPLOY_KEY (receptacle added to setup-ssh-keys.sh on
 # 2026-08-20). Until that secret is provisioned this workflow skips cleanly
 # (notice, exit 0) instead of failing.
+# 2026-11-13: 5 articles/day -> timeout raised to 90 min.
 # JST 7:30 = UTC 22:30 (prev day). seo-daily (research.zerosys.jp) runs at
 # UTC 22:00; offset avoids concurrent Claude usage spikes.
 on:
@@ -23,7 +24,7 @@ concurrency:
 jobs:
   run:
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 90
     steps:
       - name: Checkout orchestrator (public, scripts only)
         uses: actions/checkout@v7
@@ -85,7 +86,7 @@ jobs:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
           ZEROSYS_NETLIFY_SITE_ID: "ffa43196-afda-4695-8a56-34d362e153c9"
-          CLAUDE_TIMEOUT_SECONDS: "1800"
+          CLAUDE_TIMEOUT_SECONDS: "4800"
           CLAUDE_STREAM_PROGRESS: "1"
         run: |
           chmod +x scripts/run-loop.sh

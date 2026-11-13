@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-11-13T10:55:04.349Z",
+  "generated_at": "2026-11-13T13:13:25.459Z",
   "note": "systems.json(非公開)のうちstatus:liveの監視に必要な安全なフィールドのみを公開したサブセット。哨戒B(Netlify Scheduled Function)が認証なしで参照する。",
   "systems": [
     {
@@ -198,7 +198,7 @@
       "url": "https://aim-app-production.up.railway.app",
       "kind": "backend",
       "healthPath": "/api/health",
-      "marker": "\"status\": \"ok\"",
+      "marker": "\"status\":\"ok\"",
       "deploy": "Railway (project aim / service aim-app, GitHub main auto-deploy)",
       "status": "live"
     },

@@ -1,4 +1,6 @@
-import type { CaptureSource } from '@sales-copilot/contracts';
+import type { CaptureSource, LatencyStats, LatencySummary } from '@sales-copilot/contracts';
+
+export type { LatencyStats } from '@sales-copilot/contracts';
 
 /**
  * 遅延計測（SPEC §8-3, docs/latency.md）。時計はすべてサーバーの Date.now()（epoch ms）に統一。
@@ -9,34 +11,9 @@ import type { CaptureSource } from '@sales-copilot/contracts';
  * 3. requested   … 生成要求（スケジューラーが start を出した）時刻
  * 4. validated   … 生成結果の検証完了時刻
  * 5. sent        … advice.card をクライアントへ送信した時刻
- * 6. displayAck  … クライアントの表示確認（契約に ack メッセージが無いので未計測: contracts 変更要望）
+ * 6. displayAck  … クライアントの advice.displayed をサーバーが受信した時刻（クライアント時計は使わない）
  */
-export interface Summary {
-  n: number;
-  p50: number | null;
-  p95: number | null;
-  max: number | null;
-}
-
-export interface LatencyStats {
-  counts: {
-    eligible: number;
-    started: number;
-    displayed: number;
-    noAdvice: number;
-    discarded: number;
-    timeout: number;
-    failed: number;
-    fallback: number;
-  };
-  speechEndToSttFinalMs: Summary;
-  speechEndToSentMs: Summary;
-  sttFinalToSentMs: Summary;
-  requestedToValidatedMs: Summary;
-  validatedToSentMs: Summary;
-  /** 目標（開発目標・保証ではない）: speechEnd→sent p50 ≤ 3000ms, p95 ≤ 5000ms。 */
-  target: { p50Ms: 3000; p95Ms: 5000 };
-}
+export type Summary = LatencySummary;
 
 export function percentile(sorted: readonly number[], p: number): number | null {
   if (sorted.length === 0) return null;
@@ -65,6 +42,11 @@ interface SpeechMark {
   sttFinalAt: number;
 }
 
+interface SentMark {
+  sentAt: number;
+  speechEndAt: number | null;
+}
+
 interface JobMark {
   requestedAt: number;
   triggerUtteranceId: string | null;
@@ -75,17 +57,21 @@ export class LatencyTracker {
   private readonly arrivals: Record<CaptureSource, Array<{ audioEndMs: number; at: number }>> = { SELF: [], REMOTE: [] };
   private readonly speech = new Map<string, SpeechMark>();
   private readonly jobs = new Map<string, JobMark>();
+  private readonly sentCards = new Map<string, SentMark>();
   private readonly s = {
     speechToStt: new Bounded(),
     speechToSent: new Bounded(),
     sttToSent: new Bounded(),
     reqToValidated: new Bounded(),
     validatedToSent: new Bounded(),
+    sentToDisplayed: new Bounded(),
+    speechToDisplayed: new Bounded(),
   };
   readonly counts: LatencyStats['counts'] = {
     eligible: 0,
     started: 0,
     displayed: 0,
+    displayAcked: 0,
     noAdvice: 0,
     discarded: 0,
     timeout: 0,
@@ -142,7 +128,7 @@ export class LatencyTracker {
     this.s.reqToValidated.push(at - j.requestedAt);
   }
 
-  sent(jobId: string, at: number): void {
+  sent(jobId: string, at: number, adviceId?: string): void {
     this.counts.displayed++;
     const j = this.jobs.get(jobId);
     if (!j) return;
@@ -152,7 +138,25 @@ export class LatencyTracker {
       this.s.speechToSent.push(at - sp.speechEndAt);
       this.s.sttToSent.push(at - sp.sttFinalAt);
     }
+    if (adviceId) {
+      this.sentCards.set(adviceId, { sentAt: at, speechEndAt: sp?.speechEndAt ?? null });
+      if (this.sentCards.size > 500) this.sentCards.delete(this.sentCards.keys().next().value!);
+    }
     this.jobs.delete(jobId);
+  }
+
+  /**
+   * クライアントが画面に反映した（advice.displayed）。at はサーバーの受信時刻。
+   * 未知の adviceId・2回目以降の報告は無視する（重複計上しない）。
+   */
+  displayed(adviceId: string, at: number): boolean {
+    const m = this.sentCards.get(adviceId);
+    if (!m) return false;
+    this.sentCards.delete(adviceId);
+    this.counts.displayAcked++;
+    this.s.sentToDisplayed.push(at - m.sentAt);
+    if (m.speechEndAt !== null) this.s.speechToDisplayed.push(at - m.speechEndAt);
+    return true;
   }
 
   outcome(kind: 'noAdvice' | 'discarded' | 'timeout' | 'failed' | 'fallback'): void {
@@ -167,6 +171,8 @@ export class LatencyTracker {
       sttFinalToSentMs: summarize(this.s.sttToSent.xs),
       requestedToValidatedMs: summarize(this.s.reqToValidated.xs),
       validatedToSentMs: summarize(this.s.validatedToSent.xs),
+      sentToDisplayedMs: summarize(this.s.sentToDisplayed.xs),
+      speechEndToDisplayedMs: summarize(this.s.speechToDisplayed.xs),
       target: { p50Ms: 3000, p95Ms: 5000 },
     };
   }

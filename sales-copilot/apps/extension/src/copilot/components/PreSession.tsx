@@ -1,10 +1,9 @@
 import { useMemo, useState } from 'react';
-import type { ApprovedFact, AppliedFactRef, SessionMode } from '@sales-copilot/contracts';
+import type { ApprovedFact, AppliedFactRef, ConfigStatusResponse, OfflineScriptsResponse, SessionMode } from '@sales-copilot/contracts';
 import { Badge, Meter, hasMicPermission, useAudioInputs, useLocalMicTest } from '../../ui/common';
 import { localSourceLabel, sourceFixHint } from '../../shared/labels';
 import type { OffscreenSnapshot, TargetInfo } from '../../shared/runtime-messages';
 import type { Settings } from '../../shared/settings';
-import type { ConfigStatusResponse } from '../../shared/noncontract';
 import { isTokenUsable } from '../../shared/settings';
 
 export interface PreSessionServerInfo {
@@ -14,6 +13,8 @@ export interface PreSessionServerInfo {
   configError: string | null;
   facts: ApprovedFact[] | null;
   factsError: string | null;
+  /** OFFLINE テストで選べるスクリプト（取得できなければ null = サーバー既定を使う）。 */
+  scripts: OfflineScriptsResponse | null;
 }
 
 export interface StartParams {
@@ -23,6 +24,10 @@ export interface StartParams {
   mode: SessionMode;
   selfCaptureEnabled: boolean;
   micDeviceId: string | null;
+  /** OFFLINE のみ。null = サーバー既定。 */
+  offlineScriptId: string | null;
+  /** OFFLINE のみ。サーバーが許可している場合だけ選べる。 */
+  offlineUseAnthropic: boolean;
 }
 
 export interface PreSessionProps {
@@ -43,16 +48,16 @@ export interface PreSessionProps {
 /** /config/status を文字だけで短く表示。 */
 function renderConfig(cfg: ConfigStatusResponse): string[] {
   const out: string[] = [];
-  const prov = (name: string, p: ConfigStatusResponse['stt']) =>
-    p ? `${name}（${[p.provider, p.model, p.language].filter(Boolean).join(' / ')}）: ${p.configured ? '設定済み' : 'API未設定'}` : `${name}: 確認できません`;
+  const prov = (name: string, p: { configured: boolean; provider: string; model: string; language?: string }) =>
+    `${name}（${[p.provider, p.model, p.language].filter(Boolean).join(' / ')}）: ${p.configured ? '設定済み' : 'API未設定'}`;
   out.push(prov('文字起こし', cfg.stt));
   out.push(prov('助言生成', cfg.llm));
-  if (cfg.modes) out.push(`LIVE: ${cfg.modes.LIVE ? '利用できます' : '利用できません（APIキー未設定）'} ／ OFFLINEテスト: ${cfg.modes.OFFLINE ? '利用できます' : '利用できません'}`);
-  if (cfg.offlineAdvice)
-    out.push(`OFFLINEの助言: ${cfg.offlineAdvice === 'anthropic' ? 'Anthropic（外部送信あり）' : 'ルールベース（外部送信なし）'}`);
-  if (cfg.priceTable)
-    out.push(
-      cfg.priceTable.configured
+  out.push(`LIVE: ${cfg.modes.LIVE ? '利用できます' : '利用できません（APIキー未設定）'} ／ OFFLINEテスト: ${cfg.modes.OFFLINE ? '利用できます' : '利用できません'}`);
+  out.push(
+    `OFFLINEの助言: ルールベース（外部送信なし）${cfg.offlineAnthropicAvailable ? '／開始時に選べば Anthropic も使えます（外部送信あり）' : ''}`,
+  );
+  out.push(
+    cfg.priceTable.configured
         ? `価格表: 設定済み（${cfg.priceTable.currency ?? '通貨不明'}・確認日 ${cfg.priceTable.checkedDate ?? '不明'}）`
         : '価格表: 未設定（金額は表示せず使用量のみ）',
     );
@@ -74,6 +79,8 @@ export function PreSession(p: PreSessionProps) {
   const [ackMic, setAckMic] = useState(false);
   const [ackConsent, setAckConsent] = useState(false);
   const [confirming, setConfirming] = useState(false);
+  const [scriptId, setScriptId] = useState<string>('');
+  const [offlineAnthropic, setOfflineAnthropic] = useState(false);
   const [devRefresh, setDevRefresh] = useState(0);
   const devices = useAudioInputs(devRefresh);
   const micId = p.settings?.micDeviceId ?? null;
@@ -92,7 +99,10 @@ export function PreSession(p: PreSessionProps) {
   if (p.server.health !== 'ok') missing.push('ローカルサーバーへの接続');
   if (!purpose.trim()) missing.push('商談目的');
   const liveUnavailable = p.server.config?.modes ? !p.server.config.modes.LIVE : false;
-  const offlineExternal = p.server.config?.offlineAdvice === 'anthropic';
+  const offlineAnthropicAvailable = p.server.config?.offlineAnthropicAvailable === true;
+  const offlineExternal = mode === 'OFFLINE' && offlineAnthropicAvailable && offlineAnthropic;
+  const scripts = p.server.scripts;
+  const effectiveScriptId = scriptId || scripts?.defaultId || '';
   if (mode === 'LIVE' && liveUnavailable) missing.push('LIVE用のAPIキー（サーバー側で未設定。OFFLINEテストは可能）');
   if (mode === 'LIVE' && !remoteReady) missing.push('会議タブの音声（会議タブで拡張アイコンを押す）');
   if (selfOn && !ackMic) missing.push('①ブラウザのマイク許可の確認');
@@ -107,6 +117,8 @@ export function PreSession(p: PreSessionProps) {
       mode,
       selfCaptureEnabled: selfOn,
       micDeviceId: micId,
+      offlineScriptId: mode === 'OFFLINE' && effectiveScriptId ? effectiveScriptId : null,
+      offlineUseAnthropic: offlineExternal,
     });
   };
 
@@ -263,9 +275,38 @@ export function PreSession(p: PreSessionProps) {
           </label>
           <label className="check">
             <input type="radio" name="mode" checked={mode === 'OFFLINE'} onChange={() => setMode('OFFLINE')} />
-            <span>OFFLINEテスト（APIキー不要。サーバー既定の架空会話で動作確認）</span>
+            <span>OFFLINEテスト（APIキー不要。架空会話の再生で動作確認）</span>
           </label>
         </div>
+        {mode === 'OFFLINE' ? (
+          <>
+            <div className="field">
+              <label htmlFor="script">再生する架空会話</label>
+              {scripts && scripts.scripts.length > 0 ? (
+                <select id="script" value={effectiveScriptId} onChange={(e) => setScriptId(e.target.value)}>
+                  {scripts.scripts.map((sc) => (
+                    <option key={sc.id} value={sc.id}>
+                      {sc.title}（約{Math.round(sc.durationMs / 1000)}秒）
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <p className="small dim">一覧を取得できません（サーバー既定の会話を再生します）。「再確認」で取り直せます。</p>
+              )}
+              {scripts?.scripts.find((sc) => sc.id === effectiveScriptId)?.description ? (
+                <p className="small dim">{scripts.scripts.find((sc) => sc.id === effectiveScriptId)!.description}</p>
+              ) : null}
+            </div>
+            {offlineAnthropicAvailable ? (
+              <label className="check">
+                <input type="checkbox" checked={offlineAnthropic} onChange={(e) => setOfflineAnthropic(e.target.checked)} />
+                <span>助言生成に Anthropic を使う（架空会話の文字が外部へ送られ、使用量が発生します）</span>
+              </label>
+            ) : (
+              <p className="small dim">助言はルールベース（AIではありません・外部送信なし）で作ります。</p>
+            )}
+          </>
+        ) : null}
       </section>
 
       <section className="box" aria-labelledby="h-data">
@@ -278,7 +319,7 @@ export function PreSession(p: PreSessionProps) {
             {mode === 'LIVE'
               ? ' → Deepgram（文字起こし）、Anthropic（助言生成）'
               : offlineExternal
-                ? ' → OFFLINEテストでも助言生成に Anthropic を使う設定です（架空会話のみ送信）'
+                ? ' → 助言生成に Anthropic を使います（架空会話のみ送信）'
                 : '（OFFLINEテストでは外部へ送りません）'}
           </li>
           <li>保存: 音声は保存しません。会話と助言は既定でメモリのみ。終了時に選んだ場合だけ、このPCへ振り返りを出力します。</li>

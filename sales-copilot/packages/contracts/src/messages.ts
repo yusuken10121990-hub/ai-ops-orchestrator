@@ -9,6 +9,8 @@ export const PROTOCOL_VERSION = 1 as const;
 
 const Id = z.string().min(1).max(128);
 const EpochMs = z.number().int().nonnegative();
+/** OFFLINE 再生スクリプトの ID（ファイル名由来・英小文字/数字/ハイフン）。 */
+export const OfflineScriptId = z.string().regex(/^[a-z0-9-]{1,64}$/);
 
 // ---------------------------------------------------------------------------
 // Client → Server（JSON テキストフレーム。音声はバイナリフレーム: audio.ts）
@@ -38,6 +40,16 @@ export const SessionStartMessage = z
     /** 外部送信を伴う開始の明示確認。true 以外は受け付けない。 */
     consentConfirmed: z.literal(true),
     storage: StoragePolicy.default('memory_only'),
+    /**
+     * OFFLINE のみ: 再生する架空会話スクリプト（`GET /offline/scripts` の id）。未指定ならサーバー既定。
+     * LIVE で指定した場合は invalid_message。
+     */
+    offlineScriptId: OfflineScriptId.optional(),
+    /**
+     * OFFLINE のみ: 助言生成に Anthropic を使う希望。サーバーにキーがあり、かつ環境変数
+     * OFFLINE_USE_ANTHROPIC=1 で許可されている場合だけ有効（それ以外は外部送信しないルールベース）。
+     */
+    offlineUseAnthropic: z.boolean().optional(),
   })
   .strict();
 
@@ -94,6 +106,28 @@ export const SpeakingStateMessage = z
   })
   .strict();
 
+/**
+ * 検証済みカードを画面に反映した通知（遅延計測の最終点 displayAck, SPEC §8-3）。
+ * `at` はクライアント時計（参考値）。遅延の計算にはサーバーの受信時刻を使い、時計を混ぜない。
+ */
+export const AdviceDisplayedMessage = z
+  .object({ type: z.literal('advice.displayed'), adviceId: Id, at: EpochMs })
+  .strict();
+
+/** クライアント側で破棄した音声区間（バックプレッシャー等, SPEC §6-3）。音声時刻（セッション開始からの ms）。 */
+export const AudioGapReason = z.enum(['client_backpressure', 'capture_error']);
+export type AudioGapReason = z.infer<typeof AudioGapReason>;
+export const AudioGapMessage = z
+  .object({
+    type: z.literal('audio.gap'),
+    source: CaptureSource,
+    fromMs: z.number().nonnegative(),
+    toMs: z.number().nonnegative(),
+    reason: AudioGapReason,
+  })
+  .strict()
+  .refine((g) => g.toMs >= g.fromMs, { message: 'toMs must be >= fromMs', path: ['toMs'] });
+
 export const ClientMessage = z.union([
   HelloMessage,
   SessionStartMessage,
@@ -106,6 +140,8 @@ export const ClientMessage = z.union([
   FeedbackMessage,
   SessionEndMessage,
   SpeakingStateMessage,
+  AdviceDisplayedMessage,
+  AudioGapMessage,
 ]);
 export type ClientMessage = z.infer<typeof ClientMessage>;
 export type ClientMessageType = ClientMessage['type'];
@@ -232,6 +268,19 @@ export const ErrorMessage = z
   })
   .strict();
 
+/**
+ * セッション終了の確定通知（サーバー → 拡張）。終了処理（任意の出力）が終わった後に必ず1回送る。
+ * exportPath は本人が出力を選んだ場合だけ非 null。reviewAvailableUntil 以降は振り返りを取得できない。
+ */
+export const SessionEndedMessage = z
+  .object({
+    type: z.literal('session.ended'),
+    sessionId: Id,
+    exportPath: z.string().min(1).max(1000).nullable(),
+    reviewAvailableUntil: EpochMs,
+  })
+  .strict();
+
 export const ServerMessage = z.discriminatedUnion('type', [
   HelloAckMessage,
   StatusMessage,
@@ -242,6 +291,7 @@ export const ServerMessage = z.discriminatedUnion('type', [
   WarningMessage,
   UsageMessage,
   ErrorMessage,
+  SessionEndedMessage,
 ]);
 export type ServerMessage = z.infer<typeof ServerMessage>;
 export type ServerMessageType = ServerMessage['type'];
@@ -253,6 +303,9 @@ export type AdviceRequestMessage = z.infer<typeof AdviceRequestMessage>;
 export type FeedbackMessage = z.infer<typeof FeedbackMessage>;
 export type SessionEndMessage = z.infer<typeof SessionEndMessage>;
 export type SpeakingStateMessage = z.infer<typeof SpeakingStateMessage>;
+export type AdviceDisplayedMessage = z.infer<typeof AdviceDisplayedMessage>;
+export type AudioGapMessage = z.infer<typeof AudioGapMessage>;
+export type SessionEndedMessage = z.infer<typeof SessionEndedMessage>;
 export type StatusMessage = z.infer<typeof StatusMessage>;
 export type TranscriptSegmentMessage = z.infer<typeof TranscriptSegmentMessage>;
 export type AdviceCardMessage = z.infer<typeof AdviceCardMessage>;

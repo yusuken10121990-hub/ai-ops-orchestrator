@@ -8,6 +8,7 @@ pnpm --filter @sales-copilot/server dev     # tsx watch
 ```
 
 起動すると端末にペアリングコード（6桁・10分・1回限り）が表示される。`.env`（ワークスペース直下）があれば読む。
+トークンはメモリにだけ持つので、サーバーを再起動したら拡張機能で再ペアリングが必要。
 node:sqlite の ExperimentalWarning が 1 行出るが動作に影響はない（Node 22）。
 
 ## HTTP
@@ -16,16 +17,18 @@ node:sqlite の ExperimentalWarning が 1 行出るが動作に影響はない�
 |---|---|---|
 | `GET /health` | なし（Host 検査のみ） | `{ ok, version }` |
 | `POST /pair` | Origin = `chrome-extension://<extensionId>` | `{ pairingCode, extensionId, clientName }` → `PairingResponse` |
-| `GET /config/status` | settings | プロバイダー設定の有無・モデル名・LIVE/OFFLINE 可否・OFFLINE 助言の種別（秘密は返さない） |
+| `GET /config/status` | settings | プロバイダー設定の有無・モデル名・LIVE/OFFLINE 可否・OFFLINE で Anthropic を選べるか（秘密は返さない） |
+| `GET /offline/scripts` | session | OFFLINE 再生スクリプトの一覧（id・タイトル・説明・長さ。本文は返さない）と既定 id |
 | `GET /facts` / `POST /facts` | settings | 承認済み条件の一覧 / 追加（必ず unverified・version 1） |
 | `PATCH /facts/:id` | settings | 編集。内容が変われば承認失効（unverified, version+1）。進行中セッションの該当カードは無効化 |
 | `POST /facts/:id/approve` | settings | `{ version }`（表示中の版と一致必須）→ approved・approvedAt・version+1 |
 | `POST /facts/:id/revoke` | settings | 承認取消（revoked, version+1） |
 | `GET /facts/:id/history` | settings | 変更履歴 |
-| `GET /sessions/:id/review` | session | 終了後の振り返り（保持期間内のみ）: 使用量・遅延・適用条件の版・エクスポート先・本文 |
+| `GET /sessions/:id/review` | session | 終了後の振り返り（保持期間内のみ）: 使用量・遅延・適用条件の版・エクスポート先・本文・音声欠落区間 |
 | `GET /sessions/active/latency` | session | 実行中セッションの遅延統計 |
 
-認証は `Authorization: Bearer <token>`。URL クエリにトークンを付けたリクエストは 400。詳細は [docs/security.md](../../docs/security.md)。
+認証は `Authorization: Bearer <token>`。URL クエリにトークンを付けたリクエストは 400。応答の形は全て
+`@sales-copilot/contracts` の `http.ts`（返す前に同じスキーマで検証）。詳細は [docs/security.md](../../docs/security.md)。
 
 ## WebSocket `/ws`
 
@@ -33,16 +36,22 @@ node:sqlite の ExperimentalWarning が 1 行出るが動作に影響はない�
 2. 最初のメッセージが `hello`（token 入り）でなければ切断（4401 不正 / 4408 タイムアウト 5 秒）。成功で `hello.ack`。
 3. `session.start`（`consentConfirmed: true` 必須・適用条件は承認済みかつ現行版のみ）でパイプライン開始。
    - LIVE: キー未設定なら `status` の stt / advice を `not_configured` にし `error(not_configured)` を送る（無言の待機にしない）。
-   - OFFLINE: `OFFLINE_SCRIPT`（既定: 先頭のスクリプト）を `OFFLINE_REPLAY_SPEED` 倍速で再生。助言は
-     `OFFLINE_USE_ANTHROPIC=1` かつキーありなら Claude、それ以外はルールベース（「AIではありません」と明示、外部送信なし）。
+   - OFFLINE: `offlineScriptId`（無ければ `OFFLINE_SCRIPT`、それも無ければ先頭）を `OFFLINE_REPLAY_SPEED` 倍速で再生。
+     存在しない id は `error(invalid_message)` で開始しない。助言は「本人が `offlineUseAnthropic: true` を選んだ」かつ
+     `OFFLINE_USE_ANTHROPIC=1` かつキーありの場合だけ Claude、それ以外はルールベース（「AIではありません」と明示、外部送信なし）。
+     OFFLINE では実マイクの `speaking.state` を無視する（再生している会話とは無関係のため。結合テストで発見）。
+   - LIVE で `offlineScriptId` / `offlineUseAnthropic` を送ると `error(invalid_message)`。
 4. バイナリフレーム = contracts の音声フレーム。系統ごとに遅延接続の STT へ送る（未送信 2 秒超は古い順に破棄・欠落記録・`warning(audio_dropped)`）。
 5. STT 結果 → `transcript.segment`（interim は同じ segment を更新）→ 会話状態・構造化メモ → 自動契機 → スケジューラー →
    助言エンジン（AbortSignal 付き）→ 検証済みカードだけ `advice.card`。訂正・条件変更で `advice.invalidated`、期限切れ・話題変化は
    status を更新したカードを再送。表示固定は `card.pin.state`。`speaking.state`(SELF) で大きな更新を保留。
 6. `analysis.pause` / `analysis.resume` / `session.end`（`exportRequested`）/ WS 切断で STT 接続・生成・待機・タイマーを停止。
-   終了後は何も外部へ送らない。`usage` は `USAGE_INTERVAL_MS` ごと。
+   終了後は何も外部へ送らない。終了処理（任意の出力）の最後に `session.ended { sessionId, exportPath, reviewAvailableUntil }` を1回送る。
+   `usage` は `USAGE_INTERVAL_MS` ごと。
+7. `advice.displayed { adviceId, at }` → 遅延統計の表示ステップ（サーバー受信時刻で計測）。`audio.gap { source, fromMs, toMs, reason }` →
+   欠落区間として記録（振り返り・出力に含む）し、その系統を「遅延」表示にする。
 
-## 環境変数（.env.example にあるもの以外）
+## 環境変数（全て `.env.example` にコメント付きで記載。以下は主に .env.example の既定値の補足）
 
 | 変数 | 既定 | 用途 |
 |---|---|---|
@@ -56,7 +65,8 @@ node:sqlite の ExperimentalWarning が 1 行出るが動作に影響はない�
 | `AUDIO_MAX_QUEUE_MS` | 2000 | 系統ごとの未送信音声上限 |
 | `SESSION_RETENTION_MS` | 600000 | 終了後のメモリ保持上限 |
 | `SESSION_TOKEN_TTL_MS` / `PAIRING_CODE_TTL_MS` / `PAIRING_MAX_ATTEMPTS` | 12h / 10min / 5 | |
-| `OFFLINE_SCRIPT` / `OFFLINE_REPLAY_SPEED` / `OFFLINE_USE_ANTHROPIC` | 先頭 / 1 / 未設定 | |
+| `OFFLINE_SCRIPT` / `OFFLINE_REPLAY_SPEED` / `OFFLINE_USE_ANTHROPIC` | 先頭 / 1 / 未設定 | `OFFLINE_USE_ANTHROPIC=1` は「許可」。使うのは開始時に本人が選んだときだけ |
+| `PAIRING_CODE_FOR_TEST` | 未設定 | 自動テスト専用の固定コード。`NODE_ENV=test` 以外で設定されていると起動拒否 |
 | `DATA_DIR` / `EXPORT_DIR` | `data` / `exports` | ワークスペース直下からの相対 |
 | `USAGE_INTERVAL_MS` / `LOG_LEVEL` | 5000 / info | |
 

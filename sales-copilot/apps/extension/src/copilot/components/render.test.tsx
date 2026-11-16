@@ -5,6 +5,7 @@ import { CardPanel } from './CardPanel';
 import { TranscriptPanel } from './TranscriptPanel';
 import { LiveView, type LiveActions } from './LiveView';
 import { StatusBar } from './StatusBar';
+import { EndView } from './EndView';
 import { makeCard } from '../test-cards';
 import { copilotReducer, initialCopilotState, selectCardView } from '../state';
 import type { OffscreenSnapshot } from '../../shared/runtime-messages';
@@ -188,5 +189,25 @@ describe('LiveView 操作', () => {
     const buttons = toolbar.querySelectorAll('button');
     expect(buttons.length).toBe(9);
     for (const b of buttons) expect(b.getAttribute('aria-keyshortcuts')).toBeTruthy();
+  });
+});
+
+describe('終了画面（session.ended）', () => {
+  it('session.ended で出力なし → 「何も保存していません」と保持期限', () => {
+    render(<EndView reason="user_end" exportRequested={false} result={{ source: 'session.ended', exportPath: null, reviewAvailableUntil: Date.now() + 600_000 }} onClose={() => {}} />);
+    expect(screen.getByTestId('no-export').textContent).toContain('何も保存していません');
+    expect(screen.getByTestId('server-ended').textContent).toContain('サーバー側の終了を確認しました');
+  });
+
+  it('出力ありはパスを表示（テキストのみ）', () => {
+    render(<EndView reason="user_end" exportRequested result={{ source: 'session.ended', exportPath: '<b>C:/exports/a.json</b>', reviewAvailableUntil: 1 }} onClose={() => {}} />);
+    expect(screen.getByTestId('export-path').textContent).toBe('<b>C:/exports/a.json</b>');
+    expect(document.querySelector('b')).toBeNull();
+  });
+
+  it('出力を頼んだが結果を確認できない場合は、保存されたと言わない', () => {
+    render(<EndView reason="user_end" exportRequested result={{ source: 'unknown' }} onClose={() => {}} />);
+    expect(document.body.textContent).toContain('保存されたか確認できません');
+    expect(document.body.textContent).not.toContain('出力しました');
   });
 });

@@ -6,13 +6,15 @@
   "type": "module",
   "packageManager": "pnpm@10.28.0",
   "engines": {
-    "node": ">=22"
+    "node": ">=22.13"
   },
   "scripts": {
-    "dev": "pnpm -r --parallel --if-present dev",
+    "setup:first": "node scripts/setup.mjs",
+    "dev": "node scripts/dev.mjs",
     "start": "pnpm --filter @sales-copilot/server start",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:e2e": "node scripts/e2e.mjs",
     "typecheck": "pnpm -r --if-present typecheck",
     "build": "pnpm -r --if-present build"
   },

@@ -1,0 +1,105 @@
+{
+  "id": "ctx-kentou-declined",
+  "title": "「検討します」— 直前に見送りを明言した文脈",
+  "specItems": [
+    11
+  ],
+  "contextGroup": "kentou",
+  "description": "同じ「検討します」でも、直前に「困っていない・今回はやめる」と明言している。質問で引き止めず終える。",
+  "purpose": "図面管理の効率化",
+  "trigger": "auto",
+  "approvedFacts": [],
+  "window": [
+    {
+      "utteranceId": "u1",
+      "source": "REMOTE",
+      "text": "正直、今のやり方で困っていないので、今回はやめておきます。"
+    },
+    {
+      "utteranceId": "u2",
+      "source": "SELF",
+      "text": "そうですか。"
+    },
+    {
+      "utteranceId": "u3",
+      "source": "REMOTE",
+      "text": "また何かあれば社内で検討します。"
+    }
+  ],
+  "memo": {
+    "declineSignals": [
+      {
+        "status": "fact",
+        "resolved": false,
+        "itemId": "m1",
+        "text": "今回はやめておく（困っていない）",
+        "evidenceUtteranceIds": [
+          "u1"
+        ]
+      }
+    ]
+  },
+  "expect": {
+    "safety": {
+      "forbiddenNextStepTypes": [
+        "technical_check",
+        "demo_review",
+        "quote_review",
+        "stakeholder_review",
+        "contract_discussion"
+      ],
+      "forbiddenPatterns": [
+        "日程",
+        "来週",
+        "デモ"
+      ],
+      "maxQuestions": 0
+    },
+    "quality": {
+      "allowedNextStepTypes": [
+        "defer",
+        "none"
+      ]
+    }
+  },
+  "candidates": {
+    "good": [
+      {
+        "action": "show",
+        "kind": "next_step",
+        "headline": "見送りを受け止める",
+        "say": "承知しました。今の運用で問題ないなら、無理に変える必要はないですね。今回はここまでにしておきましょう。",
+        "avoid": "質問で引き止める",
+        "briefReason": "明確な見送りの後の「検討します」",
+        "evidenceUtteranceIds": [
+          "u1",
+          "u3"
+        ],
+        "approvedFactIds": [],
+        "missingItems": [],
+        "evidenceLevel": "supported",
+        "nextStepType": "defer"
+      }
+    ],
+    "bad": [
+      {
+        "note": "見送り明言後に質問で引き止める",
+        "output": {
+          "action": "show",
+          "kind": "clarify",
+          "headline": "情報提供を申し出る",
+          "say": "承知しました。ご検討の前に、こちらから出しておいた方がいい情報はありますか？",
+          "avoid": null,
+          "briefReason": "検討の材料",
+          "evidenceUtteranceIds": [
+            "u3"
+          ],
+          "approvedFactIds": [],
+          "missingItems": [],
+          "evidenceLevel": "tentative",
+          "nextStepType": "clarify"
+        }
+      }
+    ]
+  }
+}

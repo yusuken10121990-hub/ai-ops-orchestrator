@@ -1,4 +1,4 @@
-import type { ExportResult, StopReason } from '../../shared/runtime-messages';
+import type { EndResult, StopReason } from '../../shared/runtime-messages';
 
 const REASON: Record<StopReason, string> = {
   user_end: '終了しました',
@@ -12,34 +12,56 @@ const REASON: Record<StopReason, string> = {
   error: 'エラーのため終了しました',
 };
 
+function hhmm(ms: number): string {
+  const d = new Date(ms);
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+}
+
 export function EndView({
   reason,
   exportRequested,
-  exportResult,
+  result,
   onClose,
 }: {
   reason: StopReason | null;
   exportRequested: boolean;
-  exportResult: ExportResult | null;
+  /** null = まだ確認中。 */
+  result: EndResult | null;
   onClose(): void;
 }) {
+  const known = result && result.source !== 'unknown' ? result : null;
   return (
     <div className="app">
       <h1>商談の支援を終了しました</h1>
       <p role="status">{reason ? REASON[reason] : '終了しました'}。音声の取得・送信・解析はすべて止まっています。</p>
+      {known?.source === 'session.ended' ? (
+        <p className="small dim" data-testid="server-ended">
+          サーバー側の終了を確認しました
+          {known.reviewAvailableUntil ? `（振り返りデータは ${hhmm(known.reviewAvailableUntil)} までサーバーのメモリに残り、その後消去されます）` : ''}。
+        </p>
+      ) : null}
       <section className="box" aria-label="保存">
-        {exportResult?.saved ? (
+        {known?.exportPath ? (
           <>
             <p>振り返りをこのPCに出力しました:</p>
             <p>
-              <code>{exportResult.path}</code>
+              <code data-testid="export-path">{known.exportPath}</code>
             </p>
-            <p className="small tone-warn">機密情報を含む可能性があります。不要になったらファイルを削除してください。</p>
+            <p className="small tone-warn">機密情報を含む可能性があります。不要になったらファイルを削除してください（同じ名前の .md も出力されています）。</p>
           </>
-        ) : exportRequested && !exportResult ? (
-          <p>出力結果をサーバーから受け取れませんでした（保存されたか確認できません）。サーバーの画面を確認してください。</p>
+        ) : exportRequested && !known ? (
+          result === null ? (
+            <p>出力結果を確認しています…</p>
+          ) : (
+            <p>
+              出力結果をサーバーから受け取れませんでした（保存されたか確認できません）。サーバーを起動した画面のログと、
+              <code>exports</code> フォルダを確認してください。
+            </p>
+          )
+        ) : exportRequested && known ? (
+          <p className="tone-warn">出力を選びましたが、サーバーは出力しませんでした（サーバーのログで原因を確認してください）。何も保存されていません。</p>
         ) : (
-          <p>何も保存していません（会話と助言はメモリ上だけで、終了後に破棄されます）。{exportResult && !exportResult.saved ? `（${exportResult.reason}）` : ''}</p>
+          <p data-testid="no-export">何も保存していません（会話と助言はメモリ上だけで、終了後に破棄されます）。</p>
         )}
       </section>
       <p className="small dim">次の商談は、会議タブで拡張アイコンを押して新しく開始してください。</p>

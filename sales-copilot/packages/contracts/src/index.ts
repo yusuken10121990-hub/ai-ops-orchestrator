@@ -5,3 +5,4 @@ export * from './status';
 export * from './usage';
 export * from './auth';
 export * from './messages';
+export * from './http';

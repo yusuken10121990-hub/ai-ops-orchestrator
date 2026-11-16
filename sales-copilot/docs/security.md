@@ -11,6 +11,9 @@ SPEC §14 の実装内容と、それを確認する自動テスト。
 ## ペアリングとトークン
 
 - 起動時に 6 桁の一度限りのペアリングコードを発行し、**端末（TTY）にだけ**表示する（ログには出さない。TTY でない場合は表示せず警告のみ）。
+  `pnpm start` / `pnpm dev` は端末をそのまま渡すので表示される。
+- 自動テスト専用の固定コード `PAIRING_CODE_FOR_TEST` は **`NODE_ENV=test` のときだけ**受け付ける。それ以外の環境で設定されていると
+  サーバーは起動を拒否する（`config.ts` の `pairingCodeForTest`、`units.test.ts` で確認）。コード自体はログに出さない。
 - `POST /pair`（`{ pairingCode, extensionId, clientName }`）: `Origin: chrome-extension://<extensionId>` と body の ID が一致すること。
   `ALLOWED_EXTENSION_ID` を設定した場合はその ID に限定。コードは単回使用・10 分有効（`PAIRING_CODE_TTL_MS`）・
   試行 5 回（`PAIRING_MAX_ATTEMPTS`）で失効（以後はサーバー再起動で新コード）。
@@ -23,8 +26,13 @@ SPEC §14 の実装内容と、それを確認する自動テスト。
 
 - 全 HTTP リクエストと WebSocket アップグレードで `Host` が `127.0.0.1:<PORT>` / `localhost:<PORT>` / `[::1]:<PORT>` 以外なら 421
   （DNS リバインディング対策）。
-- `/health` 以外は `Origin` が「ペアリング済み（または環境変数で許可）の `chrome-extension://<id>`」であること。違えば 403。
-  WebSocket アップグレードも同じフックで拒否する。トークンも同じ拡張機能 ID のものでなければ 401。
+- `/health` 以外は、`Origin` があれば「ペアリング済み（または環境変数で許可）の `chrome-extension://<id>`」であること。違えば 403。
+  トークンも同じ拡張機能 ID のものでなければ 401。
+- **`Origin` ヘッダーが無い HTTP 要求**: Chrome は host_permissions を持つ拡張ページからの GET に `Origin` を付けない
+  （実ブラウザの結合テスト `scripts/e2e-integration.mjs` で確認。モックでは見つからなかった不具合）。この場合は Bearer トークンの検査
+  （期限・スコープ・発行先の拡張がペアリング済み）だけで判定する。Web ページが `Authorization` ヘッダーを付けると必ず CORS
+  （`Origin` 付き）になるため、ブラウザ上の第三者ページはこの経路を使えない。
+- **WebSocket アップグレードは `Origin` 必須**（ブラウザは常に付ける）。無い・違う場合は 403。
 - `/health` は認証なし・最小（`{ ok, version }`）。
 
 ## ログ
@@ -53,5 +61,6 @@ SPEC §14 の実装内容と、それを確認する自動テスト。
 
 ## 未検証（実機）
 
-- 実際の Chrome 拡張からの Origin（`chrome-extension://<id>`）付き WebSocket 接続とペアリング手順の画面確認。
+- 実際の Windows 版 Chrome（Chromium の自動化ではなく）でのペアリング手順の画面確認。
+  （Chromium 153 + 実拡張 + 実サーバーでの Origin 付き WebSocket・ペアリング・HTTP は `pnpm test:e2e` で確認済み）
 - Windows での `data/` のファイル権限（chmod は Windows では効かない）。

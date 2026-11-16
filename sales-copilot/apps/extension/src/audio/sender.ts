@@ -40,6 +40,19 @@ export class BackpressureSender {
     private readonly onGap: (gap: AudioGap, phase: 'start' | 'end') => void = () => {},
   ) {}
 
+  /** まだ閉じていない欠落区間を確定して返す（停止・終了の直前に呼ぶ）。 */
+  flushOpenGaps(): AudioGap[] {
+    const out: AudioGap[] = [];
+    for (const src of ['SELF', 'REMOTE'] as const) {
+      const g = this.open[src];
+      if (!g) continue;
+      delete this.open[src];
+      this.gaps.push(g);
+      out.push(g);
+    }
+    return out;
+  }
+
   /** 停止後は何も送らない。 */
   disable(): void {
     this.closed = true;

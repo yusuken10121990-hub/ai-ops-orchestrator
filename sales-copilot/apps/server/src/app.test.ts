@@ -126,6 +126,21 @@ describe('pairing / auth / origin / host', () => {
     expect(JSON.stringify(s)).not.toMatch(/apiKey|sk-ant|"token"/i);
   });
 
+  it('GET without an Origin header (Chrome extension pages omit it) is decided by the bearer token alone', async () => {
+    const { h, token } = await paired();
+    const noOrigin = (extra: Record<string, string> = {}) => ({ host: HOST, ...extra });
+    expect((await h.app.inject({ method: 'GET', url: '/config/status', headers: noOrigin({ authorization: `Bearer ${token}` }) })).statusCode).toBe(200);
+    expect((await h.app.inject({ method: 'GET', url: '/facts', headers: noOrigin({ authorization: `Bearer ${token}` }) })).statusCode).toBe(200);
+    expect((await h.app.inject({ method: 'GET', url: '/config/status', headers: noOrigin() })).statusCode).toBe(401);
+    expect((await h.app.inject({ method: 'GET', url: '/config/status', headers: noOrigin({ authorization: `Bearer ${'x'.repeat(43)}` }) })).statusCode).toBe(401);
+    // Host 検査は Origin が無くても行う
+    expect(
+      (await h.app.inject({ method: 'GET', url: '/config/status', headers: { host: 'attacker.test:8787', authorization: `Bearer ${token}` } })).statusCode,
+    ).toBe(421);
+    // WebSocket の upgrade は Origin 必須のまま
+    expect((await h.app.inject({ method: 'GET', url: '/ws', headers: noOrigin({ authorization: `Bearer ${token}` }) })).statusCode).toBe(403);
+  });
+
   it('a token in the URL query is never accepted', async () => {
     const { h, token } = await paired();
     const r = await h.app.inject({ method: 'GET', url: `/config/status?token=${token}`, headers: { host: HOST, origin: ORIGIN } });

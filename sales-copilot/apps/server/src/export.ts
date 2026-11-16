@@ -1,6 +1,6 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import type { AdviceCard, AppliedFactRef, SessionMode, UsageSnapshot } from '@sales-copilot/contracts';
+import type { AdviceCard, AppliedFactRef, AudioGapRecord, ReviewTranscriptEntry, SessionMode, UsageSnapshot } from '@sales-copilot/contracts';
 import type { LatencyStats } from './latency';
 
 export interface SessionExport {
@@ -12,11 +12,11 @@ export interface SessionExport {
   customerName: string | null;
   appliedFacts: AppliedFactRef[];
   adviceLabel: string | null;
-  transcript: Array<{ utteranceId: string; source: string; text: string; startMs: number; endMs: number; flags: string[] }>;
+  transcript: ReviewTranscriptEntry[];
   advice: AdviceCard[];
   usage: UsageSnapshot;
   latency: LatencyStats;
-  audioGaps: Array<{ source: string; fromMs: number; toMs: number; droppedMs: number }>;
+  audioGaps: AudioGapRecord[];
 }
 
 function iso(ms: number): string {
@@ -77,7 +77,7 @@ export function renderMarkdown(e: SessionExport): string {
   if (e.audioGaps.length) {
     lines.push('');
     lines.push('## 音声の欠落区間');
-    for (const g of e.audioGaps) lines.push(`- ${g.source} ${mmss(g.fromMs)}〜${mmss(g.toMs)}（${g.droppedMs}ms）`);
+    for (const g of e.audioGaps) lines.push(`- ${g.source} ${mmss(g.fromMs)}〜${mmss(g.toMs)}（${Math.round(g.droppedMs)}ms・${g.origin === 'client' ? '拡張側' : 'サーバー側'}: ${g.reason}）`);
   }
   lines.push('');
   return lines.join('\n');

@@ -1,5 +1,5 @@
 // Playwright スモーク: ビルド済み拡張を Chromium（new headless）に読み込み、
-// モックのローカルサーバー（HTTP + WS）に対して copilot 画面から OFFLINE で開始し、
+// モックのローカルサーバー（HTTP + WS）に対して（実サーバーとの結合はルートの scripts/e2e-integration.mjs） copilot 画面から OFFLINE で開始し、
 // - hello がトークンを最初のメッセージで送る（URL クエリに載らない）
 // - session.start に明示同意が入る
 // - 偽マイク（--use-fake-device-for-media-stream）→ offscreen の AudioWorklet → 16kHz PCM16 フレームが届く
@@ -9,7 +9,7 @@
 // を確認する。tabCapture（拡張アイコンのクリック）は自動化できないため対象外（docs/manual-checklist.md）。
 import { createRequire } from 'node:module';
 import { createServer } from 'node:http';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -38,15 +38,21 @@ const http = createServer((req, res) => {
     res.end(JSON.stringify(body));
   };
   if (req.url === '/health') return send(200, { ok: true });
+  // 形は @sales-copilot/contracts の ConfigStatusResponse / FactsListResponse / OfflineScriptsResponse と同じ
   if (req.url === '/config/status')
     return send(200, {
+      version: 'mock',
+      protocolVersion: 1,
       stt: { configured: false, provider: 'deepgram', model: 'nova-3', language: 'ja' },
       llm: { configured: false, provider: 'anthropic', model: 'mock' },
       modes: { LIVE: false, OFFLINE: true },
-      offlineAdvice: 'rule_based_offline',
+      offlineAnthropicAvailable: false,
       priceTable: { configured: false, currency: null, checkedDate: null },
+      retentionMs: 600000,
+      budget: { maxSttSeconds: null, maxLlmCalls: null, maxLlmInputTokens: null, maxLlmOutputTokens: null, maxCost: null },
     });
-  if (req.url === '/facts') return send(200, []);
+  if (req.url === '/facts') return send(200, { facts: [] });
+  if (req.url === '/offline/scripts') return send(200, { scripts: [], defaultId: null });
   send(404, {});
 });
 const wss = new WebSocketServer({ noServer: true });
@@ -123,6 +129,7 @@ wss.on('connection', (ws) => {
 await new Promise((r) => http.listen(0, '127.0.0.1', r));
 const port = http.address().port;
 
+if (!process.env.PLAYWRIGHT_BROWSERS_PATH && existsSync('/opt/pw-browsers')) process.env.PLAYWRIGHT_BROWSERS_PATH = '/opt/pw-browsers';
 const { chromium } = await loadPlaywright();
 const userDir = mkdtempSync(join(tmpdir(), 'zerosys-e2e-'));
 const results = [];

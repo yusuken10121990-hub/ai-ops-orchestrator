@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { loadConfig } from './config';
+import { loadConfig, providerStatus } from './config';
 import { LatencyTracker, percentile } from './latency';
 import { ReplayDriver, type ReplayEmit } from './replay';
 import { testLogger } from './test-support';
@@ -30,6 +30,21 @@ describe('config', () => {
       loadConfig({ PRICE_CURRENCY: 'USD', PRICE_SOURCE: 'vendor page', PRICE_CHECKED_DATE: '2026-11-16', PRICE_STT_PER_MINUTE: '0.01' }).priceTable,
     ).toMatchObject({ currency: 'USD', sttPerMinute: 0.01, llmInputPerMTok: null });
   });
+
+  it('PAIRING_CODE_FOR_TEST works only with NODE_ENV=test (startup is refused otherwise)', () => {
+    expect(loadConfig({}).pairingCodeForTest).toBeNull();
+    expect(loadConfig({ NODE_ENV: 'test', PAIRING_CODE_FOR_TEST: '123456' }).pairingCodeForTest).toBe('123456');
+    expect(() => loadConfig({ PAIRING_CODE_FOR_TEST: '123456' })).toThrow(/NODE_ENV=test/);
+    expect(() => loadConfig({ NODE_ENV: 'production', PAIRING_CODE_FOR_TEST: '123456' })).toThrow(/NODE_ENV=test/);
+    expect(() => loadConfig({ NODE_ENV: 'development', PAIRING_CODE_FOR_TEST: '123456' })).toThrow(/NODE_ENV=test/);
+    expect(() => loadConfig({ NODE_ENV: 'test', PAIRING_CODE_FOR_TEST: '12ab56' })).toThrow(/6 digits/);
+  });
+
+  it('OFFLINE Anthropic is only "available" with both the env permission and a key', () => {
+    expect(providerStatus(loadConfig({ OFFLINE_USE_ANTHROPIC: '1' })).offlineAnthropicAvailable).toBe(false);
+    expect(providerStatus(loadConfig({ ANTHROPIC_API_KEY: 'k' })).offlineAnthropicAvailable).toBe(false);
+    expect(providerStatus(loadConfig({ ANTHROPIC_API_KEY: 'k', OFFLINE_USE_ANTHROPIC: '1' })).offlineAnthropicAvailable).toBe(true);
+  });
 });
 
 describe('latency', () => {
@@ -55,6 +70,21 @@ describe('latency', () => {
     expect(s.sttFinalToSentMs.p50).toBe(1510);
     expect(s.requestedToValidatedMs.p50).toBe(1400);
     expect(s.counts).toMatchObject({ eligible: 1, started: 1, displayed: 1, noAdvice: 1 });
+  });
+
+  it('display ack (advice.displayed) is measured on the server clock, once per card', () => {
+    const t = new LatencyTracker();
+    t.speechEnded('u1', 1000, 1300);
+    t.requested('j1', 'u1', 1400);
+    t.validated('j1', 2000);
+    t.sent('j1', 2010, 'adv1');
+    expect(t.displayed('adv1', 2090)).toBe(true);
+    expect(t.displayed('adv1', 2500)).toBe(false);
+    expect(t.displayed('unknown', 2500)).toBe(false);
+    const s = t.stats();
+    expect(s.counts.displayAcked).toBe(1);
+    expect(s.sentToDisplayedMs).toMatchObject({ n: 1, p50: 80 });
+    expect(s.speechEndToDisplayedMs).toMatchObject({ n: 1, p50: 1090 });
   });
 });
 

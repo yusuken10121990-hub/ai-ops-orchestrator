@@ -57,8 +57,8 @@ export class AuthManager {
   }
 
   /** 新しいペアリングコードを発行し、平文を一度だけ返す（TTY へ表示する用途のみ）。 */
-  issuePairingCode(): string {
-    const code = String(randomInt(0, 1_000_000)).padStart(6, '0');
+  issuePairingCode(fixedCodeForTest: string | null = null): string {
+    const code = fixedCodeForTest ?? String(randomInt(0, 1_000_000)).padStart(6, '0');
     this.code = { hash: sha256(code), expiresAt: this.now() + this.o.pairingCodeTtlMs, attempts: 0, used: false, locked: false };
     return code;
   }
@@ -105,6 +105,22 @@ export class AuthManager {
     }
     if (!opts.extensionId || rec.extensionId !== opts.extensionId) return false;
     return rec.scopes.includes(opts.scope);
+  }
+
+  /**
+   * Origin ヘッダーが無い HTTP 要求用（Chrome は拡張ページからの GET に Origin を付けない）。
+   * トークンの期限・スコープと、発行先の拡張機能がペアリング済みであることを確認する。WebSocket には使わない。
+   */
+  verifyTokenWithoutOrigin(token: string | null | undefined, scope: AuthScope): boolean {
+    if (!token || token.length < 32 || token.length > 512) return false;
+    const key = sha256(token).toString('hex');
+    const rec = this.tokens.get(key);
+    if (!rec) return false;
+    if (this.now() >= rec.expiresAt) {
+      this.tokens.delete(key);
+      return false;
+    }
+    return this.pairedExtensionIds.has(rec.extensionId) && rec.scopes.includes(scope);
   }
 
   /** WS/HTTP の Origin 許可判定（ペアリング済み or 環境変数で許可された拡張機能のみ）。 */

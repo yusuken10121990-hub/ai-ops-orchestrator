@@ -2,10 +2,18 @@ import websocket from '@fastify/websocket';
 import Fastify, { LogController, type FastifyBaseLogger, type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
 import type { Logger } from 'pino';
 import type WebSocket from 'ws';
-import { z } from 'zod';
 import {
-  FactCategory,
+  ConfigStatusResponse,
+  FactApproveRequest,
+  FactCreateRequest,
+  FactPatchRequest,
+  FactResponse,
+  FactsListResponse,
+  FactUpdateResponse,
   HelloMessage,
+  OfflineScriptsResponse,
+  SessionReviewResponse,
+  type OfflineScriptInfo,
   PairingRequest,
   PROTOCOL_VERSION,
   parseClientMessage,
@@ -29,6 +37,8 @@ export interface AppDeps {
   createLiveRecognizer: (source: CaptureSource) => SpeechRecognizer | null;
   liveLlm: AdviceLlm | null;
   loadReplay: (name: string | null) => ReplayScript;
+  /** GET /offline/scripts の一覧（タイトル等のみ）。 */
+  listOfflineScripts?: () => OfflineScriptInfo[];
   now?: () => number;
   /** hello を待つ時間（ms）。 */
   helloTimeoutMs?: number;
@@ -42,24 +52,6 @@ export interface AppHandle {
   runtimes: Set<SessionRuntime>;
   reviews: Map<string, SessionReview>;
 }
-
-const FactCreateBody = z
-  .object({
-    category: FactCategory,
-    value: z.string().min(1).max(1000),
-    scope: z.string().max(500).default(''),
-    sourceNote: z.string().max(500).default(''),
-  })
-  .strict();
-const FactPatchBody = z
-  .object({
-    category: FactCategory.optional(),
-    value: z.string().min(1).max(1000).optional(),
-    scope: z.string().max(500).optional(),
-    sourceNote: z.string().max(500).optional(),
-  })
-  .strict();
-const FactApproveBody = z.object({ version: z.number().int().positive() }).strict();
 
 /** WS クローズコード（アプリ定義）。 */
 export const WS_CLOSE = { unauthorized: 4401, protocol: 4400, timeout: 4408 } as const;
@@ -102,6 +94,10 @@ export async function buildApp(deps: AppDeps): Promise<AppHandle> {
     const origin = req.headers.origin;
     if (path === '/pair') {
       if (!parseExtensionOrigin(origin)) return reply.code(403).send({ error: 'origin_mismatch' });
+    } else if (origin === undefined && path !== '/ws') {
+      // Chrome は host_permissions を持つ拡張ページからの GET に Origin を付けない（実ブラウザの結合テストで確認）。
+      // Origin なしの HTTP は、ルートの Bearer トークン検査（requireAuth）だけで判定する。
+      // ブラウザ上の Web ページは Authorization ヘッダーを付けると必ず CORS（Origin 付き）になるので、ここは通らない。
     } else if (!auth.isAllowedOrigin(origin)) {
       logger.warn({ route: path }, 'rejected: origin');
       return reply.code(403).send({ error: 'origin_not_allowed' });
@@ -122,8 +118,11 @@ export async function buildApp(deps: AppDeps): Promise<AppHandle> {
     (scope: AuthScope) =>
     async (req: FastifyRequest, reply: FastifyReply): Promise<void> => {
       const token = bearerToken(req.headers.authorization);
-      const extId = parseExtensionOrigin(req.headers.origin);
-      if (!auth.verifyToken(token, { extensionId: extId, scope })) {
+      const ok =
+        req.headers.origin === undefined
+          ? auth.verifyTokenWithoutOrigin(token, scope)
+          : auth.verifyToken(token, { extensionId: parseExtensionOrigin(req.headers.origin), scope });
+      if (!ok) {
         return reply.code(401).send({ error: 'unauthorized' });
       }
     };
@@ -147,44 +146,47 @@ export async function buildApp(deps: AppDeps): Promise<AppHandle> {
 
   app.options('/*', async (_req, reply) => reply.code(204).send());
 
-  app.get('/config/status', { preHandler: requireAuth('settings') }, async () => ({
-    version: SERVER_VERSION,
-    protocolVersion: PROTOCOL_VERSION,
-    ...providerStatus(config),
-    retentionMs: config.retentionMs,
-    budget: config.budget,
-  }));
+  // 応答は返す前に contracts のスキーマで検証する（拡張側も同じスキーマで受ける）
+  app.get('/config/status', { preHandler: requireAuth('settings') }, async () =>
+    ConfigStatusResponse.parse({
+      version: SERVER_VERSION,
+      protocolVersion: PROTOCOL_VERSION,
+      ...providerStatus(config),
+      retentionMs: config.retentionMs,
+      budget: config.budget,
+    }),
+  );
 
-  app.get('/facts', { preHandler: requireAuth('settings') }, async () => ({ facts: store.listFacts() }));
+  app.get('/facts', { preHandler: requireAuth('settings') }, async () => FactsListResponse.parse({ facts: store.listFacts() }));
 
   app.post('/facts', { preHandler: requireAuth('settings') }, async (req, reply) => {
-    const p = FactCreateBody.safeParse(req.body);
+    const p = FactCreateRequest.safeParse(req.body);
     if (!p.success) return reply.code(400).send({ error: 'invalid_body' });
-    return reply.code(201).send({ fact: store.createFact(p.data) });
+    return reply.code(201).send(FactResponse.parse({ fact: store.createFact(p.data) }));
   });
 
   app.patch<{ Params: { id: string } }>('/facts/:id', { preHandler: requireAuth('settings') }, async (req, reply) => {
-    const p = FactPatchBody.safeParse(req.body);
+    const p = FactPatchRequest.safeParse(req.body);
     if (!p.success) return reply.code(400).send({ error: 'invalid_body' });
     const r = store.updateFact(req.params.id, p.data);
     if (!r.ok) return reply.code(404).send({ error: r.error });
     if (r.changed) for (const rt of runtimes) rt.onFactChanged(req.params.id);
-    return { fact: r.fact, approvalRevoked: r.changed };
+    return FactUpdateResponse.parse({ fact: r.fact, approvalRevoked: r.changed });
   });
 
   app.post<{ Params: { id: string } }>('/facts/:id/approve', { preHandler: requireAuth('settings') }, async (req, reply) => {
-    const p = FactApproveBody.safeParse(req.body);
+    const p = FactApproveRequest.safeParse(req.body);
     if (!p.success) return reply.code(400).send({ error: 'invalid_body' });
     const r = store.approveFact(req.params.id, p.data.version);
     if (!r.ok) return reply.code(r.error === 'not_found' ? 404 : 409).send({ error: r.error });
-    return { fact: r.fact };
+    return FactResponse.parse({ fact: r.fact });
   });
 
   app.post<{ Params: { id: string } }>('/facts/:id/revoke', { preHandler: requireAuth('settings') }, async (req, reply) => {
     const r = store.revokeFact(req.params.id);
     if (!r.ok) return reply.code(r.error === 'not_found' ? 404 : 409).send({ error: r.error });
     for (const rt of runtimes) rt.onFactChanged(req.params.id);
-    return { fact: r.fact };
+    return FactResponse.parse({ fact: r.fact });
   });
 
   app.get<{ Params: { id: string } }>('/facts/:id/history', { preHandler: requireAuth('settings') }, async (req, reply) => {
@@ -195,7 +197,7 @@ export async function buildApp(deps: AppDeps): Promise<AppHandle> {
   app.get<{ Params: { id: string } }>('/sessions/:id/review', { preHandler: requireAuth('session') }, async (req, reply) => {
     const r = reviews.get(req.params.id);
     if (!r || now() >= r.retainedUntil) return reply.code(404).send({ error: 'not_found_or_expired' });
-    return {
+    return SessionReviewResponse.parse({
       sessionId: r.sessionId,
       mode: r.mode,
       endedAt: r.endedAt,
@@ -206,7 +208,15 @@ export async function buildApp(deps: AppDeps): Promise<AppHandle> {
       usage: r.usage,
       transcript: r.data?.transcript ?? [],
       advice: r.data?.advice ?? [],
-    };
+      audioGaps: r.data?.audioGaps ?? [],
+    });
+  });
+
+  app.get('/offline/scripts', { preHandler: requireAuth('session') }, async () => {
+    const scripts = deps.listOfflineScripts?.() ?? [];
+    const preferred = config.offline.script;
+    const defaultId = preferred && scripts.some((s) => s.id === preferred) ? preferred : (scripts[0]?.id ?? null);
+    return OfflineScriptsResponse.parse({ scripts, defaultId });
   });
 
   app.get('/sessions/active/latency', { preHandler: requireAuth('session') }, async () => ({

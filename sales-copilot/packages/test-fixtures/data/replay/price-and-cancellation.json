@@ -1,0 +1,260 @@
+{
+  "name": "price-and-cancellation",
+  "title": "月額と途中解約の質問（架空）",
+  "description": "承認済み条件が未設定のまま、顧客が月額と途中解約を聞く。金額を発明せず確認を促す流れの確認用。約90秒。",
+  "durationMs": 85960,
+  "lines": [
+    {
+      "atMs": 1959,
+      "source": "SELF",
+      "text": "本日はお時間いただきありがとうご",
+      "isFinal": false
+    },
+    {
+      "atMs": 3919,
+      "source": "SELF",
+      "text": "本日はお時間いただきありがとうございます。見積業務の流れから",
+      "isFinal": false
+    },
+    {
+      "atMs": 5600,
+      "source": "SELF",
+      "text": "本日はお時間いただきありがとうございます。見積業務の流れから伺ってもいいですか？",
+      "isFinal": true
+    },
+    {
+      "atMs": 8617,
+      "source": "REMOTE",
+      "text": "はい。今は営業が作った見積",
+      "isFinal": false
+    },
+    {
+      "atMs": 10234,
+      "source": "REMOTE",
+      "text": "はい。今は営業が作った見積を、上長が紙で確認して",
+      "isFinal": false
+    },
+    {
+      "atMs": 11620,
+      "source": "REMOTE",
+      "text": "はい。今は営業が作った見積を、上長が紙で確認してから送っています。",
+      "isFinal": true
+    },
+    {
+      "atMs": 16323,
+      "source": "REMOTE",
+      "text": "承認待ちで一件あたり",
+      "isFinal": false
+    },
+    {
+      "atMs": 17646,
+      "source": "REMOTE",
+      "text": "承認待ちで一件あたり二日くらい止まること",
+      "isFinal": false
+    },
+    {
+      "atMs": 18780,
+      "source": "REMOTE",
+      "text": "承認待ちで一件あたり二日くらい止まることがありますね。",
+      "isFinal": true
+    },
+    {
+      "atMs": 22420,
+      "source": "SELF",
+      "text": "なる",
+      "isFinal": false
+    },
+    {
+      "atMs": 22840,
+      "source": "SELF",
+      "text": "なるほ",
+      "isFinal": false
+    },
+    {
+      "atMs": 23200,
+      "source": "SELF",
+      "text": "なるほど。",
+      "isFinal": true
+    },
+    {
+      "atMs": 26861,
+      "source": "SELF",
+      "text": "承認の画面をシステム上に用意し",
+      "isFinal": false
+    },
+    {
+      "atMs": 28723,
+      "source": "SELF",
+      "text": "承認の画面をシステム上に用意して、スマホからでも確認でき",
+      "isFinal": false
+    },
+    {
+      "atMs": 30320,
+      "source": "SELF",
+      "text": "承認の画面をシステム上に用意して、スマホからでも確認できる形を考えています。",
+      "isFinal": true
+    },
+    {
+      "atMs": 34539,
+      "source": "REMOTE",
+      "text": "それは便",
+      "isFinal": false
+    },
+    {
+      "atMs": 35078,
+      "source": "REMOTE",
+      "text": "それは便利そうで",
+      "isFinal": false
+    },
+    {
+      "atMs": 35540,
+      "source": "REMOTE",
+      "text": "それは便利そうですね。",
+      "isFinal": true
+    },
+    {
+      "atMs": 38882,
+      "source": "REMOTE",
+      "text": "結局、月いくら",
+      "isFinal": false
+    },
+    {
+      "atMs": 39764,
+      "source": "REMOTE",
+      "text": "結局、月いくらぐらいかかる",
+      "isFinal": false
+    },
+    {
+      "atMs": 40520,
+      "source": "REMOTE",
+      "text": "結局、月いくらぐらいかかるんですか？",
+      "isFinal": true
+    },
+    {
+      "atMs": 46489,
+      "source": "SELF",
+      "text": "そうです",
+      "isFinal": false
+    },
+    {
+      "atMs": 46979,
+      "source": "SELF",
+      "text": "そうですね、え",
+      "isFinal": false
+    },
+    {
+      "atMs": 47400,
+      "source": "SELF",
+      "text": "そうですね、えっと。",
+      "isFinal": true
+    },
+    {
+      "atMs": 52254,
+      "source": "REMOTE",
+      "text": "前の会社さんからは、いつでもやめられ",
+      "isFinal": false
+    },
+    {
+      "atMs": 54508,
+      "source": "REMOTE",
+      "text": "前の会社さんからは、いつでもやめられるって聞いたんですけど、途中でや",
+      "isFinal": false
+    },
+    {
+      "atMs": 56440,
+      "source": "REMOTE",
+      "text": "前の会社さんからは、いつでもやめられるって聞いたんですけど、途中でやめることもできますよね？",
+      "isFinal": true
+    },
+    {
+      "atMs": 61420,
+      "source": "SELF",
+      "text": "はい",
+      "isFinal": false
+    },
+    {
+      "atMs": 61840,
+      "source": "SELF",
+      "text": "はい。",
+      "isFinal": false
+    },
+    {
+      "atMs": 62200,
+      "source": "SELF",
+      "text": "はい。",
+      "isFinal": true
+    },
+    {
+      "atMs": 65372,
+      "source": "REMOTE",
+      "text": "あと、部長にも見せたい",
+      "isFinal": false
+    },
+    {
+      "atMs": 66744,
+      "source": "REMOTE",
+      "text": "あと、部長にも見せたいので、資料があればい",
+      "isFinal": false
+    },
+    {
+      "atMs": 67920,
+      "source": "REMOTE",
+      "text": "あと、部長にも見せたいので、資料があればいただけますか？",
+      "isFinal": true
+    },
+    {
+      "atMs": 73420,
+      "source": "SELF",
+      "text": "承知",
+      "isFinal": false
+    },
+    {
+      "atMs": 73840,
+      "source": "SELF",
+      "text": "承知しまし",
+      "isFinal": false
+    },
+    {
+      "atMs": 74200,
+      "source": "SELF",
+      "text": "承知しました。",
+      "isFinal": true
+    },
+    {
+      "atMs": 77539,
+      "source": "REMOTE",
+      "text": "一度社内",
+      "isFinal": false
+    },
+    {
+      "atMs": 78078,
+      "source": "REMOTE",
+      "text": "一度社内で検討し",
+      "isFinal": false
+    },
+    {
+      "atMs": 78540,
+      "source": "REMOTE",
+      "text": "一度社内で検討します。",
+      "isFinal": true
+    },
+    {
+      "atMs": 84686,
+      "source": "REMOTE",
+      "text": "はい、よろ",
+      "isFinal": false
+    },
+    {
+      "atMs": 85372,
+      "source": "REMOTE",
+      "text": "はい、よろしくお願い",
+      "isFinal": false
+    },
+    {
+      "atMs": 85960,
+      "source": "REMOTE",
+      "text": "はい、よろしくお願いします。",
+      "isFinal": true
+    }
+  ]
+}

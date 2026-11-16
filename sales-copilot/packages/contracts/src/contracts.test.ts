@@ -6,6 +6,9 @@ import {
   ApprovedFact,
   AudioFrameError,
   ClientMessage,
+  ConfigStatusResponse,
+  FactsListResponse,
+  OfflineScriptsResponse,
   PairingRequest,
   ServerMessage,
   SessionToken,
@@ -207,5 +210,49 @@ describe('ws messages', () => {
       budget: { level: 'ok', metrics: [] },
     };
     expect(ServerMessage.safeParse(usage).success).toBe(true);
+  });
+});
+
+describe('integration additions (session.ended / advice.displayed / audio.gap / offline script / HTTP)', () => {
+  it('session.ended carries exportPath (nullable) and reviewAvailableUntil', () => {
+    expect(ServerMessage.safeParse({ type: 'session.ended', sessionId: 's1', exportPath: null, reviewAvailableUntil: 10 }).success).toBe(true);
+    expect(ServerMessage.safeParse({ type: 'session.ended', sessionId: 's1', exportPath: '/x/a.json', reviewAvailableUntil: 10 }).success).toBe(true);
+    expect(ServerMessage.safeParse({ type: 'session.ended', sessionId: 's1', reviewAvailableUntil: 10 }).success).toBe(false);
+  });
+
+  it('advice.displayed and audio.gap are valid client messages; gap requires toMs >= fromMs', () => {
+    expect(ClientMessage.safeParse({ type: 'advice.displayed', adviceId: 'a1', at: 123 }).success).toBe(true);
+    expect(ClientMessage.safeParse({ type: 'advice.displayed', adviceId: 'a1' }).success).toBe(false);
+    const gap = { type: 'audio.gap', source: 'SELF', fromMs: 100, toMs: 300, reason: 'client_backpressure' };
+    expect(ClientMessage.safeParse(gap).success).toBe(true);
+    expect(ClientMessage.safeParse({ ...gap, toMs: 50 }).success).toBe(false);
+    expect(ClientMessage.safeParse({ ...gap, source: 'UNKNOWN' }).success).toBe(false);
+    expect(ClientMessage.safeParse({ ...gap, reason: 'whatever' }).success).toBe(false);
+  });
+
+  it('session.start accepts optional offlineScriptId (safe id) and offlineUseAnthropic', () => {
+    const base = { type: 'session.start', purpose: 'p', appliedFacts: [], mode: 'OFFLINE', selfCaptureEnabled: false, consentConfirmed: true };
+    expect(ClientMessage.safeParse({ ...base, offlineScriptId: 'demo-next-step', offlineUseAnthropic: true }).success).toBe(true);
+    expect(ClientMessage.safeParse({ ...base, offlineScriptId: '../etc/passwd' }).success).toBe(false);
+    expect(ClientMessage.safeParse({ ...base, offlineUseAnthropic: 'yes' }).success).toBe(false);
+  });
+
+  it('HTTP response schemas are strict and carry no secrets', () => {
+    const cfg = {
+      version: '0.1.0',
+      protocolVersion: 1,
+      stt: { configured: false, provider: 'deepgram', model: 'nova-3', language: 'ja' },
+      llm: { configured: false, provider: 'anthropic', model: 'm' },
+      modes: { LIVE: false, OFFLINE: true },
+      offlineAnthropicAvailable: false,
+      priceTable: { configured: false, currency: null, checkedDate: null },
+      retentionMs: 0,
+      budget: { maxSttSeconds: null, maxLlmCalls: null, maxLlmInputTokens: null, maxLlmOutputTokens: null, maxCost: null },
+    };
+    expect(ConfigStatusResponse.safeParse(cfg).success).toBe(true);
+    expect(ConfigStatusResponse.safeParse({ ...cfg, llm: { ...cfg.llm, apiKey: 'sk-ant-x' } }).success).toBe(false);
+    expect(FactsListResponse.safeParse({ facts: [] }).success).toBe(true);
+    expect(FactsListResponse.safeParse([]).success).toBe(false);
+    expect(OfflineScriptsResponse.safeParse({ scripts: [{ id: 'a-b', title: 't', description: 'd', durationMs: 1 }], defaultId: 'a-b' }).success).toBe(true);
   });
 });

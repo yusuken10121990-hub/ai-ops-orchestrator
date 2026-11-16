@@ -53,11 +53,18 @@ export interface ServerConfig {
     script: string | null;
     /** 再生速度倍率（1 = 実時間）。 */
     speed: number;
-    /** OFFLINE でも Claude を使う（明示 opt-in。キーがある場合のみ）。 */
+    /**
+     * OFFLINE で Claude を使うことを許可する（OFFLINE_USE_ANTHROPIC=1）。実際に使うのは、キーがあり、
+     * かつ本人がセッション開始時に offlineUseAnthropic=true を選んだときだけ。
+     */
     useAnthropic: boolean;
   };
   usageIntervalMs: number;
   logLevel: string;
+  /**
+   * 自動テスト専用の固定ペアリングコード。NODE_ENV=test のときだけ有効（それ以外で設定されていたら起動を拒否）。
+   */
+  pairingCodeForTest: string | null;
 }
 
 type Env = Record<string, string | undefined>;
@@ -87,6 +94,17 @@ function bool(env: Env, k: string, def: boolean): boolean {
   const v = str(env, k);
   if (v === null) return def;
   return v === '1' || v.toLowerCase() === 'true';
+}
+
+/** PAIRING_CODE_FOR_TEST は NODE_ENV=test のときだけ受け付ける。本番起動で使われないよう、それ以外は起動エラー。 */
+export function pairingCodeForTest(env: Env): string | null {
+  const v = str(env, 'PAIRING_CODE_FOR_TEST');
+  if (v === null) return null;
+  if (env.NODE_ENV !== 'test') {
+    throw new Error('PAIRING_CODE_FOR_TEST is only allowed when NODE_ENV=test (remove it from the environment / .env)');
+  }
+  if (!/^\d{6}$/.test(v)) throw new Error('PAIRING_CODE_FOR_TEST must be 6 digits');
+  return v;
 }
 
 export function loadConfig(env: Env = process.env): ServerConfig {
@@ -160,6 +178,7 @@ export function loadConfig(env: Env = process.env): ServerConfig {
     },
     usageIntervalMs: int(env, 'USAGE_INTERVAL_MS', 5000),
     logLevel: str(env, 'LOG_LEVEL') ?? 'info',
+    pairingCodeForTest: pairingCodeForTest(env),
   };
 }
 
@@ -192,7 +211,7 @@ export function providerStatus(cfg: ServerConfig): {
   stt: { configured: boolean; provider: 'deepgram'; model: string; language: string };
   llm: { configured: boolean; provider: 'anthropic'; model: string };
   modes: { LIVE: boolean; OFFLINE: boolean };
-  offlineAdvice: 'anthropic' | 'rule_based_offline';
+  offlineAnthropicAvailable: boolean;
   priceTable: { configured: boolean; currency: string | null; checkedDate: string | null };
 } {
   const stt = cfg.deepgram.apiKey !== null;
@@ -201,7 +220,7 @@ export function providerStatus(cfg: ServerConfig): {
     stt: { configured: stt, provider: 'deepgram', model: cfg.deepgram.model, language: cfg.deepgram.language },
     llm: { configured: llm, provider: 'anthropic', model: cfg.anthropic.model },
     modes: { LIVE: stt && llm, OFFLINE: true },
-    offlineAdvice: cfg.offline.useAnthropic && llm ? 'anthropic' : 'rule_based_offline',
+    offlineAnthropicAvailable: cfg.offline.useAnthropic && llm,
     priceTable: {
       configured: cfg.priceTable !== null,
       currency: cfg.priceTable?.currency ?? null,

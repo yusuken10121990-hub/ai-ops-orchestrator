@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "build": "vite build && vite build -c vite.worklet.config.ts && node scripts/check-dist.mjs",
-    "dev": "vite build --watch --mode development",
+    "dev": "node scripts/dev.mjs",
     "typecheck": "tsc -p tsconfig.json",
     "test:e2e": "node scripts/e2e-smoke.mjs"
   },

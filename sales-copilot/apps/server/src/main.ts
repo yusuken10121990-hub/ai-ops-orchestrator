@@ -1,20 +1,14 @@
 import path from 'node:path';
 import type { CaptureSource } from '@sales-copilot/contracts';
 import { AnthropicAdviceLlm, DeepgramStreamingRecognizer } from '@sales-copilot/providers';
-import { listReplayScripts, loadReplayScript } from '@sales-copilot/test-fixtures';
 import { buildApp, type AppHandle } from './app';
 import { coachingBinding } from './coaching-binding';
 import { assertBindAllowed, loadConfig, type ServerConfig } from './config';
 import { createLogger } from './logger';
-import type { ReplayScript } from './replay';
+import { listOfflineScripts, loadReplay } from './offline-scripts';
 import { Store } from './store';
 
-export function loadReplay(name: string | null): ReplayScript {
-  const names = listReplayScripts();
-  const pick = name ?? names[0];
-  if (!pick) throw new Error('no replay scripts available');
-  return loadReplayScript(pick);
-}
+export { loadReplay } from './offline-scripts';
 
 /**
  * 起動: 設定読込 → bind 先の検査 → アプリ構築 → listen → ペアリングコードを TTY にだけ表示。
@@ -47,7 +41,16 @@ export async function startServer(config: ServerConfig = loadConfig()): Promise<
         })
       : null;
 
-  const handle = await buildApp({ config, logger, store, coaching: coachingBinding, createLiveRecognizer, liveLlm, loadReplay });
+  const handle = await buildApp({
+    config,
+    logger,
+    store,
+    coaching: coachingBinding,
+    createLiveRecognizer,
+    liveLlm,
+    loadReplay,
+    listOfflineScripts,
+  });
   await handle.app.listen({ host: config.host, port: config.port });
   const addr = handle.app.server.address();
   const port = typeof addr === 'object' && addr ? addr.port : config.port;
@@ -57,8 +60,11 @@ export async function startServer(config: ServerConfig = loadConfig()): Promise<
     'server listening',
   );
 
-  const code = handle.auth.issuePairingCode();
-  if (process.stdout.isTTY) {
+  const code = handle.auth.issuePairingCode(config.pairingCodeForTest);
+  if (config.pairingCodeForTest) {
+    // 自動テスト（NODE_ENV=test）専用。コード自体はログに出さない
+    logger.warn('test pairing code is active (NODE_ENV=test only)');
+  } else if (process.stdout.isTTY) {
     // ログ（ファイル/パイプ）ではなく端末にだけ表示する
     process.stdout.write(
       `\n  ZEROSYS Sales Copilot  http://${config.host}:${port}\n  ペアリングコード: ${code}  （${Math.round(config.pairingCodeTtlMs / 60000)}分有効・1回限り）\n\n`,

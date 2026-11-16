@@ -1,20 +1,26 @@
 /**
  * ローカルサーバーの HTTP クライアント（薄く、ここだけに隔離）。
- * contracts にある形（PairingRequest/Response, ApprovedFact）は Zod で検証し、
- * 無い形（/config/status, /facts の作成・更新ボディ）は最小限の想定で送り、受信は緩く検証する。
+ * 要求・応答は全て @sales-copilot/contracts のスキーマで検証する（サーバーも同じスキーマで返す）。
+ * 形が違えば invalid_response（「確認できません」）として扱い、推測で埋めない。
  * トークンは AUTH_HEADER（Authorization: Bearer）でのみ送り、URL クエリには載せない。
  */
 import {
-  ApprovedFact,
   AUTH_HEADER,
   AUTH_SCHEME,
+  ConfigStatusResponse,
+  FactCreateRequest,
+  FactResponse,
+  FactsListResponse,
+  FactUpdateResponse,
+  OfflineScriptsResponse,
   PairingRequest,
   PairingResponse,
+  SessionReviewResponse,
+  type ApprovedFact,
   type FactCategory,
   type SessionToken,
 } from '@sales-copilot/contracts';
 import { z } from 'zod';
-import { ConfigStatusResponse, SessionReviewResponse } from './noncontract';
 
 export type ApiError =
   | { kind: 'network' } // 通信断・サーバー未起動
@@ -38,7 +44,13 @@ export class ApiClient {
     this.fetchImpl = opts.fetchImpl ?? ((...a) => fetch(...a));
   }
 
-  private async request<T>(method: string, path: string, schema: z.ZodType<T>, body?: unknown): Promise<ApiResult<T>> {
+  private async request<T>(
+    method: string,
+    path: string,
+    schema: z.ZodType<T>,
+    body?: unknown,
+    opts: { bodyOnError?: boolean } = {},
+  ): Promise<ApiResult<T>> {
     const headers: Record<string, string> = {};
     if (body !== undefined) headers['content-type'] = 'application/json';
     if (this.opts.token) headers[AUTH_HEADER] = `${AUTH_SCHEME} ${this.opts.token}`;
@@ -59,8 +71,10 @@ export class ApiClient {
     } finally {
       clearTimeout(timer);
     }
-    if (res.status === 401 || res.status === 403) return { ok: false, error: { kind: 'unauthorized' } };
-    if (res.status === 404) return { ok: false, error: { kind: 'not_found' } };
+    if (!opts.bodyOnError) {
+      if (res.status === 401 || res.status === 403) return { ok: false, error: { kind: 'unauthorized' } };
+      if (res.status === 404) return { ok: false, error: { kind: 'not_found' } };
+    }
     let json: unknown;
     try {
       json = await res.json();
@@ -80,32 +94,44 @@ export class ApiClient {
     return this.request('GET', '/config/status', ConfigStatusResponse);
   }
 
-  /** PairingResponse は ok:false も 4xx で返る可能性があるため、本文を優先して読む。 */
+  /**
+   * PairingResponse の ok:false（コード違い・期限切れ・使用済み・試行超過）は 401/403/409/429 で返るため、
+   * ステータスより本文を優先して読む（「認証できません」と一括りにしない）。
+   */
   async pair(req: PairingRequest): Promise<ApiResult<PairingResponse>> {
     const body = PairingRequest.parse(req);
-    return this.request('POST', '/pair', PairingResponse, body);
+    return this.request('POST', '/pair', PairingResponse, body, { bodyOnError: true });
   }
 
-  listFacts(): Promise<ApiResult<ApprovedFact[]>> {
-    return this.request('GET', '/facts', FactsList);
+  async listFacts(): Promise<ApiResult<ApprovedFact[]>> {
+    const r = await this.request('GET', '/facts', FactsListResponse);
+    return r.ok ? { ok: true, data: r.data.facts } : r;
   }
 
-  createFact(input: FactInput): Promise<ApiResult<ApprovedFact>> {
-    return this.request('POST', '/facts', FactOne, input);
+  async createFact(input: FactInput): Promise<ApiResult<ApprovedFact>> {
+    const r = await this.request('POST', '/facts', FactResponse, FactCreateRequest.parse(input));
+    return r.ok ? { ok: true, data: r.data.fact } : r;
   }
 
   /** 承認済みを編集すると旧承認は失効し、サーバー側で未確認・新バージョンになる（SPEC §13）。 */
-  updateFact(factId: string, input: FactInput): Promise<ApiResult<ApprovedFact>> {
-    return this.request('PATCH', `/facts/${encodeURIComponent(factId)}`, FactOne, input);
+  async updateFact(factId: string, input: FactInput): Promise<ApiResult<ApprovedFact>> {
+    const r = await this.request('PATCH', `/facts/${encodeURIComponent(factId)}`, FactUpdateResponse, input);
+    return r.ok ? { ok: true, data: r.data.fact } : r;
   }
 
-  /** 終了後の振り返り（出力先パスの確認に使う）。保持期限を過ぎると not_found。 */
+  /** 終了後の振り返り（session.ended を受け取れなかった場合の確認用）。保持期限を過ぎると not_found。 */
   sessionReview(sessionId: string): Promise<ApiResult<SessionReviewResponse>> {
     return this.request('GET', `/sessions/${encodeURIComponent(sessionId)}/review`, SessionReviewResponse);
   }
 
-  approveFact(factId: string, version: number): Promise<ApiResult<ApprovedFact>> {
-    return this.request('POST', `/facts/${encodeURIComponent(factId)}/approve`, FactOne, { version });
+  /** OFFLINE テストで選べる架空会話スクリプト。 */
+  offlineScripts(): Promise<ApiResult<OfflineScriptsResponse>> {
+    return this.request('GET', '/offline/scripts', OfflineScriptsResponse);
+  }
+
+  async approveFact(factId: string, version: number): Promise<ApiResult<ApprovedFact>> {
+    const r = await this.request('POST', `/facts/${encodeURIComponent(factId)}/approve`, FactResponse, { version });
+    return r.ok ? { ok: true, data: r.data.fact } : r;
   }
 }
 
@@ -115,10 +141,6 @@ export interface FactInput {
   scope: string;
   sourceNote: string;
 }
-
-/** 配列そのもの / { facts: [...] } のどちらでも受ける。 */
-const FactsList = z.union([z.array(ApprovedFact), z.object({ facts: z.array(ApprovedFact) }).transform((v) => v.facts)]);
-const FactOne = z.union([ApprovedFact, z.object({ fact: ApprovedFact }).transform((v) => v.fact)]);
 
 export function describeApiError(e: ApiError): string {
   switch (e.kind) {

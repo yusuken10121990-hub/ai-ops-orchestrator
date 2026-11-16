@@ -16,7 +16,7 @@ import {
   type StatusReason,
 } from '@sales-copilot/contracts';
 import { SourceFramer } from '../audio/framer';
-import { BackpressureSender, WS_OPEN, type SocketLike } from '../audio/sender';
+import { BackpressureSender, WS_OPEN, type AudioGap, type SocketLike } from '../audio/sender';
 import type {
   CaptureSourceKey,
   FromOffscreen,
@@ -26,7 +26,6 @@ import type {
   StopReason,
   WsState,
 } from '../shared/runtime-messages';
-import { SessionExportedMessage } from '../shared/noncontract';
 
 export const CLIENT_VERSION = '0.1.0';
 
@@ -324,6 +323,15 @@ export class CaptureController {
     if (s && s.readyState === WS_OPEN && this.wsState === 'open') s.send(JSON.stringify(msg));
   }
 
+  private sendGap(gap: AudioGap): void {
+    this.sendJson({ type: 'audio.gap', source: gap.source, fromMs: gap.fromMs, toMs: gap.toMs, reason: 'client_backpressure' });
+  }
+
+  /** 停止・終了の直前に、まだ閉じていない欠落区間を記録として送る。 */
+  private flushGaps(): void {
+    for (const g of this.sender?.flushOpenGaps() ?? []) this.sendGap(g);
+  }
+
   /** UI からのクライアントメッセージ（手動ボタン・固定・フィードバック等）。 */
   sendClient(msg: ClientMessage): void {
     if (msg.type === 'hello' || msg.type === 'session.start' || msg.type === 'session.end') return;
@@ -362,33 +370,17 @@ export class CaptureController {
   private onSocketMessage(data: unknown): void {
     if (typeof data !== 'string') return;
     const parsed = parseServerMessage(data);
-    if (!parsed.ok) {
-      // 契約外: 出力結果のみ受ける。それ以外は表示しない（途中文・不正データを描画しない）。
-      try {
-        const raw = SessionExportedMessage.safeParse(JSON.parse(data));
-        if (raw.success) {
-          const r = raw.data;
-          this.deps.emit({
-            target: 'ui',
-            type: 'export.result',
-            result: r.saved && r.path ? { saved: true, path: r.path } : { saved: false, reason: r.reason ?? '保存されていません' },
-          });
-          if (this.phase === 'ending') this.endResolve?.();
-        }
-      } catch {
-        /* ignore */
-      }
-      return;
-    }
+    // 契約外・不正なメッセージは表示しない（途中文・不正データを描画しない）
+    if (!parsed.ok) return;
     const m = parsed.message;
     if (m.type === 'hello.ack') this.settle('ack');
-    if (m.type === 'status') {
-      if (m.sessionId && !this.sessionId) {
-        this.sessionId = m.sessionId;
-        this.settle('session');
-      }
-      if (m.lifecycle === 'ended' && this.phase === 'ending') this.endResolve?.();
+    if (m.type === 'status' && m.sessionId && !this.sessionId) {
+      this.sessionId = m.sessionId;
+      this.settle('session');
     }
+    // 終了の確定は session.ended（出力の結果を含む）。status(ended) はその前に届くので、ここでは閉じない
+    // （resolve の継続はマイクロタスクなので、下の UI への転送が先に行われる）
+    if (m.type === 'session.ended' && this.phase === 'ending') this.endResolve?.();
     if (m.type === 'error' && m.code === 'unauthorized') {
       this.wsState = 'unauthorized';
       this.settle('all', new Error('unauthorized'));
@@ -446,13 +438,8 @@ export class CaptureController {
     if ((this.phase as Phase) !== 'connecting' || !this.sessionId) return;
     this.sender = new BackpressureSender(socket, config.maxBufferedBytes, (gap, phase) => {
       this.deps.emit({ target: 'ui', type: 'gap', gap, phase });
-      if (phase === 'start') {
-        const msg: ClientMessage =
-          gap.source === 'SELF'
-            ? { type: 'source.state', source: 'SELF', state: 'on', reason: 'backpressure_drop' }
-            : { type: 'source.state', source: 'REMOTE', state: 'ok', reason: 'backpressure_drop' };
-        this.sendJson(msg);
-      }
+      // 欠落区間が閉じたら（＝区間が確定したら）サーバーへ記録を送る。破棄した音声は再送しない。
+      if (phase === 'end') this.sendGap(gap);
     });
     this.sessionStartAt = this.deps.now();
     this.framers = {
@@ -502,6 +489,7 @@ export class CaptureController {
       await this.stop('user_end');
       return;
     }
+    this.flushGaps();
     this.sendJson({ type: 'session.end', exportRequested });
     this.phase = 'ending';
     this.stopCapture();
@@ -524,7 +512,10 @@ export class CaptureController {
   async stop(reason: StopReason): Promise<void> {
     if (this.phase === 'stopped') return;
     const wasLive = this.phase === 'live' || this.phase === 'connecting';
-    if (wasLive && this.wsState === 'open') this.sendJson({ type: 'session.end', exportRequested: false });
+    if (wasLive && this.wsState === 'open') {
+      this.flushGaps();
+      this.sendJson({ type: 'session.end', exportRequested: false });
+    }
     this.stopReason = reason;
     this.stopCapture();
     this.settle('all', new Error('stopped'));

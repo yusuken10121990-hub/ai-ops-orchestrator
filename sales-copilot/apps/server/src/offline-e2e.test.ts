@@ -1,12 +1,12 @@
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { afterEach, describe, expect, it } from 'vitest';
 import WebSocket from 'ws';
-import { AdviceCard, parseServerMessage, type ServerMessage } from '@sales-copilot/contracts';
+import { AdviceCard, OfflineScriptsResponse, parseServerMessage, SessionReviewResponse, type ServerMessage } from '@sales-copilot/contracts';
 import { loadReplayScript } from '@sales-copilot/test-fixtures';
 import { buildApp, type AppHandle } from './app';
 import { coachingBinding } from './coaching-binding';
 import type { ServerConfig } from './config';
-import { loadReplay } from './main';
+import { listOfflineScripts, loadReplay } from './offline-scripts';
 import { Store } from './store';
 import {
   audioFrame,
@@ -37,7 +37,7 @@ async function setup(cfg: Partial<ServerConfig>, liveLlm: CountingLlm | null) {
   const { logger, capture } = testLogger('debug');
   const store = new Store(':memory:');
   const config = testConfig(cfg);
-  const h = await buildApp({ config, logger, store, coaching: coachingBinding, createLiveRecognizer: () => null, liveLlm, loadReplay });
+  const h = await buildApp({ config, logger, store, coaching: coachingBinding, createLiveRecognizer: () => null, liveLlm, loadReplay, listOfflineScripts });
   handles.push(h);
   await h.app.listen({ host: '127.0.0.1', port: 0 });
   const addr = h.app.server.address();
@@ -111,7 +111,7 @@ describe('OFFLINE session end-to-end over WebSocket', () => {
       { offline: { script: 'demo-next-step', speed: 30, useAnthropic: true }, anthropic: { ...testConfig().anthropic, apiKey: FAKE_ANTHROPIC_KEY } },
       llm,
     );
-    startOffline(client);
+    startOffline(client, { offlineUseAnthropic: true });
     await waitFor(() => client.of('advice.card').length > 0 && llm.calls > 0, 8000);
     expect(client.of('status').some((s) => s.externalSending)).toBe(true);
     const sid = client.of('status').at(-1)!.sessionId!;
@@ -154,7 +154,7 @@ describe('OFFLINE session end-to-end over WebSocket', () => {
       { offline: { script: 'decline-respect', speed: 20, useAnthropic: true }, anthropic: { ...testConfig().anthropic, apiKey: FAKE_ANTHROPIC_KEY } },
       llm,
     );
-    startOffline(client);
+    startOffline(client, { offlineUseAnthropic: true });
     await waitFor(() => client.of('transcript.segment').length > 0, 5000);
     client.ws.close();
     await waitFor(() => h.reviews.size === 1, 3000);
@@ -169,7 +169,15 @@ describe('OFFLINE session end-to-end over WebSocket', () => {
     await waitFor(() => client.of('transcript.segment').filter((s) => s.isFinal).length >= 3, 6000);
     const sid = client.of('status').at(-1)!.sessionId!;
     client.send({ type: 'session.end', exportRequested: true });
-    await waitFor(() => client.of('status').at(-1)?.lifecycle === 'ended');
+    await waitFor(() => client.of('session.ended').length === 1);
+    const ended = client.of('session.ended')[0]!;
+    expect(ended.sessionId).toBe(sid);
+    expect(ended.exportPath).toMatch(/\.json$/);
+    expect(ended.reviewAvailableUntil).toBeGreaterThan(Date.now());
+    // session.ended は終了処理の最後（status ended の後）に届く
+    expect(client.msgs.findIndex((m) => m.type === 'session.ended')).toBeGreaterThan(
+      client.msgs.findIndex((m) => m.type === 'status' && m.lifecycle === 'ended'),
+    );
     const files = readdirSync(config.exportDir);
     expect(files.filter((f) => f.endsWith('.json'))).toHaveLength(1);
     expect(files.filter((f) => f.endsWith('.md'))).toHaveLength(1);
@@ -177,7 +185,8 @@ describe('OFFLINE session end-to-end over WebSocket', () => {
     expect(md).toContain('機密情報を含む可能性');
     const review = await fetch(`http://127.0.0.1:${port}/sessions/${sid}/review`, { headers: { origin: ORIGIN, authorization: `Bearer ${token}` } });
     expect(review.status).toBe(200);
-    expect(((await review.json()) as { exportPath: string }).exportPath).toMatch(/\.json$/);
+    const body = SessionReviewResponse.parse(await review.json());
+    expect(body.exportPath).toBe(ended.exportPath);
   });
 
   it('no export → nothing written', async () => {
@@ -185,8 +194,92 @@ describe('OFFLINE session end-to-end over WebSocket', () => {
     startOffline(client);
     await waitFor(() => client.of('transcript.segment').length > 0, 5000);
     client.send({ type: 'session.end', exportRequested: false });
-    await waitFor(() => client.of('status').at(-1)?.lifecycle === 'ended');
+    await waitFor(() => client.of('session.ended').length === 1);
+    expect(client.of('session.ended')[0]!.exportPath).toBeNull();
     expect(existsSync(config.exportDir)).toBe(false);
+  });
+
+  it('GET /offline/scripts lists scripts (no transcript text); offlineScriptId picks the script; unknown id is rejected', async () => {
+    const { client, port, token, h } = await setup({ offline: { script: 'decline-respect', speed: 40, useAnthropic: false } }, null);
+    const res = await fetch(`http://127.0.0.1:${port}/offline/scripts`, { headers: { origin: ORIGIN, authorization: `Bearer ${token}` } });
+    expect(res.status).toBe(200);
+    const list = OfflineScriptsResponse.parse(await res.json());
+    expect(list.scripts.map((s) => s.id)).toEqual(['decline-respect', 'demo-next-step', 'price-and-cancellation']);
+    expect(list.defaultId).toBe('decline-respect');
+    const firstLine = loadReplayScript('demo-next-step').lines.find((l) => l.isFinal)!.text;
+    expect(JSON.stringify(list)).not.toContain(firstLine);
+    const noAuth = await fetch(`http://127.0.0.1:${port}/offline/scripts`, { headers: { origin: ORIGIN } });
+    expect(noAuth.status).toBe(401);
+
+    startOffline(client, { offlineScriptId: 'no-such-script' });
+    await waitFor(() => client.of('error').length > 0);
+    expect(client.of('error')[0]).toMatchObject({ code: 'invalid_message' });
+    expect(client.of('status')).toEqual([]);
+
+    startOffline(client, { offlineScriptId: 'demo-next-step' });
+    await waitFor(() => client.of('transcript.segment').some((s) => s.isFinal), 5000);
+    expect(client.of('transcript.segment').find((s) => s.isFinal)!.text).toBe(firstLine);
+    expect(h.runtimes.size).toBe(1);
+  });
+
+  it('offlineUseAnthropic is ignored unless the server allows it (env) and has a key; LIVE rejects offline-only fields', async () => {
+    const llm = new CountingLlm();
+    const { client } = await setup(
+      { offline: { script: 'demo-next-step', speed: 40, useAnthropic: false }, anthropic: { ...testConfig().anthropic, apiKey: FAKE_ANTHROPIC_KEY } },
+      llm,
+    );
+    client.send({
+      type: 'session.start',
+      purpose: 'x',
+      appliedFacts: [],
+      mode: 'LIVE',
+      selfCaptureEnabled: false,
+      consentConfirmed: true,
+      offlineScriptId: 'demo-next-step',
+    });
+    await waitFor(() => client.of('error').length > 0);
+    expect(client.of('error')[0]).toMatchObject({ code: 'invalid_message' });
+
+    startOffline(client, { offlineUseAnthropic: true });
+    await waitFor(() => client.of('advice.card').length > 0, 8000);
+    expect(llm.calls).toBe(0); // env が許可していないので外部 LLM は使わない
+    expect(client.of('status').every((s) => !s.externalSending)).toBe(true);
+    expect(client.of('advice.card')[0]!.card.briefReason).toContain('[OFFLINE規則]');
+  });
+
+  it('OFFLINE ignores the real mic speaking state (cards are not held back by the user talking during a replay)', async () => {
+    const { client } = await setup({ offline: { script: 'demo-next-step', speed: 40, useAnthropic: false } }, null);
+    startOffline(client);
+    await waitFor(() => client.of('status').length > 0);
+    client.send({ type: 'speaking.state', source: 'SELF', speaking: true, atMs: 0 });
+    await waitFor(() => client.of('advice.card').some((c) => c.card.action === 'show'), 8000);
+  });
+
+  it('advice.displayed records the display step (server clock); audio.gap is recorded in the review', async () => {
+    const { client, port, token } = await setup({ offline: { script: 'demo-next-step', speed: 40, useAnthropic: false } }, null);
+    startOffline(client);
+    await waitFor(() => client.of('advice.card').length > 0, 8000);
+    const sid = client.of('status').at(-1)!.sessionId!;
+    const card = client.of('advice.card')[0]!.card;
+    client.send({ type: 'advice.displayed', adviceId: card.adviceId, at: Date.now() });
+    client.send({ type: 'advice.displayed', adviceId: card.adviceId, at: Date.now() }); // 重複は数えない
+    client.send({ type: 'advice.displayed', adviceId: 'adv_unknown', at: Date.now() });
+    client.send({ type: 'audio.gap', source: 'SELF', fromMs: 1000, toMs: 1600, reason: 'client_backpressure' });
+    client.send({ type: 'audio.gap', source: 'SELF', fromMs: 2000, toMs: 1000, reason: 'client_backpressure' }); // 不正
+    await waitFor(() => client.of('error').length > 0);
+    expect(client.of('error').at(-1)).toMatchObject({ code: 'invalid_message' });
+    const live = await fetch(`http://127.0.0.1:${port}/sessions/active/latency`, { headers: { origin: ORIGIN, authorization: `Bearer ${token}` } });
+    const stats = ((await live.json()) as { sessions: Array<{ latency: { counts: { displayAcked: number }; sentToDisplayedMs: { n: number } } }> })
+      .sessions[0]!.latency;
+    expect(stats.counts.displayAcked).toBe(1);
+    expect(stats.sentToDisplayedMs.n).toBe(1);
+    client.send({ type: 'session.end', exportRequested: false });
+    await waitFor(() => client.of('session.ended').length === 1);
+    const review = SessionReviewResponse.parse(
+      await (await fetch(`http://127.0.0.1:${port}/sessions/${sid}/review`, { headers: { origin: ORIGIN, authorization: `Bearer ${token}` } })).json(),
+    );
+    expect(review.audioGaps).toEqual([{ source: 'SELF', fromMs: 1000, toMs: 1600, droppedMs: 600, origin: 'client', reason: 'client_backpressure' }]);
+    expect(review.latency.counts.displayAcked).toBe(1);
   });
 });
 
@@ -201,7 +294,7 @@ describe('log leak check (§16-1 #15)', () => {
       },
       llm,
     );
-    startOffline(client);
+    startOffline(client, { offlineUseAnthropic: true });
     await waitFor(() => client.of('advice.card').length > 0, 8000);
     // 異常系のログも出させる
     client.send({ type: 'card.pin', adviceId: 'nope' });

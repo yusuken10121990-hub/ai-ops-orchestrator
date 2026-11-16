@@ -8,8 +8,9 @@ coverage/
 *.sqlite3
 *.db
 *.db-journal
-data/
-exports/
+# 実行時データ（ワークスペース直下のみ。packages/test-fixtures/data の架空会話は管理対象）
+/data/
+/exports/
 *.log
 .DS_Store
 *.tsbuildinfo

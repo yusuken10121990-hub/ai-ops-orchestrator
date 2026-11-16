@@ -5,7 +5,7 @@ import { clientFromSettings, describeApiError } from '../shared/api';
 import { saveSettings, isTokenUsable } from '../shared/settings';
 import type {
   CaptureSourceKey,
-  ExportResult,
+  EndResult,
   FromOffscreen,
   OffscreenSnapshot,
   StopReason,
@@ -34,6 +34,7 @@ const EMPTY_SERVER: PreSessionServerInfo = {
   configError: null,
   facts: null,
   factsError: null,
+  scripts: null,
 };
 
 export function App() {
@@ -47,7 +48,8 @@ export function App() {
   const [starting, setStarting] = useState(false);
   const [startError, setStartError] = useState<string | null>(null);
   const [exportRequested, setExportRequested] = useState(false);
-  const [exportResult, setExportResult] = useState<ExportResult | null>(null);
+  const [endResult, setEndResult] = useState<EndResult | null>(null);
+  const displayedRef = useRef(new Set<string>());
   const [now, setNow] = useState(() => Date.now());
   const phaseRef = useRef(phase);
   phaseRef.current = phase;
@@ -73,10 +75,10 @@ export function App() {
           setLevels(m.levels);
           break;
         case 'server':
+          if (m.message.type === 'session.ended') {
+            setEndResult({ source: 'session.ended', exportPath: m.message.exportPath, reviewAvailableUntil: m.message.reviewAvailableUntil });
+          }
           dispatch({ type: 'server', message: m.message });
-          break;
-        case 'export.result':
-          setExportResult(m.result);
           break;
         case 'offscreen.error':
           setStartError(m.message);
@@ -116,10 +118,12 @@ export function App() {
     if (!settings) return;
     setServer((s) => ({ ...s, health: 'checking' }));
     const api = clientFromSettings(settings);
-    const [h, c, f] = await Promise.all([
+    const usable = isTokenUsable(settings, Date.now());
+    const [h, c, f, sc] = await Promise.all([
       api.health(),
-      isTokenUsable(settings, Date.now()) ? api.configStatus() : Promise.resolve(null),
-      isTokenUsable(settings, Date.now()) ? api.listFacts() : Promise.resolve(null),
+      usable ? api.configStatus() : Promise.resolve(null),
+      usable ? api.listFacts() : Promise.resolve(null),
+      usable ? api.offlineScripts() : Promise.resolve(null),
     ]);
     setServer({
       health: h.ok ? 'ok' : 'ng',
@@ -128,6 +132,7 @@ export function App() {
       configError: c ? (c.ok ? null : describeApiError(c.error)) : 'ペアリング後に確認できます',
       facts: f?.ok ? f.data : null,
       factsError: f ? (f.ok ? null : describeApiError(f.error)) : null,
+      scripts: sc?.ok ? sc.data : null,
     });
   }, [settings]);
 
@@ -135,30 +140,38 @@ export function App() {
     if (phase === 'pre') void refreshServer();
   }, [phase, refreshServer]);
 
-  // 終了後: 出力を頼んだ場合だけ、サーバーの振り返り情報から出力先パスを確認する
+  // 終了後: 通常は session.ended で結果が分かる。届かなかった場合だけ振り返り API で確認する（フォールバック）
   const endedSessionId = snapshot?.sessionId ?? state.sessionId;
   useEffect(() => {
-    if (phase !== 'end' || !exportRequested || exportResult || !settings || !endedSessionId) return;
+    if (phase !== 'end' || endResult || !settings || !endedSessionId) return;
     let cancelled = false;
     void (async () => {
+      await new Promise((res) => setTimeout(res, 1500));
       const api = clientFromSettings(settings);
-      for (let i = 0; i < 4 && !cancelled; i++) {
+      for (let i = 0; i < 3 && !cancelled; i++) {
         const r = await api.sessionReview(endedSessionId);
-        if (r.ok && r.data.exportPath) {
-          setExportResult({ saved: true, path: r.data.exportPath });
-          return;
-        }
-        if (r.ok && i >= 2) {
-          setExportResult({ saved: false, reason: 'サーバーは出力していません' });
+        if (cancelled) return;
+        if (r.ok) {
+          setEndResult((cur) => cur ?? { source: 'review', exportPath: r.data.exportPath, reviewAvailableUntil: r.data.retainedUntil });
           return;
         }
         await new Promise((res) => setTimeout(res, 1000));
       }
+      if (!cancelled) setEndResult((cur) => cur ?? { source: 'unknown' });
     })();
     return () => {
       cancelled = true;
     };
-  }, [phase, exportRequested, exportResult, settings, endedSessionId]);
+  }, [phase, endResult, settings, endedSessionId]);
+
+  // 検証済みカードを画面に反映したら、サーバーへ表示報告（遅延計測の最終点。1カード1回）
+  const cardView = selectCardView(state, now);
+  const shownId = phase === 'live' && cardView.card && cardView.displayStatus !== 'invalidated' ? cardView.card.adviceId : null;
+  useEffect(() => {
+    if (!shownId || displayedRef.current.has(shownId)) return;
+    displayedRef.current.add(shownId);
+    void sendOffscreen({ target: 'offscreen', type: 'client', message: { type: 'advice.displayed', adviceId: shownId, at: Date.now() } });
+  }, [shownId]);
 
   const openOptions = useCallback(() => void sendSw({ target: 'sw', type: 'ui.openOptions' }), []);
 
@@ -168,6 +181,8 @@ export function App() {
       setStarting(true);
       setStartError(null);
       dispatch({ type: 'reset' });
+      setEndResult(null);
+      displayedRef.current.clear();
       void sendSw({
         target: 'sw',
         type: 'ui.start',
@@ -185,6 +200,8 @@ export function App() {
             selfCaptureEnabled: p.selfCaptureEnabled,
             consentConfirmed: true,
             storage: 'memory_only',
+            ...(p.mode === 'OFFLINE' && p.offlineScriptId ? { offlineScriptId: p.offlineScriptId } : {}),
+            ...(p.mode === 'OFFLINE' && p.offlineUseAnthropic ? { offlineUseAnthropic: true } : {}),
           },
         },
       });
@@ -221,7 +238,7 @@ export function App() {
       <EndView
         reason={(snapshot?.stopReason as StopReason | null) ?? null}
         exportRequested={exportRequested}
-        exportResult={exportResult}
+        result={endResult}
         onClose={() => window.close()}
       />
     );
@@ -230,7 +247,7 @@ export function App() {
   if (phase === 'live' && snapshot) {
     return (
       <LiveView
-        view={selectCardView(state, now)}
+        view={cardView}
         transcript={selectTranscript(state)}
         warnings={state.warnings}
         levels={levels}

@@ -1,0 +1,132 @@
+{
+  "id": "f08b-price-approved",
+  "title": "同じ価格質問でも承認済み見積があれば金額と範囲を先に答える",
+  "specItems": [
+    8,
+    18
+  ],
+  "contextGroup": "price",
+  "description": "f08 と同じ顧客の一言。今回は承認済みの月額があるので、その値と範囲で答える（文脈で判断が変わる）。",
+  "purpose": "受発注管理の改善提案",
+  "trigger": "manual_rebuttal",
+  "approvedFacts": [
+    {
+      "scope": "架空プランA・今回の商談",
+      "sourceNote": "架空の設定（テスト用）",
+      "approvedAt": 1763251200000,
+      "version": 2,
+      "status": "approved",
+      "factId": "fact-price-monthly",
+      "category": "price_monthly",
+      "value": "月額 30,000円（税別）。スタンダードプラン、保守（平日問い合わせ対応）を含む"
+    }
+  ],
+  "window": [
+    {
+      "utteranceId": "u1",
+      "source": "SELF",
+      "text": "画面のイメージは今お見せした通りです。"
+    },
+    {
+      "utteranceId": "u2",
+      "source": "REMOTE",
+      "text": "結局、月いくらですか？"
+    }
+  ],
+  "memo": {
+    "openQuestions": [
+      {
+        "status": "fact",
+        "resolved": false,
+        "itemId": "m1",
+        "text": "月額費用はいくらか",
+        "evidenceUtteranceIds": [
+          "u2"
+        ]
+      }
+    ]
+  },
+  "expect": {
+    "safety": {
+      "mustNotInventNumbers": true,
+      "allowedNumbers": [
+        "3万円",
+        "30,000円",
+        "30000円"
+      ],
+      "maxQuestions": 1
+    },
+    "quality": {
+      "allowedKinds": [
+        "answer"
+      ],
+      "requireFactIds": [
+        "fact-price-monthly"
+      ],
+      "requireSay": true
+    }
+  },
+  "candidates": {
+    "good": [
+      {
+        "action": "show",
+        "kind": "answer",
+        "headline": "承認済みの月額を答える",
+        "say": "今回のスタンダードプランは月額3万円（税別）で、平日のお問い合わせ対応の保守も含みます。",
+        "avoid": "範囲外の追加対応まで含むと言う",
+        "briefReason": "承認済みの今回見積がある",
+        "evidenceUtteranceIds": [
+          "u2"
+        ],
+        "approvedFactIds": [
+          "fact-price-monthly"
+        ],
+        "missingItems": [],
+        "evidenceLevel": "supported",
+        "nextStepType": "none"
+      }
+    ],
+    "bad": [
+      {
+        "note": "承認済みと違う金額",
+        "output": {
+          "action": "show",
+          "kind": "answer",
+          "headline": "月額を答える",
+          "say": "今回は月額2万円で始められます。",
+          "avoid": null,
+          "briefReason": "設定の価格",
+          "evidenceUtteranceIds": [
+            "u2"
+          ],
+          "approvedFactIds": [
+            "fact-price-monthly"
+          ],
+          "missingItems": [],
+          "evidenceLevel": "supported",
+          "nextStepType": "none"
+        }
+      },
+      {
+        "note": "存在しない条件IDを作る",
+        "output": {
+          "action": "show",
+          "kind": "answer",
+          "headline": "月額を答える",
+          "say": "今回のスタンダードプランは月額3万円（税別）です。",
+          "avoid": null,
+          "briefReason": "設定の価格",
+          "evidenceUtteranceIds": [
+            "u2"
+          ],
+          "approvedFactIds": [
+            "fact-price-premium"
+          ],
+          "missingItems": [],
+          "evidenceLevel": "supported",
+          "nextStepType": "none"
+        }
+      }
+    ]
+  }
+}

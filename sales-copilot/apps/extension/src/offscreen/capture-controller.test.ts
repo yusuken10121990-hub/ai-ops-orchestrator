@@ -354,14 +354,58 @@ describe('CaptureController', () => {
     expect(env.emitted.filter((m) => m.type === 'server').length).toBe(n);
   });
 
-  it('終了時の出力結果（契約外メッセージ）を UI に渡してから閉じる', async () => {
+  it('終了は session.ended を待ち、出力結果を UI に渡してから閉じる（status ended だけでは閉じない）', async () => {
     const env = setup();
     const ws = await startLive(env);
     const p = env.ctl.end(true);
     expect(ws.sentJson.at(-1)).toMatchObject({ type: 'session.end', exportRequested: true });
-    ws.serverSend({ type: 'session.exported', saved: true, path: 'C:/exports/a.md' });
+    const now = Date.now();
+    const idle = { state: 'idle', reason: 'session_ended', since: now };
+    ws.serverSend({
+      type: 'status',
+      sessionId: 'sess-1',
+      lifecycle: 'ended',
+      mode: 'LIVE',
+      externalSending: false,
+      storage: 'memory_only',
+      pipelines: { capture: { SELF: idle, REMOTE: idle }, stt: idle, advice: idle },
+      at: now,
+    });
+    await flush();
+    expect(ws.closed).toBe(false);
+    const ended = { type: 'session.ended', sessionId: 'sess-1', exportPath: 'C:/exports/a.json', reviewAvailableUntil: now + 600_000 };
+    ws.serverSend(ended);
     await p;
-    expect(env.emitted).toContainEqual({ target: 'ui', type: 'export.result', result: { saved: true, path: 'C:/exports/a.md' } });
+    expect(env.emitted).toContainEqual({ target: 'ui', type: 'server', message: ended });
     expect(ws.closed).toBe(true);
+  });
+
+  it('契約外の旧メッセージ（session.exported）は無視する', async () => {
+    const env = setup();
+    const ws = await startLive(env);
+    const n = env.emitted.length;
+    ws.serverSend({ type: 'session.exported', saved: true, path: 'C:/x' });
+    expect(env.emitted.slice(n).filter((m) => m.type === 'server')).toEqual([]);
+  });
+
+  it('送信待ちあふれの欠落区間は audio.gap で送り（source.state の流用はしない）、終了時に未確定の区間も送る', async () => {
+    const env = setup();
+    const ws = await startLive(env);
+    const before = ws.sentJson.length;
+    ws.bufferedAmount = 10 * 1024 * 1024;
+    env.graph.remote[0]!.onPcm(new Int16Array(3200), -20); // 200ms 分 → 破棄
+    ws.bufferedAmount = 0;
+    env.graph.remote[0]!.onPcm(new Int16Array(3200), -20); // 復旧 → 区間確定
+    const gaps = ws.sentJson.slice(before).filter((m) => m.type === 'audio.gap');
+    expect(gaps).toHaveLength(1);
+    expect(gaps[0]).toMatchObject({ source: 'REMOTE', reason: 'client_backpressure' });
+    expect((gaps[0]!.toMs as number) - (gaps[0]!.fromMs as number)).toBeGreaterThan(0);
+    expect(ws.sentJson.some((m) => m.type === 'source.state' && m.reason === 'backpressure_drop')).toBe(false);
+    ws.bufferedAmount = 10 * 1024 * 1024;
+    env.graph.remote[0]!.onPcm(new Int16Array(3200), -20); // 再び破棄（未確定のまま終了）
+    void env.ctl.end(false);
+    const after = ws.sentJson.filter((m) => m.type === 'audio.gap');
+    expect(after).toHaveLength(2);
+    expect(ws.sentJson.findIndex((m) => m === after[1])).toBeLessThan(ws.sentJson.findIndex((m) => m.type === 'session.end'));
   });
 });

@@ -179,10 +179,36 @@ export class SessionRuntime {
         return this.feedback(msg.adviceId, msg.rating);
       case 'speaking.state':
         if (!this.requireSession()) return;
-        if (msg.source === 'SELF') this.process(this.scheduler!.setSelfSpeaking(msg.speaking));
+        // OFFLINE は再生スクリプトが会話なので、実マイクの発話状態でカード更新を保留しない（LIVE のみ反映）
+        if (msg.source === 'SELF' && this.mode === 'LIVE') this.process(this.scheduler!.setSelfSpeaking(msg.speaking));
         return;
       case 'source.state':
         return this.sourceState(msg);
+      case 'advice.displayed':
+        // 表示報告はサーバーの受信時刻で計測する（クライアント時計 msg.at は混ぜない）
+        if (this.sessionId && !this.ended) this.latency.displayed(msg.adviceId, this.now());
+        return;
+      case 'audio.gap':
+        return this.clientGap(msg);
+    }
+  }
+
+  /** 拡張側で破棄した音声区間（SPEC §6-3）。記録して状態を「遅延」にする。再送は求めない。 */
+  private clientGap(msg: Extract<ClientMessage, { type: 'audio.gap' }>): void {
+    if (!this.requireSession()) return;
+    this.audioGaps.push({
+      source: msg.source,
+      fromMs: msg.fromMs,
+      toMs: msg.toMs,
+      droppedMs: msg.toMs - msg.fromMs,
+      origin: 'client',
+      reason: msg.reason,
+    });
+    if (this.audioGaps.length > 500) this.audioGaps.shift();
+    this.log.info({ sessionId: this.sessionId, source: msg.source, droppedMs: Math.round(msg.toMs - msg.fromMs), reason: msg.reason }, 'client audio gap');
+    if (this.isActive && this.pipes[msg.source].state !== 'idle') {
+      this.setPipe(msg.source, 'delayed', 'backpressure_drop');
+      this.sendStatus();
     }
   }
 
@@ -250,6 +276,18 @@ export class SessionRuntime {
   private start(msg: SessionStartMessage): void {
     if (this.sessionId && !this.ended) return this.error('invalid_state', 'session already started', true);
     if (this.ended) return this.error('invalid_state', 'session ended; open a new connection to start again', false);
+    if (msg.mode === 'LIVE' && (msg.offlineScriptId !== undefined || msg.offlineUseAnthropic !== undefined)) {
+      return this.error('invalid_message', 'offlineScriptId / offlineUseAnthropic are only valid in OFFLINE mode', true);
+    }
+    let script: ReplayScript | null = null;
+    if (msg.mode === 'OFFLINE') {
+      try {
+        script = this.d.loadReplay(msg.offlineScriptId ?? this.d.config.offline.script);
+      } catch (e) {
+        this.log.warn({ err: e }, 'replay load failed');
+        return this.error('invalid_message', 'OFFLINE replay script not found', true);
+      }
+    }
     const sessionId = `ses_${randomUUID()}`;
     const resolved = this.d.store.resolveAppliedFacts(sessionId, msg.appliedFacts);
     if (!resolved.ok) {
@@ -285,7 +323,7 @@ export class SessionRuntime {
     this.latency = new LatencyTracker();
 
     // 助言エンジンの選択（LIVE は実 LLM のみ。OFFLINE は opt-in 時だけ実 LLM、それ以外はルールベースと明示）
-    const llm = this.selectLlm(msg.mode);
+    const llm = this.selectLlm(msg.mode, msg.offlineUseAnthropic === true);
     this.engine = llm ? this.d.coaching.createEngine(llm, { maxRetries: cfg.advice.maxRetries, timeoutMs: cfg.advice.timeoutMs }) : null;
     this.scheduler = new AdviceScheduler({
       sessionId,
@@ -318,7 +356,14 @@ export class SessionRuntime {
     }
 
     this.log.info(
-      { sessionId, mode: msg.mode, appliedFacts: resolved.facts.length, advice: this.adviceLabel ?? 'not_configured', stt: this.pipes.stt.state },
+      {
+        sessionId,
+        mode: msg.mode,
+        appliedFacts: resolved.facts.length,
+        advice: this.adviceLabel ?? 'not_configured',
+        stt: this.pipes.stt.state,
+        offlineScript: script?.name ?? null,
+      },
       'session started',
     );
     this.sendStatus();
@@ -331,10 +376,13 @@ export class SessionRuntime {
 
     this.tickTimer = setInterval(() => this.tick(), 250);
     this.usageTimer = setInterval(() => this.sendUsage(), Math.max(500, cfg.usageIntervalMs));
-    if (msg.mode === 'OFFLINE') this.startReplay();
+    if (script) this.startReplay(script);
   }
 
-  private selectLlm(mode: SessionMode): AdviceLlm | null {
+  /**
+   * OFFLINE で実 LLM を使うのは「本人が開始時に希望」かつ「環境変数で許可」かつ「キーあり」の全てを満たすときだけ。
+   */
+  private selectLlm(mode: SessionMode, offlineAnthropicRequested: boolean): AdviceLlm | null {
     const live = this.d.liveLlm;
     if (mode === 'LIVE') {
       if (!live) return null;
@@ -342,7 +390,7 @@ export class SessionRuntime {
       this.adviceLabel = `anthropic:${this.d.config.anthropic.model}`;
       return live;
     }
-    if (this.d.config.offline.useAnthropic && live) {
+    if (offlineAnthropicRequested && this.d.config.offline.useAnthropic && live) {
       this.llmExternal = true;
       this.adviceLabel = `anthropic:${this.d.config.anthropic.model} (OFFLINE opt-in)`;
       return live;
@@ -433,6 +481,8 @@ export class SessionRuntime {
       clear,
     });
     if (this.d.config.retentionMs <= 0) clear();
+    // 終了処理（任意の出力）が全て済んだ後に、確定通知を1回だけ送る
+    this.d.send({ type: 'session.ended', sessionId: this.sessionId!, exportPath, reviewAvailableUntil: retainedUntil });
   }
 
   /** STT 接続・生成要求・待機・タイマーを止める（pause/end 共通）。 */
@@ -488,7 +538,7 @@ export class SessionRuntime {
         });
         return;
       case 'audio_dropped': {
-        this.audioGaps.push({ source, fromMs: ev.fromMs, toMs: ev.toMs, droppedMs: ev.droppedMs });
+        this.audioGaps.push({ source, fromMs: ev.fromMs, toMs: ev.toMs, droppedMs: ev.droppedMs, origin: 'server', reason: `server_${ev.reason}` });
         if (this.audioGaps.length > 500) this.audioGaps.shift();
         if (ev.reason === 'stopped') return;
         this.setPipe(source, 'delayed', 'backpressure_drop');
@@ -617,14 +667,7 @@ export class SessionRuntime {
     );
   }
 
-  private startReplay(): void {
-    let script: ReplayScript;
-    try {
-      script = this.d.loadReplay(this.d.config.offline.script);
-    } catch (e) {
-      this.log.warn({ err: e }, 'replay load failed');
-      return this.error('internal_error', 'OFFLINE replay script could not be loaded', false);
-    }
+  private startReplay(script: ReplayScript): void {
     const sources: CaptureSource[] = ['SELF', 'REMOTE'];
     for (const s of sources) (this.getRecognizer(s) as FakeSpeechRecognizer | null)?.open();
     this.replay = new ReplayDriver(
@@ -704,7 +747,7 @@ export class SessionRuntime {
           this.cards.set(card.adviceId, card);
           this.transcript?.registerAdviceDependency(card.adviceId, card.evidenceUtteranceIds);
           this.d.send({ type: 'advice.card', card });
-          if (jobId) this.latency.sent(jobId, this.now());
+          if (jobId) this.latency.sent(jobId, this.now(), card.adviceId);
           this.sendPinState();
           break;
         }

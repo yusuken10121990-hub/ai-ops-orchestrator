@@ -4,6 +4,8 @@
 
 ## 1. 一次資料の確認（確認日 2026-11-16）
 
+一次資料の一覧と採用バージョンは [docs/sources.md](sources.md) にまとめた。ここには拡張機能の設計に効いた内容だけを残す。
+
 | 資料 | 確認できたこと | 採用した設計 |
 |---|---|---|
 | [chrome.tabCapture](https://developer.chrome.com/docs/extensions/reference/api/tabCapture) | `getMediaStreamId({ targetTabId, consumerTabId })` は stream ID を返す。ID は**1回限り・数秒で失効**。`consumerTabId` 省略時、**Chrome 116 以降は同じ拡張の render process 内の同一オリジン frame（offscreen document を含む）で使える**。拡張の起動（アクションのクリック等）後のみ取得可（activeTab と同様）。`targetTabId` 指定には `activeTab` が必要。**取得するとタブの音はローカルで鳴らなくなる** → AudioContext の `createMediaStreamSource` を `destination` に繋いで再生し直す。 | アクションのクリックで対象タブ ID を最初に記録 → service worker で `getMediaStreamId({targetTabId})` → 直ちに offscreen へ渡して `getUserMedia` で消費。`minimum_chrome_version: 116`。 |
@@ -30,8 +32,8 @@
 
 - **開始前（armed）**: アクションのクリック直後に会議タブの音声を取得するのは、stream ID が数秒で失効するため。開始ボタンまでは**PC内で音量確認と再生維持だけ**を行い、WebSocket は開かず外部へは何も送らない（UI にも明示）。
 - **開始（明示確認後）**: `ws://<server>/ws` へ接続 → 最初のメッセージ `hello`（トークン。URL クエリには載せない）→ `hello.ack` → `session.start`（`consentConfirmed: true`）→ `status.sessionId` を受けてから音声フレーム送信を開始。
-- **終了**: 「終了」→ `session.end` → 取得を即停止 → サーバーの `status(lifecycle=ended)` か切断を最大 5 秒待って WS を閉じる → service worker が offscreen を閉じる。
-- **ウィンドウを閉じる**: `windows.onRemoved` → offscreen へ stop（`session.end` 送信・全トラック停止・AudioContext close・WS close・タイマー解除）→ offscreen を閉じる。
+- **終了**: 「終了」→（未確定の欠落区間を `audio.gap` で送る）→ `session.end` → 取得を即停止 → サーバーの **`session.ended`**（出力先パス・振り返りの保持期限を含む）か切断を最大 5 秒待って WS を閉じる → service worker が offscreen を閉じる。`status(lifecycle=ended)` は `session.ended` より先に届くので、それでは閉じない（閉じると出力結果を受け取れない＝結合テストで見つけた不具合）。
+- **ウィンドウを閉じる**: `windows.onRemoved` → offscreen へ stop（`session.end` 送信・全トラック停止・AudioContext close・WS close・タイマー解除）→ 1.5 秒後に offscreen を閉じる。ただしその時点で offscreen が新しい商談を始めていれば閉じない（終了直後の再開始で新しい取得が切られる不具合を結合テストで発見・修正）。
 - **UI が消えた保険**: copilot が 2 秒ごとにハートビート。offscreen は 10 秒途切れたら全停止（Playwright で実測 約10.3秒で `session.end`＋切断）。
 - **会議タブを閉じた／トラック終了（共有停止・権限取消）**: `tabs.onRemoved` とトラック `ended` を検知 → `source.state REMOTE lost` → 全停止（別タブへ勝手に切り替えない、スピーカー音をマイクで拾う方式へ黙って切り替えない）。
 - **マイクが外れた**: `devicechange` で選択デバイスの消失を検知 → SELF だけ停止（`device_changed`）し、UI に直し方を表示。会議側は継続（本人が選ぶ縮退）。
@@ -53,7 +55,7 @@
 - AudioContext は実デバイスの既定レート（通常 48000Hz）。worklet 内で **ダウンミックス → 窓付き sinc（Blackman, 片側16ゼロ交差, 遮断 = 出力ナイキストの 90%）で 16kHz へリサンプリング → PCM16** に変換（`src/audio/dsp/*`）。ラベルの付け替えではない（テストで 1kHz→1kHz 保存、12kHz 成分の除去、44.1kHz 非整数比を確認）。
 - フレーム長 既定 200ms（設定で 100〜250ms）。ヘッダーは `@sales-copilot/contracts` の `encodeAudioFrame`（sessionId / source / streamGeneration / sequence / audioStartMs / durationMs / 16000 / pcm16le / 1ch）。
 - `streamGeneration`: SELF の取り直し・解析再開ごとに +1、`sequence` は generation 内で 0 から。`audioStartMs` はセッション開始からの経過時間（generation 開始時刻 + 生成サンプル数）。
-- バックプレッシャー: `ws.bufferedAmount + frame > 128KB`（約2秒分）なら破棄し欠落区間を記録（UI へ `gap`、サーバーへ `source.state` reason `backpressure_drop`）。破棄分の sequence は進める（欠落が分かる）。復旧後に再送しない。
+- バックプレッシャー: `ws.bufferedAmount + frame > 128KB`（約2秒分）なら破棄し欠落区間を記録（UI へ `gap`、区間が閉じたらサーバーへ `audio.gap { source, fromMs, toMs, reason: 'client_backpressure' }`。終了時は未確定の区間も送る）。破棄分の sequence は進める（欠落が分かる）。復旧後に再送しない。
 - SELF の簡易エネルギー VAD（-45dBFS, attack 120ms, release 700ms）→ `speaking.state`。
 - 解析一時停止: `analysis.pause` 送信・worklet 無効化・マイク解放。会議音声の再生は継続。再開時は generation +1。
 
@@ -62,7 +64,9 @@
 - **開始前**: 対象タブ（Meet かどうか）と会議側メーター、サーバー接続・ペアリング・API設定状態（`/config/status`: 文字起こし/助言の設定有無、LIVE 可否、OFFLINE の助言方式、価格表）、マイク選択・許可・テスト、商談目的（必須）・顧客名（任意）、承認済み条件の選択（版・承認日）、LIVE/OFFLINE、取得元・送信先・保存方針、画面共有の注意、①ブラウザのマイク許可 と ②相手への説明・同意/社内承認 を別チェック、「Meetのミュートではこのアプリの自分の音声取得は止まらない」の明示。開始は2段階（「開始の確認へ」→ 送信先を示した最終確認「開始する」）。
 - **商談中**: 【今の一手】【次に言う一言】（最大・最も目立つ）【今は言わない】、根拠・確認事項と文字起こし履歴は折りたたみ。状態ラベルは文字（現行/参考/無効）。状態バーは 会議側/自分側/外部送信/文字起こし/助言/サーバー接続/LIVE・OFFLINE/保存/使用量 を個別ラベル（無音・権限なし・API未設定・通信断・遅延・エラー・一時停止を区別）。ボタン9個（キー R/Q/N/P/G/B/M/S/E、文字サイズ +/-、明暗 D）。文字サイズと明暗は `chrome.storage.local`。
 - **カードの原子的表示**: 完全に検証済みの `advice.card` だけで差し替え（UI 側でも Zod 再検証）。`createdAt`/`contextRevision` が古いカードは上書きしない。`advice.invalidated` はカードより先に届いても保持。表示固定中は固定カードを残し、新しいカードがあれば「参考」＋お知らせ＋解除ボタン。期限切れ・サーバーの `card.pin.state` も反映。
-- **終了**: 終了確認で任意の出力（機密情報を含む可能性の注意）。出力先パスは `GET /sessions/:id/review` の `exportPath` で表示、無ければ「何も保存していません」。
+- **開始前（OFFLINE）**: `GET /offline/scripts` の一覧から再生する架空会話を選べる（`session.start.offlineScriptId`）。サーバーが許可している場合（キーあり かつ `OFFLINE_USE_ANTHROPIC=1`）だけ「助言生成に Anthropic を使う」を選べる（`offlineUseAnthropic`、既定OFF）。
+- **表示報告**: 検証済みカードを画面に反映したら `advice.displayed { adviceId, at }` を1カード1回送る（遅延計測の最終点）。
+- **終了**: 終了確認で任意の出力（機密情報を含む可能性の注意）。結果は `session.ended` の `exportPath` で表示（null なら「何も保存していません」）。`session.ended` を受け取れなかった場合だけ `GET /sessions/:id/review` で確認し、それも失敗したら「保存されたか確認できません」と表示する（保存したと推測しない）。
 - 会話・助言は全て React のテキストノードで描画（`dangerouslySetInnerHTML` 不使用。ビルド後検査 `scripts/check-dist.mjs` でも確認）。
 
 ## 6. テスト
@@ -71,7 +75,8 @@
 |---|---|---|
 | Vitest（node） | DSP（48k→16k 周波数保存・サンプル数・折り返し除去・44.1k・ブロック分割非依存・DC）、PCM 変換、チャンカー、VAD、フレーマー（contracts で復号）、バックプレッシャー、CaptureController の後始末（停止でトラック停止・WS close・タイマー0・AudioContext close・停止後送信なし）、ハートビート、タブ終了、SELF OFF/ON の generation、権限なし、デバイス変更、一時停止、不正メッセージ破棄、API クライアント（トークンはヘッダーのみ）、設定の検証 | 全件成功 |
 | Vitest（jsdom） | XSS（カード全フィールド・文字起こし）、状態ラベル、無効カード、固定中の新カード、状態バーの区別、ショートカット、終了確認 | 全件成功 |
-| Playwright（`pnpm --filter @sales-copilot/extension test:e2e`、ビルド後） | Chromium new headless に拡張を読み込み、モックサーバーに対し: 設定画面でマイク許可 → copilot で OFFLINE 開始 → hello/トークン・Origin・session.start 同意 → **偽マイク→offscreen→AudioWorklet→16kHz/200ms フレーム**受信 → カード描画と XSS 非実行 → 表示固定 → 自分OFFでフレーム停止 → 画面を閉じてハートビート切れで session.end＋切断 | 21/21 成功 |
+| Playwright 結合（ルート `pnpm test:e2e` の 1/2、`scripts/e2e-integration.mjs`） | **実サーバー**（OFFLINE・一時データ・APIキーなし）× 実拡張: 設定画面でペアリング（誤コード拒否を含む）→ 開始前の API 未設定表示・台本一覧 → OFFLINE 開始 → 文字起こし → 検証済みカード → 表示報告 → 手動ボタン3つ → 一時停止で文字起こし停止 → 終了で session.ended・出力なし → 出力ありで exports/ に書く → サーバーログに本文なし | 29/29 成功 |
+| Playwright（ルート `pnpm test:e2e` の 2/2、`pnpm --filter @sales-copilot/extension test:e2e`、ビルド後） | Chromium new headless に拡張を読み込み、モックサーバーに対し: 設定画面でマイク許可 → copilot で OFFLINE 開始 → hello/トークン・Origin・session.start 同意 → **偽マイク→offscreen→AudioWorklet→16kHz/200ms フレーム**受信 → カード描画と XSS 非実行 → 表示固定 → 自分OFFでフレーム停止 → 画面を閉じてハートビート切れで session.end＋切断 | 21/21 成功 |
 
 **自動化できていないもの**（実機チェック docs/manual-checklist.md）: アクションのクリックによる tabCapture（Playwright から拡張アイコンを押せない）、Meet 実音声の二系統、再生維持・ハウリング、実 Chrome の許可ダイアログ、`windows.onRemoved` による終了（スモークはタブで開くためハートビート経路で確認）、実 API 経由の助言、60 分連続稼働。
 
@@ -84,10 +89,13 @@ pnpm --filter @sales-copilot/extension build      # apps/extension/dist（ルー
 chrome://extensions → デベロッパーモード ON → 「パッケージ化されていない拡張機能を読み込む」→ `apps/extension/dist`。
 初回: 拡張の「オプション」→ サーバーURL → サーバーに表示された6桁コードでペアリング → 「マイクを許可してテスト」。
 
-## 8. contracts への変更要望（拡張側では未変更・隔離して吸収）
+## 8. contracts への変更要望（2026-11-16 結合時に対応済み）
 
-1. **終了結果のサーバーメッセージ**: 出力先パスを WS で受け取る型が無い。現在は `GET /sessions/:id/review` の `exportPath` を読む（`src/shared/noncontract.ts`）。`session.ended { sessionId, exportPath: string|null }` 等の追加を希望（WS で `session.exported` が来れば拡張は既に受ける）。
-2. **音声欠落の通知**: 破棄区間を送る型が無い。現在は `source.state`（SELF=`on` / REMOTE=`ok`）＋ reason `backpressure_drop` で代用。`audio.gap { source, streamGeneration, fromMs, toMs, droppedFrames }` を希望。
-3. **OFFLINE 台本の選択**: `SessionStartMessage` に台本 ID が無く、一覧 API も無い。現在は「サーバー既定」表示。`replayScriptId?: string` と一覧の型を希望。
-4. **HTTP 応答の型**: `/config/status`・`/facts`（`{facts}` ラッパー）・`PATCH /facts/:id`（`{fact, approvalRevoked}`）・`/sessions/:id/review` が contracts に無い。拡張は緩い Zod で受けている（形が違えば「確認できません」表示）。contracts 化を希望。
-5. `SourceStateMessage` の SELF に `paused`（解析一時停止でマイク解放中）を表す状態が無い。現在は送らずローカル表示のみ。
+| 要望 | 対応 |
+|---|---|
+| 終了結果のサーバーメッセージ | `session.ended { sessionId, exportPath, reviewAvailableUntil }` を追加。拡張は受信して終了画面に表示（review API はフォールバック） |
+| 音声欠落の通知 | `audio.gap { source, fromMs, toMs, reason }` を追加。`source.state` の `backpressure_drop` 流用は廃止 |
+| OFFLINE 台本の選択 | `session.start.offlineScriptId` / `offlineUseAnthropic` と `GET /offline/scripts`（`OfflineScriptsResponse`）を追加 |
+| HTTP 応答の型 | `ConfigStatusResponse` / `FactsListResponse` / `FactResponse` / `FactUpdateResponse` / `SessionReviewResponse` / `OfflineScriptsResponse` を contracts（`http.ts`）へ。サーバーは返す前に、拡張は受信後に同じスキーマで検証。`src/shared/noncontract.ts` は削除 |
+| 表示確認（遅延の最終点） | `advice.displayed { adviceId, at }` を追加 |
+| SELF の `paused` 状態 | 未対応（ローカル表示のみ。必要性が出たら追加） |

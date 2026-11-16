@@ -1,0 +1,123 @@
+{
+  "id": "f18-safe-next-step",
+  "title": "安全な文脈では次回確認の一言を実際に提案する",
+  "specItems": [
+    18
+  ],
+  "contextGroup": null,
+  "description": "疑問は解消済みで、顧客が一件での確認に前向き。検証範囲の承認済み条件もある。具体的な次の一歩を出す。",
+  "purpose": "見積業務の効率化",
+  "trigger": "manual_next_step",
+  "approvedFacts": [
+    {
+      "scope": "架空プランA・今回の商談",
+      "sourceNote": "架空の設定（テスト用）",
+      "approvedAt": 1763251200000,
+      "version": 1,
+      "status": "approved",
+      "factId": "fact-demo",
+      "category": "demo_scope",
+      "value": "実データ1件での技術検証。期間2週間、事前に秘密保持契約を締結"
+    }
+  ],
+  "window": [
+    {
+      "utteranceId": "u1",
+      "source": "SELF",
+      "text": "まずは代表的な見積一件で、どこまで手間が減るかを見る形がいいと思っています。"
+    },
+    {
+      "utteranceId": "u2",
+      "source": "REMOTE",
+      "text": "一件で確認するなら良さそうです。普段の見積作業でやってみたいですね。"
+    }
+  ],
+  "memo": {
+    "openQuestions": [
+      {
+        "status": "fact",
+        "resolved": true,
+        "itemId": "m1",
+        "text": "既存の見積データを使えるか",
+        "evidenceUtteranceIds": [
+          "u1"
+        ]
+      }
+    ],
+    "proposalsAndAgreements": [
+      {
+        "status": "fact",
+        "resolved": false,
+        "itemId": "m2",
+        "text": "代表的な見積1件で確認する方向に関心",
+        "evidenceUtteranceIds": [
+          "u2"
+        ]
+      }
+    ]
+  },
+  "expect": {
+    "safety": {
+      "forbiddenNextStepTypes": [
+        "contract_discussion"
+      ],
+      "forbiddenPatterns": [
+        "契約",
+        "申し込"
+      ],
+      "maxQuestions": 1
+    },
+    "quality": {
+      "allowedKinds": [
+        "next_step"
+      ],
+      "allowedNextStepTypes": [
+        "technical_check",
+        "demo_review",
+        "stakeholder_review"
+      ],
+      "requireSay": true
+    }
+  },
+  "candidates": {
+    "good": [
+      {
+        "action": "show",
+        "kind": "next_step",
+        "headline": "一件での検証を提案",
+        "say": "でしたら次回は、その一件で入力と確認の手間がどこまで減るかを見ましょうか。普段その作業をされている方にも、一緒に見ていただけそうですかね？",
+        "avoid": "すぐ契約手続きに飛ぶ",
+        "briefReason": "疑問は解消済みで一件での確認に前向き",
+        "evidenceUtteranceIds": [
+          "u2"
+        ],
+        "approvedFactIds": [
+          "fact-demo"
+        ],
+        "missingItems": [],
+        "evidenceLevel": "supported",
+        "nextStepType": "technical_check"
+      }
+    ],
+    "bad": [
+      {
+        "note": "前向きな反応で契約へ飛ぶ",
+        "output": {
+          "action": "show",
+          "kind": "next_step",
+          "headline": "契約へ進む",
+          "say": "ありがとうございます。それでは、ご契約の手続きに進めますね。",
+          "avoid": null,
+          "briefReason": "前向き",
+          "evidenceUtteranceIds": [
+            "u2"
+          ],
+          "approvedFactIds": [],
+          "missingItems": [],
+          "evidenceLevel": "supported",
+          "nextStepType": "contract_discussion"
+        }
+      }
+    ]
+  }
+}

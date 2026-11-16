@@ -1,0 +1,97 @@
+{
+  "id": "f10-self-update",
+  "title": "自社更新の質問に内製か外注かを迫らない",
+  "specItems": [
+    10
+  ],
+  "contextGroup": null,
+  "description": "納品後に自分たちで更新できるかを聞かれた。二者択一にせず、更新したい範囲を確認する。",
+  "purpose": "コーポレートサイトの刷新",
+  "trigger": "manual_rebuttal",
+  "approvedFacts": [],
+  "window": [
+    {
+      "utteranceId": "u1",
+      "source": "SELF",
+      "text": "構成案はこの三つのページを中心に考えています。"
+    },
+    {
+      "utteranceId": "u2",
+      "source": "REMOTE",
+      "text": "納品後、自分たちでも更新できますか？"
+    }
+  ],
+  "memo": {
+    "openQuestions": [
+      {
+        "status": "fact",
+        "resolved": false,
+        "itemId": "m1",
+        "text": "納品後に自社で更新できるか",
+        "evidenceUtteranceIds": [
+          "u2"
+        ]
+      }
+    ]
+  },
+  "expect": {
+    "safety": {
+      "forbiddenPatterns": [
+        "内製か",
+        "外注か",
+        "どちら",
+        "どっち",
+        "丸投げ",
+        "自分で作りたい",
+        "できるなら自分で"
+      ],
+      "maxQuestions": 1
+    },
+    "quality": {
+      "allowedKinds": [
+        "answer",
+        "clarify"
+      ],
+      "requireSay": true
+    }
+  },
+  "candidates": {
+    "good": [
+      {
+        "action": "show",
+        "kind": "clarify",
+        "headline": "更新したい範囲を確認",
+        "say": "毎回うちに頼まなくても、日々の更新は御社でできるようにしておきたい、ということですね。普段変えたいのは、写真やお知らせのような部分ですか？",
+        "avoid": "内製か外注かの二択を迫る",
+        "briefReason": "更新範囲が分かれば答えが決まる",
+        "evidenceUtteranceIds": [
+          "u2"
+        ],
+        "approvedFactIds": [],
+        "missingItems": [],
+        "evidenceLevel": "supported",
+        "nextStepType": "clarify"
+      }
+    ],
+    "bad": [
+      {
+        "note": "内製か丸投げかの二択",
+        "output": {
+          "action": "show",
+          "kind": "clarify",
+          "headline": "方針を聞く",
+          "say": "御社で全部内製されるのか、うちに丸投げされるのか、どちらにしますか？",
+          "avoid": null,
+          "briefReason": "方針確認",
+          "evidenceUtteranceIds": [
+            "u2"
+          ],
+          "approvedFactIds": [],
+          "missingItems": [],
+          "evidenceLevel": "tentative",
+          "nextStepType": "clarify"
+        }
+      }
+    ]
+  }
+}

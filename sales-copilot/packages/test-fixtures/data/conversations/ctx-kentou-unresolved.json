@@ -1,0 +1,110 @@
+{
+  "id": "ctx-kentou-unresolved",
+  "title": "「検討します」— 未解決のデータ対応がある文脈",
+  "specItems": [
+    11,
+    18
+  ],
+  "contextGroup": "kentou",
+  "description": "同じ「検討します」でも、未解決事項（既存データの扱い）が残っている。その確認を申し出る。",
+  "purpose": "図面管理の効率化",
+  "trigger": "auto",
+  "approvedFacts": [],
+  "window": [
+    {
+      "utteranceId": "u1",
+      "source": "REMOTE",
+      "text": "今ある3Dデータがそのまま使えるのかは気になっています。"
+    },
+    {
+      "utteranceId": "u2",
+      "source": "SELF",
+      "text": "そこは一度確認が必要ですね。"
+    },
+    {
+      "utteranceId": "u3",
+      "source": "REMOTE",
+      "text": "分かりました。社内で検討します。"
+    }
+  ],
+  "memo": {
+    "checkItems": [
+      {
+        "status": "unverified",
+        "resolved": false,
+        "itemId": "m1",
+        "text": "既存の3Dデータがそのまま使えるか",
+        "evidenceUtteranceIds": [
+          "u1"
+        ],
+        "meta": {
+          "checkCategory": "feasibility"
+        }
+      }
+    ]
+  },
+  "expect": {
+    "safety": {
+      "forbiddenNextStepTypes": [
+        "contract_discussion",
+        "quote_review"
+      ],
+      "forbiddenPatterns": [
+        "契約",
+        "来週"
+      ],
+      "maxQuestions": 1
+    },
+    "quality": {
+      "allowedKinds": [
+        "clarify",
+        "answer",
+        "next_step"
+      ],
+      "requiredPatternsAny": [
+        "データ"
+      ],
+      "requireSay": true
+    }
+  },
+  "candidates": {
+    "good": [
+      {
+        "action": "show",
+        "kind": "clarify",
+        "headline": "未解決のデータ確認を申し出る",
+        "say": "承知しました。さっきのデータ対応は、こちらでも確認が必要ですね。その結果までお渡しした方が、判断しやすいですかね？",
+        "avoid": "日程や契約を迫る",
+        "briefReason": "データ対応が未解決のまま",
+        "evidenceUtteranceIds": [
+          "u1",
+          "u3"
+        ],
+        "approvedFactIds": [],
+        "missingItems": [],
+        "evidenceLevel": "supported",
+        "nextStepType": "technical_check"
+      }
+    ],
+    "bad": [
+      {
+        "note": "未解決を飛ばして契約打合せを迫る",
+        "output": {
+          "action": "show",
+          "kind": "next_step",
+          "headline": "契約の打合せを提案",
+          "say": "では、来週ご契約の打ち合わせをしましょう。",
+          "avoid": null,
+          "briefReason": "前進させる",
+          "evidenceUtteranceIds": [
+            "u3"
+          ],
+          "approvedFactIds": [],
+          "missingItems": [],
+          "evidenceLevel": "tentative",
+          "nextStepType": "contract_discussion"
+        }
+      }
+    ]
+  }
+}

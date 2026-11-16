@@ -54,6 +54,21 @@ async function closeOffscreen(): Promise<void> {
   if (await hasOffscreen()) await chrome.offscreen.closeDocument().catch(() => {});
 }
 
+/**
+ * 停止の少し後に offscreen を閉じる。ただし、その間に新しい商談が始まっていたら閉じない
+ * （終了直後に再開始すると、前回の遅延クローズで新しい取得が切られていた＝結合テストで発見）。
+ */
+function closeOffscreenLaterIfIdle(delayMs = 1500): void {
+  setTimeout(() => {
+    void (async () => {
+      if (!(await hasOffscreen())) return;
+      const snap = (await toOffscreen({ target: 'offscreen', type: 'getState' })) as { phase?: string } | undefined;
+      if (snap?.phase && snap.phase !== 'stopped' && snap.phase !== 'idle') return;
+      await closeOffscreen();
+    })();
+  }, delayMs);
+}
+
 function toOffscreen(msg: ToOffscreen): Promise<unknown> {
   return chrome.runtime.sendMessage(msg).catch(() => undefined);
 }
@@ -111,7 +126,7 @@ chrome.windows.onRemoved.addListener((windowId) => {
     // ウィンドウを閉じたら終了（見えない状態で取得を続けない）
     await toOffscreen({ target: 'offscreen', type: 'stop', reason: 'window_closed' });
     await save({ ...EMPTY });
-    setTimeout(() => void closeOffscreen(), 1500);
+    closeOffscreenLaterIfIdle();
   })();
 });
 
@@ -153,8 +168,8 @@ chrome.runtime.onMessage.addListener((raw: unknown, _sender, sendResponse) => {
     case 'offscreen.stopped':
       void (async () => {
         await save({ armed: false });
-        // UI が終了画面を出せるよう少し待ってから閉じる
-        setTimeout(() => void closeOffscreen(), 1500);
+        // UI が終了画面を出せるよう少し待ってから閉じる（新しい商談が始まっていれば閉じない）
+        closeOffscreenLaterIfIdle();
       })();
       return false;
   }

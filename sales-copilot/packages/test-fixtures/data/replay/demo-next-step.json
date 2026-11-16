@@ -1,0 +1,278 @@
+{
+  "name": "demo-next-step",
+  "title": "一件での技術検証に前向きになる流れ（架空）",
+  "description": "「できます」→「できますか？」の訂正、3Dデータの可否、一件での確認への合意まで。安全な文脈で次の約束を出せるかの確認用。約100秒。",
+  "durationMs": 93200,
+  "lines": [
+    {
+      "atMs": 1421,
+      "source": "SELF",
+      "text": "先日いただいた図面の件",
+      "isFinal": false
+    },
+    {
+      "atMs": 2842,
+      "source": "SELF",
+      "text": "先日いただいた図面の件、検査の流れを少し詳",
+      "isFinal": false
+    },
+    {
+      "atMs": 4060,
+      "source": "SELF",
+      "text": "先日いただいた図面の件、検査の流れを少し詳しく伺えますか？",
+      "isFinal": true
+    },
+    {
+      "atMs": 8568,
+      "source": "REMOTE",
+      "text": "検査員が3Dデータと実物",
+      "isFinal": false
+    },
+    {
+      "atMs": 10136,
+      "source": "REMOTE",
+      "text": "検査員が3Dデータと実物の寸法を見比べて、ずれを",
+      "isFinal": false
+    },
+    {
+      "atMs": 11480,
+      "source": "REMOTE",
+      "text": "検査員が3Dデータと実物の寸法を見比べて、ずれを記録しています。",
+      "isFinal": true
+    },
+    {
+      "atMs": 16127,
+      "source": "REMOTE",
+      "text": "一人あたり月に十五",
+      "isFinal": false
+    },
+    {
+      "atMs": 17254,
+      "source": "REMOTE",
+      "text": "一人あたり月に十五時間くらいはその",
+      "isFinal": false
+    },
+    {
+      "atMs": 18220,
+      "source": "REMOTE",
+      "text": "一人あたり月に十五時間くらいはその作業ですね。",
+      "isFinal": true
+    },
+    {
+      "atMs": 22539,
+      "source": "SELF",
+      "text": "ありがと",
+      "isFinal": false
+    },
+    {
+      "atMs": 23078,
+      "source": "SELF",
+      "text": "ありがとうござい",
+      "isFinal": false
+    },
+    {
+      "atMs": 23540,
+      "source": "SELF",
+      "text": "ありがとうございます。",
+      "isFinal": true
+    },
+    {
+      "atMs": 26959,
+      "source": "SELF",
+      "text": "ずれの判定を画面上で候補として出",
+      "isFinal": false
+    },
+    {
+      "atMs": 28919,
+      "source": "SELF",
+      "text": "ずれの判定を画面上で候補として出して、検査員の方が最終確認す",
+      "isFinal": false
+    },
+    {
+      "atMs": 30600,
+      "source": "SELF",
+      "text": "ずれの判定を画面上で候補として出して、検査員の方が最終確認する形を考えています。",
+      "isFinal": true
+    },
+    {
+      "atMs": 35784,
+      "source": "REMOTE",
+      "text": "今のデータのままでも",
+      "isFinal": false
+    },
+    {
+      "atMs": 36568,
+      "source": "REMOTE",
+      "text": "今のデータのままでもできます",
+      "isFinal": false
+    },
+    {
+      "atMs": 37240,
+      "source": "REMOTE",
+      "text": "今のデータのままでもできますか？",
+      "isFinal": true
+    },
+    {
+      "atMs": 41441,
+      "source": "SELF",
+      "text": "えー、",
+      "isFinal": false
+    },
+    {
+      "atMs": 41882,
+      "source": "SELF",
+      "text": "えー、そうで",
+      "isFinal": false
+    },
+    {
+      "atMs": 42260,
+      "source": "SELF",
+      "text": "えー、そうですね。",
+      "isFinal": true
+    },
+    {
+      "atMs": 44979,
+      "source": "REMOTE",
+      "text": "精度ってどれくら",
+      "isFinal": false
+    },
+    {
+      "atMs": 45959,
+      "source": "REMOTE",
+      "text": "精度ってどれくらい出るものなん",
+      "isFinal": false
+    },
+    {
+      "atMs": 46800,
+      "source": "REMOTE",
+      "text": "精度ってどれくらい出るものなんでしょう？",
+      "isFinal": true
+    },
+    {
+      "atMs": 51979,
+      "source": "SELF",
+      "text": "そこはデータを見",
+      "isFinal": false
+    },
+    {
+      "atMs": 52959,
+      "source": "SELF",
+      "text": "そこはデータを見てからになると",
+      "isFinal": false
+    },
+    {
+      "atMs": 53800,
+      "source": "SELF",
+      "text": "そこはデータを見てからになると思います。",
+      "isFinal": true
+    },
+    {
+      "atMs": 57979,
+      "source": "REMOTE",
+      "text": "なるほど。いきな",
+      "isFinal": false
+    },
+    {
+      "atMs": 58959,
+      "source": "REMOTE",
+      "text": "なるほど。いきなり全部は難しい",
+      "isFinal": false
+    },
+    {
+      "atMs": 59800,
+      "source": "REMOTE",
+      "text": "なるほど。いきなり全部は難しいですよね。",
+      "isFinal": true
+    },
+    {
+      "atMs": 65812,
+      "source": "SELF",
+      "text": "まずは代表的な図面一件で、ど",
+      "isFinal": false
+    },
+    {
+      "atMs": 67625,
+      "source": "SELF",
+      "text": "まずは代表的な図面一件で、どこまで手間が減るか見る形が",
+      "isFinal": false
+    },
+    {
+      "atMs": 69180,
+      "source": "SELF",
+      "text": "まずは代表的な図面一件で、どこまで手間が減るか見る形がいいと思っています。",
+      "isFinal": true
+    },
+    {
+      "atMs": 74784,
+      "source": "REMOTE",
+      "text": "一件で確認す",
+      "isFinal": false
+    },
+    {
+      "atMs": 75568,
+      "source": "REMOTE",
+      "text": "一件で確認するなら良さそ",
+      "isFinal": false
+    },
+    {
+      "atMs": 76240,
+      "source": "REMOTE",
+      "text": "一件で確認するなら良さそうです。",
+      "isFinal": true
+    },
+    {
+      "atMs": 81176,
+      "source": "REMOTE",
+      "text": "実際に検査している",
+      "isFinal": false
+    },
+    {
+      "atMs": 82352,
+      "source": "REMOTE",
+      "text": "実際に検査している担当にも見てもらい",
+      "isFinal": false
+    },
+    {
+      "atMs": 83360,
+      "source": "REMOTE",
+      "text": "実際に検査している担当にも見てもらいたいですね。",
+      "isFinal": true
+    },
+    {
+      "atMs": 88441,
+      "source": "SELF",
+      "text": "ぜひお",
+      "isFinal": false
+    },
+    {
+      "atMs": 88882,
+      "source": "SELF",
+      "text": "ぜひお願いし",
+      "isFinal": false
+    },
+    {
+      "atMs": 89260,
+      "source": "SELF",
+      "text": "ぜひお願いします。",
+      "isFinal": true
+    },
+    {
+      "atMs": 92420,
+      "source": "REMOTE",
+      "text": "はい",
+      "isFinal": false
+    },
+    {
+      "atMs": 92840,
+      "source": "REMOTE",
+      "text": "はい。",
+      "isFinal": false
+    },
+    {
+      "atMs": 93200,
+      "source": "REMOTE",
+      "text": "はい。",
+      "isFinal": true
+    }
+  ]
+}

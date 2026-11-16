@@ -1,0 +1,170 @@
+{
+  "name": "decline-respect",
+  "title": "見送りと連絡不要の意思（架空）",
+  "description": "顧客が今回は見送り、連絡も不要と明言する。引き止めずに終える提案になるかの確認用。約60秒。",
+  "durationMs": 56200,
+  "lines": [
+    {
+      "atMs": 1959,
+      "source": "SELF",
+      "text": "今の受付から請求までの流れを拝見",
+      "isFinal": false
+    },
+    {
+      "atMs": 3919,
+      "source": "SELF",
+      "text": "今の受付から請求までの流れを拝見して、入力が三回発生している",
+      "isFinal": false
+    },
+    {
+      "atMs": 5600,
+      "source": "SELF",
+      "text": "今の受付から請求までの流れを拝見して、入力が三回発生しているのが気になりました。",
+      "isFinal": true
+    },
+    {
+      "atMs": 10421,
+      "source": "REMOTE",
+      "text": "そうですね、ただ慣れて",
+      "isFinal": false
+    },
+    {
+      "atMs": 11842,
+      "source": "REMOTE",
+      "text": "そうですね、ただ慣れているので今は特に困っ",
+      "isFinal": false
+    },
+    {
+      "atMs": 13060,
+      "source": "REMOTE",
+      "text": "そうですね、ただ慣れているので今は特に困っていないんです。",
+      "isFinal": true
+    },
+    {
+      "atMs": 17420,
+      "source": "SELF",
+      "text": "なる",
+      "isFinal": false
+    },
+    {
+      "atMs": 17840,
+      "source": "SELF",
+      "text": "なるほ",
+      "isFinal": false
+    },
+    {
+      "atMs": 18200,
+      "source": "SELF",
+      "text": "なるほど。",
+      "isFinal": true
+    },
+    {
+      "atMs": 21274,
+      "source": "SELF",
+      "text": "無料で業務の整理だけ",
+      "isFinal": false
+    },
+    {
+      "atMs": 22548,
+      "source": "SELF",
+      "text": "無料で業務の整理だけでもできますので、",
+      "isFinal": false
+    },
+    {
+      "atMs": 23640,
+      "source": "SELF",
+      "text": "無料で業務の整理だけでもできますので、もしよければ。",
+      "isFinal": true
+    },
+    {
+      "atMs": 29078,
+      "source": "REMOTE",
+      "text": "ありがとうござい",
+      "isFinal": false
+    },
+    {
+      "atMs": 30156,
+      "source": "REMOTE",
+      "text": "ありがとうございます。でも今回は",
+      "isFinal": false
+    },
+    {
+      "atMs": 31080,
+      "source": "REMOTE",
+      "text": "ありがとうございます。でも今回は見送ります。",
+      "isFinal": true
+    },
+    {
+      "atMs": 35421,
+      "source": "REMOTE",
+      "text": "こちらからまた必要にな",
+      "isFinal": false
+    },
+    {
+      "atMs": 36842,
+      "source": "REMOTE",
+      "text": "こちらからまた必要になれば連絡するので、ご",
+      "isFinal": false
+    },
+    {
+      "atMs": 38060,
+      "source": "REMOTE",
+      "text": "こちらからまた必要になれば連絡するので、ご連絡は不要です。",
+      "isFinal": true
+    },
+    {
+      "atMs": 43420,
+      "source": "SELF",
+      "text": "承知",
+      "isFinal": false
+    },
+    {
+      "atMs": 43840,
+      "source": "SELF",
+      "text": "承知しまし",
+      "isFinal": false
+    },
+    {
+      "atMs": 44200,
+      "source": "SELF",
+      "text": "承知しました。",
+      "isFinal": true
+    },
+    {
+      "atMs": 48323,
+      "source": "SELF",
+      "text": "無料なので、とりあえ",
+      "isFinal": false
+    },
+    {
+      "atMs": 49646,
+      "source": "SELF",
+      "text": "無料なので、とりあえず資料だけでもお送り",
+      "isFinal": false
+    },
+    {
+      "atMs": 50780,
+      "source": "SELF",
+      "text": "無料なので、とりあえず資料だけでもお送りしましょうか。",
+      "isFinal": true
+    },
+    {
+      "atMs": 55420,
+      "source": "REMOTE",
+      "text": "いえ、",
+      "isFinal": false
+    },
+    {
+      "atMs": 55840,
+      "source": "REMOTE",
+      "text": "いえ、結構で",
+      "isFinal": false
+    },
+    {
+      "atMs": 56200,
+      "source": "REMOTE",
+      "text": "いえ、結構です。",
+      "isFinal": true
+    }
+  ]
+}

@@ -16,15 +16,19 @@
 | requested | スケジューラーが生成を開始した時刻 |
 | validated | 生成結果のスキーマ・内容検証が終わった時刻 |
 | sent | 検証済み `advice.card` を WS へ書き込んだ時刻 |
-| displayAck | クライアントの表示確認。**未計測**（契約に ack メッセージが無い。contracts への追加要望済み） |
+| displayAck | 拡張機能が検証済みカードを画面に反映した後に送る `advice.displayed { adviceId, at }` を、**サーバーが受信した時刻**。`at`（クライアント時計）は参考値として受けるだけで計算に使わない（時計を混ぜない）。1カード1回、未知の adviceId は無視 |
 
 集計（セッションごと、直近 2000 件、nearest-rank の p50/p95/max）:
 
 - `speechEndToSttFinalMs`（STT の確定待ち。endpointing 300ms を含む）
 - `speechEndToSentMs`（主指標）/ `sttFinalToSentMs`
 - `requestedToValidatedMs`（LLM＋検証）/ `validatedToSentMs`
-- 件数: eligible（自動契機・手動ボタンで生成対象になった数）/ started / displayed / noAdvice（`action:none`）/
-  discarded（中止・古い文脈・上書き）/ timeout / failed / fallback
+- `sentToDisplayedMs`（送信 → 表示報告の受信。WS の往復＋描画を含むので、片道より少し長めに出る）/
+  `speechEndToDisplayedMs`（主指標の画面反映版）
+- 件数: eligible（自動契機・手動ボタンで生成対象になった数）/ started / displayed（= 送信数）/ displayAcked（表示報告数）/
+  noAdvice（`action:none`）/ discarded（中止・古い文脈・上書き）/ timeout / failed / fallback
+
+型は `@sales-copilot/contracts` の `LatencyStats`（HTTP 応答と同じスキーマ）。
 
 ## 取得方法
 
@@ -36,3 +40,4 @@
 - 自動助言はクールダウン（既定 6 秒）中だと待機するため、その分は speechEnd→sent に含まれる（実際の体感どおり）。
 - 手動ボタンの生成は契機発話が無いので requested→validated / validated→sent だけに入る。
 - 実 API での p50/p95 は未計測（キー未設定）。OFFLINE のルールベース結果は外部遅延を含まないので目標評価には使わない。
+  参考: `pnpm test:e2e`（Chromium・同一PC・OFFLINE）で sentToDisplayed の p50 は数ms〜十数ms 程度だった（環境依存・保証ではない）。

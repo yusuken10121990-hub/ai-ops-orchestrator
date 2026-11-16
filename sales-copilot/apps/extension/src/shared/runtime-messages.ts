@@ -88,11 +88,15 @@ export type FromOffscreen =
   | { target: 'ui'; type: 'levels'; levels: Record<CaptureSourceKey, number | null> }
   | { target: 'ui'; type: 'server'; message: ServerMessage }
   | { target: 'ui'; type: 'gap'; gap: AudioGap; phase: 'start' | 'end' }
-  | { target: 'ui'; type: 'export.result'; result: ExportResult }
   | { target: 'ui'; type: 'offscreen.error'; message: string }
   | { target: 'sw'; type: 'offscreen.stopped'; reason: StopReason };
 
-/** 終了時の出力結果。contracts に未定義のため拡張側で吸収（docs/extension.md に変更要望を記載）。 */
-export type ExportResult = { saved: true; path: string } | { saved: false; reason: string };
+/**
+ * 終了時の結果（UI 表示用）。通常はサーバーの session.ended から作る。
+ * session.ended を受け取れなかった場合だけ GET /sessions/:id/review で確認する（source='review'）。
+ */
+export type EndResult =
+  | { source: 'session.ended' | 'review'; exportPath: string | null; reviewAvailableUntil: number | null }
+  | { source: 'unknown' };
 
 export type AnyRuntimeMessage = ToSw | ToOffscreen | FromOffscreen;

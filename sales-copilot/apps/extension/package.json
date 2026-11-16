@@ -1,0 +1,12 @@
+{
+  "name": "@sales-copilot/extension",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@sales-copilot/contracts": "workspace:*"
+  }
+}

@@ -1,0 +1,21 @@
+{
+  "name": "@sales-copilot/test-fixtures",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./data/*": "./data/*"
+  },
+  "types": "./src/index.ts",
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@sales-copilot/contracts": "workspace:*"
+  },
+  "files": [
+    "src",
+    "data"
+  ]
+}

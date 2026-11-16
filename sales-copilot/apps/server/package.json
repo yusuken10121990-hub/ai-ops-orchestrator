@@ -9,12 +9,19 @@
     "start": "tsx src/index.ts"
   },
   "dependencies": {
+    "@fastify/websocket": "^11.3.7",
+    "@sales-copilot/coaching": "workspace:*",
     "@sales-copilot/contracts": "workspace:*",
     "@sales-copilot/domain": "workspace:*",
-    "@sales-copilot/coaching": "workspace:*",
-    "@sales-copilot/providers": "workspace:*"
+    "@sales-copilot/providers": "workspace:*",
+    "@sales-copilot/test-fixtures": "workspace:*",
+    "fastify": "^5.12.8",
+    "pino": "^10.4.0",
+    "ws": "^8.23.0",
+    "zod": "^4.6.7"
   },
   "devDependencies": {
+    "@types/ws": "^8.18.2",
     "tsx": "^4.23.15"
   }
 }

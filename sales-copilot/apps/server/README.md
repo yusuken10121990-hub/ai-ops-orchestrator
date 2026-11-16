@@ -1,3 +1,63 @@
 # apps/server
 
-ローカル Fastify サーバー（127.0.0.1 のみ bind）。ペアリングと期限付きセッショントークンで拡張機能を認証し、WebSocket で音声フレームと制御メッセージを受ける。`@sales-copilot/domain` の SessionLifecycle / TranscriptStore / ConversationState / AdviceScheduler / UsageMeter を組み立て、`@sales-copilot/providers` 経由で Deepgram（STT）と Claude（助言）を呼ぶ。APIキーは環境変数のみで扱い、会話本文・顧客名・トークンを通常ログへ出さない。承認済み条件などの設定は SQLite、会話は既定でメモリのみ。起動: `pnpm start`（tsx で TS ソースを直接実行）。
+ローカル Fastify サーバー（127.0.0.1 のみ bind）。ペアリングと期限付きセッショントークンで拡張機能を認証し、WebSocket で音声フレームと制御メッセージを受ける。`@sales-copilot/domain` の SessionLifecycle / TranscriptStore / ConversationState / AdviceScheduler / UsageMeter / PinController を組み立て、`@sales-copilot/providers` 経由で Deepgram（STT）と Claude（助言）を呼ぶ。APIキーは環境変数のみで扱い、会話本文・顧客名・トークンを通常ログへ出さない。承認済み条件などの設定は SQLite（node:sqlite）、会話は既定でメモリのみ。
+
+```
+pnpm start                                  # = pnpm --filter @sales-copilot/server start（tsx src/index.ts）
+pnpm --filter @sales-copilot/server dev     # tsx watch
+```
+
+起動すると端末にペアリングコード（6桁・10分・1回限り）が表示される。`.env`（ワークスペース直下）があれば読む。
+node:sqlite の ExperimentalWarning が 1 行出るが動作に影響はない（Node 22）。
+
+## HTTP
+
+| メソッド・パス | 認証 | 内容 |
+|---|---|---|
+| `GET /health` | なし（Host 検査のみ） | `{ ok, version }` |
+| `POST /pair` | Origin = `chrome-extension://<extensionId>` | `{ pairingCode, extensionId, clientName }` → `PairingResponse` |
+| `GET /config/status` | settings | プロバイダー設定の有無・モデル名・LIVE/OFFLINE 可否・OFFLINE 助言の種別（秘密は返さない） |
+| `GET /facts` / `POST /facts` | settings | 承認済み条件の一覧 / 追加（必ず unverified・version 1） |
+| `PATCH /facts/:id` | settings | 編集。内容が変われば承認失効（unverified, version+1）。進行中セッションの該当カードは無効化 |
+| `POST /facts/:id/approve` | settings | `{ version }`（表示中の版と一致必須）→ approved・approvedAt・version+1 |
+| `POST /facts/:id/revoke` | settings | 承認取消（revoked, version+1） |
+| `GET /facts/:id/history` | settings | 変更履歴 |
+| `GET /sessions/:id/review` | session | 終了後の振り返り（保持期間内のみ）: 使用量・遅延・適用条件の版・エクスポート先・本文 |
+| `GET /sessions/active/latency` | session | 実行中セッションの遅延統計 |
+
+認証は `Authorization: Bearer <token>`。URL クエリにトークンを付けたリクエストは 400。詳細は [docs/security.md](../../docs/security.md)。
+
+## WebSocket `/ws`
+
+1. Origin（ペアリング済み拡張）と Host を検査してアップグレード。
+2. 最初のメッセージが `hello`（token 入り）でなければ切断（4401 不正 / 4408 タイムアウト 5 秒）。成功で `hello.ack`。
+3. `session.start`（`consentConfirmed: true` 必須・適用条件は承認済みかつ現行版のみ）でパイプライン開始。
+   - LIVE: キー未設定なら `status` の stt / advice を `not_configured` にし `error(not_configured)` を送る（無言の待機にしない）。
+   - OFFLINE: `OFFLINE_SCRIPT`（既定: 先頭のスクリプト）を `OFFLINE_REPLAY_SPEED` 倍速で再生。助言は
+     `OFFLINE_USE_ANTHROPIC=1` かつキーありなら Claude、それ以外はルールベース（「AIではありません」と明示、外部送信なし）。
+4. バイナリフレーム = contracts の音声フレーム。系統ごとに遅延接続の STT へ送る（未送信 2 秒超は古い順に破棄・欠落記録・`warning(audio_dropped)`）。
+5. STT 結果 → `transcript.segment`（interim は同じ segment を更新）→ 会話状態・構造化メモ → 自動契機 → スケジューラー →
+   助言エンジン（AbortSignal 付き）→ 検証済みカードだけ `advice.card`。訂正・条件変更で `advice.invalidated`、期限切れ・話題変化は
+   status を更新したカードを再送。表示固定は `card.pin.state`。`speaking.state`(SELF) で大きな更新を保留。
+6. `analysis.pause` / `analysis.resume` / `session.end`（`exportRequested`）/ WS 切断で STT 接続・生成・待機・タイマーを停止。
+   終了後は何も外部へ送らない。`usage` は `USAGE_INTERVAL_MS` ごと。
+
+## 環境変数（.env.example にあるもの以外）
+
+| 変数 | 既定 | 用途 |
+|---|---|---|
+| `ALLOW_NON_LOOPBACK` | 未設定 | `1` で非ループバック bind を許可（通常は使わない） |
+| `ALLOWED_EXTENSION_ID` | 未設定 | 許可する拡張機能 ID を固定 |
+| `DEEPGRAM_ENDPOINTING_MS` | 300 | `false` で無効 |
+| `DEEPGRAM_UTTERANCE_END_MS` | 1000 | `off` で無効 |
+| `DEEPGRAM_SMART_FORMAT` / `DEEPGRAM_PUNCTUATE` | true / false | |
+| `ANTHROPIC_EFFORT` | low | `low`/`medium`/`high`/`none` |
+| `ADVICE_MAX_RETRIES` | 1 | 不正 JSON 等の再試行（最大 3） |
+| `AUDIO_MAX_QUEUE_MS` | 2000 | 系統ごとの未送信音声上限 |
+| `SESSION_RETENTION_MS` | 600000 | 終了後のメモリ保持上限 |
+| `SESSION_TOKEN_TTL_MS` / `PAIRING_CODE_TTL_MS` / `PAIRING_MAX_ATTEMPTS` | 12h / 10min / 5 | |
+| `OFFLINE_SCRIPT` / `OFFLINE_REPLAY_SPEED` / `OFFLINE_USE_ANTHROPIC` | 先頭 / 1 / 未設定 | |
+| `DATA_DIR` / `EXPORT_DIR` | `data` / `exports` | ワークスペース直下からの相対 |
+| `USAGE_INTERVAL_MS` / `LOG_LEVEL` | 5000 / info | |
+
+遅延計測は [docs/latency.md](../../docs/latency.md)、プロバイダーの確認内容は [docs/providers.md](../../docs/providers.md)。

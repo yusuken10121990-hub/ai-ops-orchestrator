@@ -1,0 +1,98 @@
+/**
+ * 拡張機能内（service worker / offscreen / copilot ウィンドウ / 設定画面）のメッセージ。
+ * offscreen document で使える chrome API は runtime だけなので、全て runtime メッセージで中継する。
+ * `target` で宛先を絞り、他の文脈は無視する。サーバーとの WebSocket は offscreen だけが持つ。
+ */
+import type { ClientMessage, ServerMessage, SessionStartMessage } from '@sales-copilot/contracts';
+import type { AudioGap } from '../audio/sender';
+
+export type CaptureSourceKey = 'SELF' | 'REMOTE';
+
+/** offscreen 内の取得系統の状態（UI 表示用・サーバーの status とは別にローカルで分かること）。 */
+export type LocalSourceState =
+  | 'off' // 取得していない
+  | 'armed' // 取得中・音量確認のみ（外部送信前）
+  | 'capturing' // 取得・送信中
+  | 'paused' // 解析一時停止
+  | 'user_off' // 自分の音声取得OFF
+  | 'no_permission'
+  | 'track_ended'
+  | 'tab_closed'
+  | 'device_changed'
+  | 'error';
+
+export type WsState = 'none' | 'connecting' | 'open' | 'closed' | 'error' | 'unauthorized';
+
+export interface StartConfig {
+  serverUrl: string;
+  token: string;
+  frameMs: number;
+  micDeviceId: string | null;
+  /** 送信待ち上限（バイト）。 */
+  maxBufferedBytes: number;
+  start: Omit<SessionStartMessage, 'type'>;
+}
+
+export type StopReason =
+  | 'user_end'
+  | 'window_closed'
+  | 'tab_closed'
+  | 'track_ended'
+  | 'heartbeat_lost'
+  | 'no_permission'
+  | 'connection_failed'
+  | 'server_ended'
+  | 'error';
+
+// ---- UI → service worker ----
+export type ToSw =
+  | { target: 'sw'; type: 'ui.getTarget' }
+  | { target: 'sw'; type: 'ui.start'; config: StartConfig }
+  | { target: 'sw'; type: 'ui.openOptions' };
+
+export interface TargetInfo {
+  tabId: number | null;
+  title: string | null;
+  isMeet: boolean;
+  /** 会議タブの音声を音量確認のために取得済みか（外部送信はまだ）。 */
+  armed: boolean;
+  armError: string | null;
+}
+
+// ---- service worker / UI → offscreen ----
+export type ToOffscreen =
+  | { target: 'offscreen'; type: 'arm'; streamId: string }
+  | { target: 'offscreen'; type: 'start'; config: StartConfig }
+  | { target: 'offscreen'; type: 'client'; message: ClientMessage }
+  | { target: 'offscreen'; type: 'self.set'; enabled: boolean }
+  | { target: 'offscreen'; type: 'pause.set'; paused: boolean }
+  | { target: 'offscreen'; type: 'end'; exportRequested: boolean }
+  | { target: 'offscreen'; type: 'stop'; reason: StopReason }
+  | { target: 'offscreen'; type: 'heartbeat' }
+  | { target: 'offscreen'; type: 'getState' };
+
+export interface OffscreenSnapshot {
+  phase: 'idle' | 'armed' | 'connecting' | 'live' | 'ending' | 'stopped';
+  sources: Record<CaptureSourceKey, LocalSourceState>;
+  ws: WsState;
+  paused: boolean;
+  selfEnabled: boolean;
+  sessionId: string | null;
+  inputSampleRate: number | null;
+  stopReason: StopReason | null;
+}
+
+// ---- offscreen → UI / service worker ----
+export type FromOffscreen =
+  | { target: 'ui'; type: 'snapshot'; snapshot: OffscreenSnapshot }
+  | { target: 'ui'; type: 'levels'; levels: Record<CaptureSourceKey, number | null> }
+  | { target: 'ui'; type: 'server'; message: ServerMessage }
+  | { target: 'ui'; type: 'gap'; gap: AudioGap; phase: 'start' | 'end' }
+  | { target: 'ui'; type: 'export.result'; result: ExportResult }
+  | { target: 'ui'; type: 'offscreen.error'; message: string }
+  | { target: 'sw'; type: 'offscreen.stopped'; reason: StopReason };
+
+/** 終了時の出力結果。contracts に未定義のため拡張側で吸収（docs/extension.md に変更要望を記載）。 */
+export type ExportResult = { saved: true; path: string } | { saved: false; reason: string };
+
+export type AnyRuntimeMessage = ToSw | ToOffscreen | FromOffscreen;

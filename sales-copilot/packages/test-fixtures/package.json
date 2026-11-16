@@ -12,7 +12,8 @@
     "typecheck": "tsc -p tsconfig.json"
   },
   "dependencies": {
-    "@sales-copilot/contracts": "workspace:*"
+    "@sales-copilot/contracts": "workspace:*",
+    "zod": "^4.6.7"
   },
   "files": [
     "src",

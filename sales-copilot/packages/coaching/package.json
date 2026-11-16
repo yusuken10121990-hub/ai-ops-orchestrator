@@ -5,14 +5,22 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
+    "./testing": "./src/testing.ts",
     "./prompts/*": "./prompts/*"
   },
   "types": "./src/index.ts",
   "scripts": {
-    "typecheck": "tsc -p tsconfig.json"
+    "typecheck": "tsc -p tsconfig.json",
+    "eval:live": "tsx scripts/eval-live.ts"
   },
   "dependencies": {
     "@sales-copilot/contracts": "workspace:*",
-    "@sales-copilot/domain": "workspace:*"
+    "@sales-copilot/domain": "workspace:*",
+    "zod": "^4.6.7",
+    "@sales-copilot/test-fixtures": "workspace:*"
+  },
+  "devDependencies": {
+    "@anthropic-ai/sdk": "^1.8.0",
+    "tsx": "^4.23.15"
   }
 }

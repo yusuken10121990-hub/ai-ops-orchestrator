@@ -361,6 +361,20 @@ try {
   for (let i = 0; i < 50 && (await copilot.getByText(/再接続中/).count()) > 0; i++) await sleep(100);
   check('再接続後は「再接続中」が消える', (await copilot.getByText(/再接続中/).count()) === 0);
 
+  // 6) 商談中に Meet を再読み込み → 「再接続中」→ 出てきた「接続」で同じ商談につなぎ直す（新しい商談・新しい画面にしない）
+  const startsBeforeReload = log.starts.length;
+  const pagesBeforeReload = context.pages().length;
+  await meet.reload();
+  await meet.waitForFunction(() => window.__remoteTrack === true, null, { timeout: 15000 });
+  await copilot.getByText(/再接続中/).first().waitFor({ timeout: 8000 });
+  await meet.getByRole('button', { name: '接続', exact: true }).click();
+  const tReload = Date.now();
+  await until(() => remoteSince(tReload).length >= 5, 15000);
+  check(
+    '商談中に Meet を再読み込みしても「接続」で同じ商談を続ける（新しい商談・画面を作らない）',
+    remoteSince(tReload).length >= 5 && log.starts.length === startsBeforeReload && context.pages().length === pagesBeforeReload && remoteSince(tReload)[0].header.sessionId === 'sess-meet-1',
+  );
+
   await copilot.getByRole('button', { name: /解析一時停止/ }).click();
   await sleep(800);
   const paused = log.frames.length;

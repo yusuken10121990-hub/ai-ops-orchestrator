@@ -289,6 +289,7 @@ export async function buildApp(deps: AppDeps): Promise<AppHandle> {
   interface Conn {
     socket: WebSocket;
   }
+  /** 商談（runtime）が送る先。runtime を作った接続の Conn で、再接続のたびに socket だけ差し替える。 */
   const connOf = new WeakMap<SessionRuntime, Conn>();
   const detached = new Map<string, { runtime: SessionRuntime; timer: ReturnType<typeof setTimeout> }>();
 
@@ -349,14 +350,13 @@ export async function buildApp(deps: AppDeps): Promise<AppHandle> {
         for (const r of runtimes) if (r !== runtime && r.hasSession && r.currentSessionId === sessionId) target = r;
       }
       if (!target || !target.hasSession) return false;
-      const old = connOf.get(target);
-      const oldSocket = old?.socket;
+      const out = connOf.get(target);
+      if (!out) return false;
+      const oldSocket = out.socket;
       // 新しい接続へ付け替える（古い接続の close は「引き継ぎ済み」として無視される）
       runtimes.delete(runtime);
       runtime = target;
-      if (old) old.socket = socket;
-      connOf.set(target, conn);
-      conn.socket = socket;
+      out.socket = socket;
       if (oldSocket && oldSocket !== socket && oldSocket.readyState <= 1) {
         try {
           oldSocket.close(1000, 'resumed elsewhere');
@@ -390,6 +390,8 @@ export async function buildApp(deps: AppDeps): Promise<AppHandle> {
         send({ type: 'hello.ack', protocolVersion: PROTOCOL_VERSION, serverVersion: SERVER_VERSION });
         return;
       }
+      // 別の接続へ引き継がれた古い接続からは受け取らない
+      if (connOf.get(runtime)?.socket !== socket) return;
       if (isBinary) {
         first = false;
         runtime.handleAudio(data);
@@ -420,7 +422,7 @@ export async function buildApp(deps: AppDeps): Promise<AppHandle> {
     socket.on('close', () => {
       clearTimeout(helloTimer);
       // 別の接続へ引き継ぎ済みなら何もしない
-      if (conn.socket !== socket) return;
+      if (connOf.get(runtime)?.socket !== socket) return;
       const r = runtime;
       const sid = r.currentSessionId;
       const grace = config.resumeGraceMs;

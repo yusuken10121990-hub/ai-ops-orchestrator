@@ -201,6 +201,30 @@ describe('OFFLINE session end-to-end over WebSocket', () => {
     expect(log).toMatch(/"endReason":"user_end"/);
   });
 
+  it('two drops in a row: each session.resume moves the SAME session to the newest socket (messages go to the newest client only)', async () => {
+    const { client, h, port, token } = await setup({ resumeGraceMs: 5000, offline: { script: 'decline-respect', speed: 20, useAnthropic: false } }, null);
+    startOffline(client);
+    await waitFor(() => client.of('status').some((s) => s.sessionId), 5000);
+    const sid = client.of('status').at(-1)!.sessionId!;
+    client.ws.close();
+    await sleep(100);
+    const c2 = await connectClient(port, token);
+    c2.send({ type: 'session.resume', sessionId: sid });
+    await waitFor(() => c2.of('session.resumed').length === 1);
+    c2.ws.close();
+    await sleep(100);
+    expect(h.reviews.size).toBe(0);
+    const c3 = await connectClient(port, token);
+    c3.send({ type: 'session.resume', sessionId: sid });
+    await waitFor(() => c3.of('session.resumed').length === 1);
+    expect(c3.of('session.resumed')[0]!.ok).toBe(true);
+    const c2Count = c2.msgs.length;
+    c3.send({ type: 'session.end', exportRequested: false, reason: 'user_end' });
+    await waitFor(() => c3.of('session.ended').length === 1);
+    expect(c3.of('session.ended')[0]!.sessionId).toBe(sid);
+    expect(c2.msgs.length).toBe(c2Count);
+  });
+
   it('resume after the grace period is rejected and the session ended with endReason=connection_lost', async () => {
     const { client, h, port, token, capture } = await setup({ resumeGraceMs: 300, offline: { script: 'decline-respect', speed: 20, useAnthropic: false } }, null);
     startOffline(client);

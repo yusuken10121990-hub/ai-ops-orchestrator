@@ -84,6 +84,9 @@ const serverEnv = {
   PORT: String(port),
   DATA_DIR: dataDir,
   EXPORT_DIR: exportDir,
+  // ペアリング記録・pnpm pair 用の秘密は一時フォルダへ（本物の %LOCALAPPDATA% 等に書かない）
+  USER_DATA_DIR: join(work, 'user'),
+  LOG_FILE: '',
   // 実 API は使わない（.env にキーがあっても上書きで空にする。loadEnvFile は既存の値を上書きしない）
   DEEPGRAM_API_KEY: '',
   ANTHROPIC_API_KEY: '',
@@ -103,6 +106,8 @@ server.on('exit', (code, sig) => (serverExited = { code, sig }));
 
 const base = `http://127.0.0.1:${port}`;
 let context;
+let token = null;
+let extId = null;
 try {
   await until(async () => {
     if (serverExited) throw new Error(`server exited early: ${serverLog.join('').slice(-800)}`);
@@ -129,7 +134,7 @@ try {
   });
   let [sw] = context.serviceWorkers();
   if (!sw) sw = await context.waitForEvent('serviceworker', { timeout: 15000 });
-  const extId = new URL(sw.url()).host;
+  extId = new URL(sw.url()).host;
   check('拡張機能（service worker）起動', !!extId, extId);
 
   // 設定画面: サーバーURL → ペアリング → マイク許可
@@ -151,7 +156,7 @@ try {
   check('設定画面でマイク許可', true);
   await opt.close();
 
-  const token = await sw.evaluate(async () => (await chrome.storage.local.get('settings')).settings?.session?.token ?? null);
+  token = await sw.evaluate(async () => (await chrome.storage.local.get('settings')).settings?.session?.token ?? null);
   check('トークンは拡張機能の storage にだけ保存', typeof token === 'string' && token.length >= 32);
   const authed = { origin: `chrome-extension://${extId}`, authorization: `Bearer ${token}` };
 
@@ -315,6 +320,66 @@ check('サーバーログに会話本文・顧客名・商談目的・ペアリ�
 check('サーバーログにトークン・API キー名の値が無い', !/"token"\s*:\s*"[A-Za-z0-9_-]{20,}"|Bearer [A-Za-z0-9_-]{20,}|sk-ant-/.test(log));
 check('サーバーが致命的エラーなく終了', serverExited && (serverExited.code === 0 || serverExited.sig === 'SIGTERM'), JSON.stringify(serverExited));
 if (process.env.E2E_DUMP_LOG) console.log(log);
+
+// ---------------------------------------------------------------- restart: ペアリングが残る・pnpm pair
+{
+  const env2 = { ...serverEnv };
+  delete env2.PAIRING_CODE_FOR_TEST; // 2 回目の起動はテスト用の固定コードを使わない（pnpm pair の経路を確かめる）
+  const log2 = [];
+  const s2 = spawn(process.execPath, [tsxCli(), 'src/index.ts'], { cwd: SERVER_DIR, env: env2, stdio: ['ignore', 'pipe', 'pipe'] });
+  s2.stdout.on('data', (d) => log2.push(d.toString('utf8')));
+  s2.stderr.on('data', (d) => log2.push(d.toString('utf8')));
+  let exited2 = null;
+  s2.on('exit', (code, sig) => (exited2 = { code, sig }));
+  try {
+    await until(async () => {
+      if (exited2) throw new Error(`server(2) exited early: ${log2.join('').slice(-800)}`);
+      try {
+        return (await fetch(`${base}/health`)).ok;
+      } catch {
+        return false;
+      }
+    }, 30000, 'server(2) /health');
+    const tokensFile = join(work, 'user', 'tokens.json');
+    const stored = existsSync(tokensFile) ? readFileSync(tokensFile, 'utf8') : '';
+    check('ペアリング記録を本人用フォルダに保存（平文トークンは含まない）', stored.includes('"hash"') && !!token && !stored.includes(token));
+    const r = await fetch(`${base}/auth/check`, { headers: { authorization: `Bearer ${token}` } });
+    const body = r.ok ? await r.json() : null;
+    check('サーバー再起動後も同じトークンで認証できる（再ペアリング不要）', r.status === 200 && body?.expiresAt > Date.now() + 170 * 86400_000, `HTTP ${r.status}`);
+    const facts = await fetch(`${base}/facts`, { headers: { origin: `chrome-extension://${extId}`, authorization: `Bearer ${token}` } });
+    check('再起動後も拡張機能の Origin を許可（ペアリング済みとして復元）', facts.status === 200, `HTTP ${facts.status}`);
+    const bad = await fetch(`${base}/auth/check`, { headers: { authorization: `Bearer ${'z'.repeat(43)}` } });
+    check('知らないトークンは再起動後も拒否', bad.status === 401);
+
+    const pairOut = await new Promise((resolve) => {
+      const c = spawn(process.execPath, [join(ROOT, 'scripts', 'pair.mjs')], { cwd: ROOT, env: env2, stdio: ['ignore', 'pipe', 'pipe'] });
+      let out = '';
+      c.stdout.on('data', (d) => (out += d));
+      c.stderr.on('data', (d) => (out += d));
+      c.on('exit', (code) => resolve({ code, out }));
+    });
+    const code2 = /ペアリングコード: (\d{6})/.exec(pairOut.out)?.[1];
+    check('pnpm pair: 動いているサーバーから新しいコードを表示', pairOut.code === 0 && !!code2, pairOut.out.trim().split('\n')[0]);
+    if (code2) {
+      const pr = await fetch(`${base}/pair`, {
+        method: 'POST',
+        headers: { origin: `chrome-extension://${extId}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ pairingCode: code2, extensionId: extId, clientName: 'e2e' }),
+      });
+      check('pnpm pair のコードでペアリングできる', pr.status === 200, `HTTP ${pr.status}`);
+      check('pnpm pair のコードはサーバーログに出ない', !log2.join('').includes(code2));
+    }
+    check('pnpm pair 用の秘密はログに出ない', !/"secret"\s*:\s*"[A-Za-z0-9_-]{20,}"/.test(log2.join('')));
+  } catch (e) {
+    check('再起動の確認で例外なし', false, e instanceof Error ? e.message : String(e));
+  } finally {
+    if (!exited2) {
+      s2.kill('SIGTERM');
+      await until(async () => exited2, 8000, 'server(2) exit').catch(() => s2.kill('SIGKILL'));
+    }
+  }
+  check('サーバー終了で pnpm pair 用の秘密ファイルを消す', !existsSync(join(work, 'user', 'local-admin.json')));
+}
 
 rmSync(work, { recursive: true, force: true });
 const failed = results.filter((r) => !r.ok).length;

@@ -2,8 +2,12 @@ import websocket from '@fastify/websocket';
 import Fastify, { LogController, type FastifyBaseLogger, type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
 import type { Logger } from 'pino';
 import type WebSocket from 'ws';
+import { createHash, timingSafeEqual } from 'node:crypto';
 import {
+  AuthCheckResponse,
   ConfigStatusResponse,
+  LOCAL_ADMIN_HEADER,
+  LocalPairingCodeResponse,
   FactApproveRequest,
   FactCreateRequest,
   FactPatchRequest,
@@ -28,6 +32,7 @@ import { providerStatus, type ServerConfig } from './config';
 import type { ReplayScript } from './replay';
 import { SERVER_VERSION, SessionRuntime, type SessionReview } from './session-runtime';
 import type { Store } from './store';
+import type { TokenPersistence } from './token-store';
 
 export interface AppDeps {
   config: ServerConfig;
@@ -42,6 +47,13 @@ export interface AppDeps {
   now?: () => number;
   /** hello を待つ時間（ms）。 */
   helloTimeoutMs?: number;
+  /** ペアリング記録（ハッシュのみ）の永続化先。無ければメモリだけ。 */
+  tokenStore?: TokenPersistence | null;
+  /**
+   * POST /local/pairing-code（pnpm pair）に必要な秘密。サーバー起動ごとに作り直し、本人だけが読めるファイルに置く。
+   * 無ければこの経路は無効（404）。
+   */
+  localAdminSecret?: string | null;
 }
 
 export interface AppHandle {
@@ -66,6 +78,9 @@ export async function buildApp(deps: AppDeps): Promise<AppHandle> {
     pairingCodeTtlMs: config.pairingCodeTtlMs,
     pairingMaxAttempts: config.pairingMaxAttempts,
     allowedExtensionId: config.allowedExtensionId,
+    store: deps.tokenStore ?? null,
+    // 保存に失敗してもメモリ上は動く（再起動で再ペアリングが要る）。中身・トークンはログに出さない
+    onPersistError: (op, e) => logger.error({ op, err: e }, 'pairing store error'),
   });
   const runtimes = new Set<SessionRuntime>();
   const reviews = new Map<string, SessionReview>();
@@ -145,6 +160,37 @@ export async function buildApp(deps: AppDeps): Promise<AppHandle> {
   });
 
   app.options('/*', async (_req, reply) => reply.code(204).send());
+
+  // ペアリングがまだ有効か（期限は使うたびに延長される。最新の期限を返す）
+  app.get('/auth/check', { preHandler: requireAuth('session') }, async (req, reply) => {
+    const info = auth.tokenInfo(bearerToken(req.headers.authorization));
+    if (!info) return reply.code(401).send({ error: 'unauthorized' });
+    return AuthCheckResponse.parse({ ok: true, ...info });
+  });
+
+  // 設定画面の「解除」: このトークンをサーバー側でも失効させる（保存済みの記録からも消す）
+  app.post('/auth/revoke', { preHandler: requireAuth('settings') }, async (req) => {
+    const revoked = auth.revokeToken(bearerToken(req.headers.authorization));
+    logger.info({ revoked }, 'pairing revoked');
+    return { ok: true };
+  });
+
+  // pnpm pair: 同じ PC の本人だけが読めるファイルの秘密を持つ要求にだけ、新しいペアリングコードを返す。
+  // ブラウザ（Origin 付き）からは使えない。秘密は起動ごとに作り直す。
+  const adminSecretHash = deps.localAdminSecret ? createHash('sha256').update(deps.localAdminSecret).digest() : null;
+  app.post('/local/pairing-code', async (req, reply) => {
+    if (!adminSecretHash) return reply.code(404).send({ error: 'not_found' });
+    if (req.headers.origin !== undefined) return reply.code(403).send({ error: 'origin_not_allowed' });
+    const got = req.headers[LOCAL_ADMIN_HEADER];
+    const given = typeof got === 'string' ? createHash('sha256').update(got).digest() : null;
+    if (!given || !timingSafeEqual(given, adminSecretHash)) {
+      logger.warn({ route: '/local/pairing-code' }, 'rejected: local admin secret');
+      return reply.code(401).send({ error: 'unauthorized' });
+    }
+    const pairingCode = auth.issuePairingCode();
+    logger.info('pairing code issued (pnpm pair)');
+    return LocalPairingCodeResponse.parse({ pairingCode, expiresAt: now() + config.pairingCodeTtlMs });
+  });
 
   // 応答は返す前に contracts のスキーマで検証する（拡張側も同じスキーマで受ける）
   app.get('/config/status', { preHandler: requireAuth('settings') }, async () =>

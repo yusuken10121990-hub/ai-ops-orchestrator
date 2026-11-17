@@ -30,7 +30,7 @@ async function loadPlaywright() {
 }
 
 const TOKEN = 'm'.repeat(48);
-const log = { connections: 0, starts: [], frames: [], json: [], closed: 0 };
+const log = { connections: 0, starts: [], frames: [], json: [], closed: 0, authChecks: 0 };
 
 const http = createServer((req, res) => {
   const send = (code, body) => {
@@ -38,6 +38,12 @@ const http = createServer((req, res) => {
     res.end(JSON.stringify(body));
   };
   if (req.url === '/health') return send(200, { ok: true });
+  if (req.url === '/auth/check') {
+    log.authChecks++;
+    if (req.headers.authorization !== `Bearer ${TOKEN}`) return send(401, { error: 'unauthorized' });
+    const now = Date.now();
+    return send(200, { ok: true, issuedAt: now - 1000, expiresAt: now + 180 * 86400_000, scopes: ['session', 'settings'] });
+  }
   if (req.url === '/config/status')
     return send(200, {
       version: 'mock',
@@ -273,6 +279,45 @@ try {
   check('2 回目の商談も「接続」1 回で開始（前回モード LIVE）', log.starts[1]?.mode === 'LIVE' && log.starts[1]?.consentConfirmed === true);
   await until(() => copilot.isClosed(), 5000);
   check('前の終了画面のウィンドウは閉じて開き直す', copilot.isClosed() && !copilot2.isClosed());
+  check('「接続」の前にサーバーでペアリングを確認（/auth/check）', log.authChecks >= 2, `${log.authChecks} checks`);
+  const slid = await sw.evaluate(async () => (await chrome.storage.local.get('settings')).settings?.session?.expiresAt ?? 0);
+  check('サーバーが延長した期限を拡張側にも反映', slid > Date.now() + 170 * 86400_000);
+
+  // --- ペアリング切れ: カンペ画面を開かず、1 行の直し方＋設定画面へのボタン
+  const setSettings = (patch) =>
+    sw.evaluate(async (p) => {
+      const r = await chrome.storage.local.get('settings');
+      const cur = r.settings;
+      await chrome.storage.local.set({ settings: { ...cur, ...p, session: p.token ? { ...cur.session, token: p.token } : cur.session } });
+    }, patch);
+  await setSettings({ token: 'x'.repeat(48) });
+  const startsBefore = log.starts.length;
+  const exp = await context.newPage();
+  await exp.goto('https://meet.google.com/exp-ired-abc');
+  await exp.getByRole('button', { name: '接続', exact: true }).waitFor({ timeout: 15000 });
+  const pagesBeforeExp = context.pages().length;
+  await exp.getByRole('button', { name: '接続', exact: true }).click();
+  await exp.getByText('ペアリングが切れました → 設定画面で再ペアリング').waitFor({ timeout: 10000 });
+  check('ペアリング切れ: ポップアップに「ペアリングが切れました → 設定画面で再ペアリング」', true);
+  check('ペアリング切れ: カンペ画面を開かない・開始しない', context.pages().length === pagesBeforeExp && log.starts.length === startsBefore);
+  const optPage = context.waitForEvent('page', { timeout: 10000 });
+  await exp.getByRole('button', { name: '設定画面で再ペアリング' }).click();
+  const opened = await optPage;
+  check('「設定画面で再ペアリング」で設定画面が開く（行き止まりにしない）', opened.url().includes('/options.html'), opened.url());
+  await opened.getByText('ペアリングが切れました → 下のペアリングコード欄で再ペアリング').waitFor({ timeout: 10000 });
+  check('設定画面にも切れたことと直し方を表示', true);
+  check('設定画面にコードの出し方（pnpm pair）を表示', (await opened.getByText(/pnpm pair を実行すると表示されます/).count()) >= 1);
+  await opened.close();
+
+  // --- サーバー未起動: 直し方の 1 行
+  await setSettings({ token: TOKEN, serverUrl: 'http://127.0.0.1:9' });
+  const down = await context.newPage();
+  await down.goto('https://meet.google.com/dwn-serv-abc');
+  await down.getByRole('button', { name: '接続', exact: true }).waitFor({ timeout: 15000 });
+  await down.getByRole('button', { name: '接続', exact: true }).click();
+  await down.getByText(/^サーバーが起動していません → /).waitFor({ timeout: 15000 });
+  check('サーバー未起動: ポップアップに「サーバーが起動していません → 直し方」', true);
+  check('サーバー未起動: 「もう一度接続」で押し直せる', (await down.getByRole('button', { name: 'もう一度接続' }).count()) === 1);
 } catch (e) {
   check('例外なし', false, e instanceof Error ? e.message : String(e));
 } finally {

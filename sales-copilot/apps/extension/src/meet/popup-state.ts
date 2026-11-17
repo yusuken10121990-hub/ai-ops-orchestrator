@@ -49,7 +49,8 @@ export type PopupState =
   | { kind: 'declined'; code: string }
   /** 接続した後に終了した（同じページでは自動で出し直さない。再開は拡張アイコンかページの再読み込み）。 */
   | { kind: 'ended'; code: string }
-  | { kind: 'error'; code: string; message: string };
+  /** fix = 'options' のときは設定画面（再ペアリング）へのボタンを主に出す。 */
+  | { kind: 'error'; code: string; message: string; fix?: 'options' | 'server' };
 
 export type PopupEvent =
   /** 会議ページを見た（joined = 通話参加を確認できた）。 */
@@ -57,7 +58,7 @@ export type PopupEvent =
   | { type: 'connect' }
   | { type: 'decline' }
   | { type: 'connect.ok' }
-  | { type: 'connect.fail'; message: string }
+  | { type: 'connect.fail'; message: string; fix?: 'options' | 'server' }
   /** 取得が終わった（終了・ウィンドウを閉じた等）。 */
   | { type: 'capture.ended' }
   | { type: 'dismiss' };
@@ -83,7 +84,7 @@ export function popupReducer(s: PopupState, e: PopupEvent): PopupState {
     case 'connect.ok':
       return s.kind === 'connecting' ? { kind: 'connected', code: s.code } : s;
     case 'connect.fail':
-      return s.kind === 'connecting' ? { kind: 'error', code: s.code, message: e.message } : s;
+      return s.kind === 'connecting' ? { kind: 'error', code: s.code, message: e.message, ...(e.fix ? { fix: e.fix } : {}) } : s;
     case 'capture.ended':
       // 接続していた会議だけ。終了直後に勝手に出し直さない
       return s.kind === 'connected' || s.kind === 'connecting' ? { kind: 'ended', code: s.code } : s;
@@ -107,4 +108,21 @@ export function purposeFromMeetTitle(title: string | null | undefined, code: str
   t = t.replace(/^(Google\s+)?Meet\s*[-–—:：]\s*/i, '').replace(/\s*[-–—]\s*(Google\s+)?Meet$/i, '').trim();
   if (!t || /^(Google\s+)?Meet$/i.test(t) || (code && t === code)) t = code ? `Google Meet の商談（${code}）` : 'Google Meet の商談';
   return t.slice(0, 500);
+}
+
+/**
+ * 「接続」の失敗を、ポップアップに出す 1 行（何が起きたか → どう直すか）とボタンに変える。
+ * - ペアリング切れ・未ペアリング: 「設定画面で再ペアリング」ボタン
+ * - サーバー未起動: 直し方の 1 行＋「もう一度接続」（起動したら押し直すだけ）
+ */
+export function connectFailure(res: { error?: string; problem?: 'not_paired' | 'pairing_expired' | 'server_down' } | undefined | null, thrown?: string): PopupEvent {
+  if (res?.problem === 'pairing_expired' || res?.problem === 'not_paired') {
+    return { type: 'connect.fail', message: res.error ?? '', fix: 'options' };
+  }
+  if (res?.problem === 'server_down') return { type: 'connect.fail', message: res.error ?? '', fix: 'server' };
+  const detail = thrown ?? res?.error ?? '拡張機能から応答がありません';
+  return {
+    type: 'connect.fail',
+    message: `接続できませんでした（${detail}）。拡張機能を再読み込みした場合はこのページを再読み込みしてから「もう一度接続」を押してください。`,
+  };
 }

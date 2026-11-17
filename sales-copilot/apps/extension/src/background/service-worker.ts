@@ -8,7 +8,10 @@
  *   offscreen が Port で受け取る。copilot ウィンドウを開き、確認画面を挟まずに自動開始させる（autoStart）。
  *   アクションのクリックが要らないので 1 タップで済む。従来の拡張アイコン（tabCapture）はそのまま代替経路として残す。
  */
+import { clientFromSettings } from '../shared/api';
+import { checkPairing, pairingProblemLine, type PairingCheck } from '../shared/pairing';
 import type { AutoStartRequest, CaptureVia, FromOffscreen, MeetConnectResult, TargetInfo, ToOffscreen, ToSw } from '../shared/runtime-messages';
+import { loadSettings, saveSettings } from '../shared/settings';
 
 const OFFSCREEN_URL = 'offscreen.html';
 const COPILOT_URL = 'copilot.html';
@@ -100,6 +103,8 @@ async function armTarget(tabId: number): Promise<void> {
 }
 
 chrome.action.onClicked.addListener((tab) => {
+  // 期限の表示を最新に（待たない: tabCapture はクリック直後に取る必要がある）
+  void refreshPairing().catch(() => {});
   void (async () => {
     const st = await load();
     if (st.copilotWindowId !== null) {
@@ -134,6 +139,21 @@ chrome.action.onClicked.addListener((tab) => {
   })();
 });
 
+/**
+ * サーバーの起動とペアリングの有効性を確かめる。有効なら保存済みの期限をサーバーの最新値（使うたびに延長）に合わせる。
+ * 確認できない（unknown）ときは止めずに開いた先の画面で詳しく出す。
+ */
+async function refreshPairing(): Promise<PairingCheck> {
+  const s = await loadSettings();
+  const r = await checkPairing(clientFromSettings(s), s.session);
+  if (r.kind === 'ok' && s.session && s.session.expiresAt !== r.expiresAt) {
+    const now = await loadSettings();
+    // 確認中に再ペアリング・解除されていたら触らない
+    if (now.session?.token === s.session.token) await saveSettings({ session: { ...s.session, expiresAt: r.expiresAt } });
+  }
+  return r;
+}
+
 function isBusy(phase: string | undefined): boolean {
   return phase === 'live' || phase === 'connecting' || phase === 'ending';
 }
@@ -141,6 +161,11 @@ function isBusy(phase: string | undefined): boolean {
 /** Meet ポップアップの「接続」1 タップ。対象タブ＝押されたタブ（sender.tab）。 */
 async function meetConnect(tab: chrome.tabs.Tab, meetingCode: string, purpose: string): Promise<MeetConnectResult> {
   const tabId = tab.id!;
+  // 先にサーバーとペアリングを確認（だめならカンペ画面を開かず、ポップアップに直し方を出す）
+  const pre = await refreshPairing();
+  if (pre.kind === 'server_down' || pre.kind === 'pairing_expired' || pre.kind === 'not_paired') {
+    return { ok: false, problem: pre.kind, error: pairingProblemLine(pre.kind) };
+  }
   const st = await load();
   const old = st.copilotWindowId !== null ? await chrome.windows.get(st.copilotWindowId).catch(() => null) : null;
   if (old && (await hasOffscreen())) {

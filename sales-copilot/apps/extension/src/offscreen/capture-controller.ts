@@ -17,6 +17,7 @@ import {
 } from '@sales-copilot/contracts';
 import { SourceFramer } from '../audio/framer';
 import { BackpressureSender, WS_OPEN, type AudioGap, type SocketLike } from '../audio/sender';
+import type { FromOffscreenPort } from '../meet/wire';
 import type {
   CaptureSourceKey,
   FromOffscreen,
@@ -28,6 +29,15 @@ import type {
 } from '../shared/runtime-messages';
 
 export const CLIENT_VERSION = '0.1.0';
+
+/**
+ * Meet ページ内取得（ワンタップ接続）との連絡口。実体は content script との runtime Port。
+ * 音声は controller.inPagePcm() で入ってくる。
+ */
+export interface InPageLink {
+  send(msg: FromOffscreenPort): void;
+  close(): void;
+}
 
 export interface MediaTrackLike {
   readonly readyState: string;
@@ -111,6 +121,7 @@ export class CaptureController {
   private remoteProc: ProcessorHandle | null = null;
   private selfStream: MediaStreamLike | null = null;
   private selfProc: ProcessorHandle | null = null;
+  private inPage: InPageLink | null = null;
   private socket: WsLike | null = null;
   private sender: BackpressureSender | null = null;
   private framers: Partial<Record<CaptureSourceKey, SourceFramer>> = {};
@@ -225,9 +236,71 @@ export class CaptureController {
   private disposeRemote(): void {
     this.remoteProc?.dispose();
     this.remoteProc = null;
+    const link = this.inPage;
+    this.inPage = null;
+    if (link) {
+      link.send({ type: 'stop.all' });
+      link.close();
+    }
     for (const t of this.remoteStream?.getTracks() ?? []) t.stop();
     this.remoteStream = null;
     this.levels.REMOTE = null;
+  }
+
+  // ------------------------------------------------------------------ REMOTE（Meet ページ内取得）
+
+  /** Meet ポップアップの「接続」: ページ内で取得した音声を受け取る（tabCapture の代わり）。 */
+  async armInPage(link: InPageLink): Promise<void> {
+    if (this.phase === 'stopped') this.resetForReuse();
+    if (this.selfStream || this.selfProc) this.disposeSelf();
+    this.disposeRemote();
+    this.inPage = link;
+    this.remoteProc = {
+      setEnabled: (enabled) => link.send({ type: 'remote.enable', enabled }),
+      dispose: () => {},
+    };
+    if (this.phase === 'live') {
+      this.framers.REMOTE?.startGeneration(this.deps.now() - this.sessionStartAt);
+      this.sources.REMOTE = this.paused ? 'paused' : 'capturing';
+      if (this.paused) link.send({ type: 'remote.enable', enabled: false });
+    } else {
+      this.sources.REMOTE = 'armed';
+    }
+    if (this.phase === 'idle') this.phase = 'armed';
+    this.ensureLoops();
+    this.publish();
+    if (this.phase === 'live' && this.selfEnabled && !this.paused) await this.startSelf();
+  }
+
+  /** ページ内取得の音声（16kHz PCM16）。接続中の Port から来たものだけ。 */
+  inPagePcm(link: InPageLink, source: CaptureSource, pcm: Int16Array, levelDb: number): void {
+    if (link !== this.inPage) return;
+    if (source === 'SELF' && !this.selfProc) return;
+    this.onPcm(source, pcm, levelDb);
+  }
+
+  /** ページ内のマイク・会議音声の取得エラー。 */
+  inPageError(link: InPageLink, source: CaptureSource, name: string): void {
+    if (link !== this.inPage) return;
+    if (source === 'SELF') {
+      const denied = name === 'NotAllowedError' || name === 'SecurityError';
+      this.onSelfLost(denied ? 'no_permission' : name === 'track_ended' ? 'track_ended' : 'error');
+      return;
+    }
+    this.sources.REMOTE = 'error';
+    this.deps.emit({ target: 'ui', type: 'offscreen.error', message: '会議の音声を取得できませんでした（Meet のページを再読み込みしてもう一度接続してください）' });
+    this.publish();
+  }
+
+  /** Port が切れた（Meet のタブを閉じた・移動した・再読み込みした）。 */
+  inPageLost(link: InPageLink): void {
+    if (link !== this.inPage) return;
+    this.inPage = null;
+    this.onRemoteLost('tab_closed');
+  }
+
+  get inPageActive(): boolean {
+    return this.inPage !== null;
   }
 
   // ------------------------------------------------------------------ SELF
@@ -235,6 +308,17 @@ export class CaptureController {
   private async startSelf(): Promise<void> {
     if (!this.config || this.phase !== 'live') return;
     this.disposeSelf();
+    const link = this.inPage;
+    if (link) {
+      // ページ内取得: Meet のページに許可済みのマイクを使う（このタブで追加の確認は出ない）
+      this.framers.SELF?.startGeneration(this.deps.now() - this.sessionStartAt);
+      link.send({ type: 'self.start' });
+      this.selfProc = { setEnabled: () => {}, dispose: () => link.send({ type: 'self.stop' }) };
+      this.sources.SELF = 'capturing';
+      this.sendJson({ type: 'source.state', source: 'SELF', state: 'on' });
+      this.publish();
+      return;
+    }
     try {
       const stream = await this.deps.getMicStream(this.config.micDeviceId);
       if (this.phase !== 'live' || !this.selfEnabled || this.paused) {
@@ -467,7 +551,7 @@ export class CaptureController {
       this.sendJson({ type: 'analysis.pause' });
       this.remoteProc?.setEnabled(false);
       if (this.sources.REMOTE === 'capturing') this.sources.REMOTE = 'paused';
-      if (this.selfStream) {
+      if (this.selfStream || this.selfProc) {
         this.disposeSelf();
         this.sources.SELF = 'paused';
       }

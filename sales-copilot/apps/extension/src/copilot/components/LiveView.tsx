@@ -18,6 +18,8 @@ export interface LiveActions {
   changeFont(delta: number): void;
   toggleTheme(): void;
   openOptions(): void;
+  /** 商談中に商談目的を変える（1 タップ接続では会議名が仮の目的）。 */
+  updatePurpose?(purpose: string): void;
 }
 
 export interface LiveViewProps extends Omit<StatusBarProps, 'onOpenOptions'> {
@@ -27,6 +29,8 @@ export interface LiveViewProps extends Omit<StatusBarProps, 'onOpenOptions'> {
   levels: Record<'SELF' | 'REMOTE', number | null>;
   snapshot: OffscreenSnapshot;
   lastError: string | null;
+  /** 今の商談目的（不明なら表示しない）。 */
+  purpose?: string | null;
   actions: LiveActions;
   newId?: () => string;
 }
@@ -45,6 +49,7 @@ export function LiveView(props: LiveViewProps) {
   const [confirmEnd, setConfirmEnd] = useState(false);
   const [exportReq, setExportReq] = useState(false);
   const [feedbackDone, setFeedbackDone] = useState<string | null>(null);
+  const [editingPurpose, setEditingPurpose] = useState<string | null>(null);
   const newId = props.newId ?? (() => crypto.randomUUID());
   const card = view.card;
   const pinned = view.mode === 'pinned';
@@ -125,6 +130,38 @@ export function LiveView(props: LiveViewProps) {
         </div>
       </div>
       <StatusBar snapshot={snapshot} status={props.status} usage={props.usage} onOpenOptions={actions.openOptions} />
+      {props.purpose && actions.updatePurpose ? (
+        editingPurpose === null ? (
+          <p className="small">
+            商談目的: {props.purpose}{' '}
+            <button type="button" onClick={() => setEditingPurpose(props.purpose ?? '')}>
+              変更
+            </button>
+          </p>
+        ) : (
+          <form
+            className="row"
+            aria-label="商談目的の変更"
+            onSubmit={(ev) => {
+              ev.preventDefault();
+              const next = editingPurpose.trim();
+              if (next) actions.updatePurpose?.(next.slice(0, 500));
+              setEditingPurpose(null);
+            }}
+          >
+            <label htmlFor="live-purpose" className="small">
+              商談目的
+            </label>
+            <input id="live-purpose" type="text" maxLength={500} value={editingPurpose} onChange={(e) => setEditingPurpose(e.target.value)} autoFocus />
+            <button type="submit" className="primary" disabled={!editingPurpose.trim()}>
+              保存
+            </button>
+            <button type="button" onClick={() => setEditingPurpose(null)}>
+              やめる
+            </button>
+          </form>
+        )
+      ) : null}
       {props.lastError ? (
         <div className="notice error" role="alert">
           {props.lastError}

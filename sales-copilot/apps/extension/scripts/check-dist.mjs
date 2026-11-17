@@ -11,13 +11,24 @@ const fail = (m) => {
 };
 
 const manifest = JSON.parse(readFileSync(join(dist, 'manifest.json'), 'utf8'));
-for (const f of [manifest.background.service_worker, manifest.options_page, 'copilot.html', 'offscreen.html', 'capture-worklet.js']) {
+for (const f of [manifest.background.service_worker, manifest.options_page, 'copilot.html', 'offscreen.html', 'capture-worklet.js', 'meet-page.js', 'meet-content.js']) {
   if (!existsSync(join(dist, f))) fail(`missing ${f}`);
 }
 const allowedPerms = new Set(['tabCapture', 'offscreen', 'storage', 'activeTab']);
 for (const p of manifest.permissions) if (!allowedPerms.has(p)) fail(`unexpected permission ${p}`);
 for (const h of manifest.host_permissions) if (!/^http:\/\/(127\.0\.0\.1|localhost)\/\*$/.test(h)) fail(`unexpected host permission ${h}`);
 if (JSON.stringify(manifest).includes('<all_urls>')) fail('<all_urls> is not allowed');
+// ページに入れるスクリプトは Google Meet だけ（ほかのサイトには入らない）
+for (const cs of manifest.content_scripts ?? []) {
+  for (const m of cs.matches) if (m !== 'https://meet.google.com/*') fail(`unexpected content script match ${m}`);
+  for (const js of cs.js) {
+    if (!existsSync(join(dist, js))) fail(`missing ${js}`);
+    const src = readFileSync(join(dist, js), 'utf8');
+    if (/^\s*(import|export)\s/m.test(src)) fail(`${js} must be a single classic script (no import/export)`);
+    if (/\.innerHTML\s*=|insertAdjacentHTML|document\.write\(/.test(src)) fail(`${js} must not build HTML from strings`);
+  }
+}
+if (manifest.web_accessible_resources) fail('web_accessible_resources is not allowed (Meet ページから拡張内部を読めないように)');
 
 const worklet = readFileSync(join(dist, 'capture-worklet.js'), 'utf8');
 if (/^\s*import\s/m.test(worklet)) fail('worklet must be a single file without imports');

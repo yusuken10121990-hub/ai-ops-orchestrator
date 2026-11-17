@@ -92,6 +92,14 @@ export const FeedbackMessage = z
   .object({ type: z.literal('feedback'), adviceId: Id, rating: FeedbackRating })
   .strict();
 
+/**
+ * 商談中の商談目的の変更（Meet ポップアップの 1 タップ接続では会議名を仮の目的にして開始するため）。
+ * 以後の助言生成から新しい目的を使う。
+ */
+export const SessionUpdateMessage = z
+  .object({ type: z.literal('session.update'), purpose: z.string().trim().min(1).max(500) })
+  .strict();
+
 export const SessionEndMessage = z
   .object({ type: z.literal('session.end'), exportRequested: z.boolean() })
   .strict();
@@ -138,6 +146,7 @@ export const ClientMessage = z.union([
   CardPinMessage,
   CardUnpinMessage,
   FeedbackMessage,
+  SessionUpdateMessage,
   SessionEndMessage,
   SpeakingStateMessage,
   AdviceDisplayedMessage,

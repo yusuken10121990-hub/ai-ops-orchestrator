@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { ApprovedFact, AppliedFactRef, ConfigStatusResponse, OfflineScriptsResponse, SessionMode } from '@sales-copilot/contracts';
 import { Badge, Meter, hasMicPermission, useAudioInputs, useLocalMicTest } from '../../ui/common';
 import { localSourceLabel, sourceFixHint } from '../../shared/labels';
@@ -38,6 +38,10 @@ export interface PreSessionProps {
   remoteLevel: number | null;
   starting: boolean;
   startError: string | null;
+  /** Meet ポップアップの「接続」で開いたが自動開始できなかった理由と直し方。 */
+  autoNote?: string | null;
+  /** 「接続」で渡された商談目的（会議名）。あれば入力済みにし、タップ済みの同意②も確認済みにする。 */
+  initialPurpose?: string | null;
   now: number;
   onStart(p: StartParams): void;
   onOpenOptions(): void;
@@ -71,13 +75,19 @@ function fmtDate(ms: number | null): string {
 }
 
 export function PreSession(p: PreSessionProps) {
-  const [purpose, setPurpose] = useState('');
+  const [purpose, setPurpose] = useState(p.initialPurpose ?? '');
   const [customer, setCustomer] = useState('');
   const [selected, setSelected] = useState<Record<string, boolean>>({});
   const [mode, setMode] = useState<SessionMode>('LIVE');
   const [selfOn, setSelfOn] = useState(true);
   const [ackMic, setAckMic] = useState(false);
-  const [ackConsent, setAckConsent] = useState(false);
+  const [ackConsent, setAckConsent] = useState(!!p.initialPurpose);
+  // 対象情報は画面を開いた後に届くので、届いた時点で入力済みにする（本人が入力したものは上書きしない）
+  useEffect(() => {
+    if (!p.initialPurpose) return;
+    setPurpose((cur) => cur || p.initialPurpose!);
+    setAckConsent(true);
+  }, [p.initialPurpose]);
   const [confirming, setConfirming] = useState(false);
   const [scriptId, setScriptId] = useState<string>('');
   const [offlineAnthropic, setOfflineAnthropic] = useState(false);
@@ -125,6 +135,16 @@ export function PreSession(p: PreSessionProps) {
   return (
     <div className="app">
       <h1>商談の開始前の確認</h1>
+      {p.initialPurpose && !p.autoNote ? (
+        <div className="notice" role="status">
+          Meet の「接続」を受け付けました。自動で開始しています…
+        </div>
+      ) : null}
+      {p.autoNote ? (
+        <div className="notice error" role="alert">
+          自動で開始できませんでした: {p.autoNote}
+        </div>
+      ) : null}
 
       <section className="box" aria-labelledby="h-target">
         <h2 id="h-target">対象の会議タブ</h2>

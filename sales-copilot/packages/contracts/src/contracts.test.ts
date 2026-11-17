@@ -230,6 +230,13 @@ describe('integration additions (session.ended / advice.displayed / audio.gap / 
     expect(ClientMessage.safeParse({ ...gap, reason: 'whatever' }).success).toBe(false);
   });
 
+  it('session.update carries a non-empty purpose (<=500) and nothing else', () => {
+    expect(ClientMessage.safeParse({ type: 'session.update', purpose: 'A社 定例' }).success).toBe(true);
+    expect(ClientMessage.safeParse({ type: 'session.update', purpose: '   ' }).success).toBe(false);
+    expect(ClientMessage.safeParse({ type: 'session.update', purpose: 'x'.repeat(501) }).success).toBe(false);
+    expect(ClientMessage.safeParse({ type: 'session.update', purpose: 'p', mode: 'LIVE' }).success).toBe(false);
+  });
+
   it('session.start accepts optional offlineScriptId (safe id) and offlineUseAnthropic', () => {
     const base = { type: 'session.start', purpose: 'p', appliedFacts: [], mode: 'OFFLINE', selfCaptureEnabled: false, consentConfirmed: true };
     expect(ClientMessage.safeParse({ ...base, offlineScriptId: 'demo-next-step', offlineUseAnthropic: true }).success).toBe(true);

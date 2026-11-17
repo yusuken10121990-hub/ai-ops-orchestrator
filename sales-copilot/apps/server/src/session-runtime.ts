@@ -177,6 +177,11 @@ export class SessionRuntime {
         return this.unpinCard(msg.adviceId);
       case 'feedback':
         return this.feedback(msg.adviceId, msg.rating);
+      case 'session.update':
+        // 目的は以後の助言の文脈にだけ使う（内容はログに出さない）
+        if (!this.requireSession()) return;
+        this.purpose = msg.purpose;
+        return;
       case 'speaking.state':
         if (!this.requireSession()) return;
         // OFFLINE は再生スクリプトが会話なので、実マイクの発話状態でカード更新を保留しない（LIVE のみ反映）

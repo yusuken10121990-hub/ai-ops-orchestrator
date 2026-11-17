@@ -1,4 +1,4 @@
-import { SessionToken } from '@sales-copilot/contracts';
+import { SessionToken, type SessionMode } from '@sales-copilot/contracts';
 import { DEFAULT_FRAME_MS, clampFrameMs } from '../audio/dsp/chunker';
 import { DEFAULT_MAX_BUFFERED_BYTES } from '../audio/sender';
 
@@ -15,6 +15,8 @@ export interface Settings {
   maxBufferedBytes: number;
   fontScale: number;
   theme: ThemePref;
+  /** 前回開始したモード（Meet ポップアップの 1 タップ接続で同じモードから始める）。 */
+  lastMode: SessionMode | null;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -25,6 +27,7 @@ export const DEFAULT_SETTINGS: Settings = {
   maxBufferedBytes: DEFAULT_MAX_BUFFERED_BYTES,
   fontScale: 1,
   theme: 'light',
+  lastMode: null,
 };
 
 export const FONT_SCALE_MIN = 0.8;
@@ -55,6 +58,7 @@ export function sanitizeSettings(raw: Partial<Settings> | undefined): Settings {
       Number.isFinite(s.maxBufferedBytes) && s.maxBufferedBytes >= 16 * 1024 ? s.maxBufferedBytes : DEFAULT_MAX_BUFFERED_BYTES,
     fontScale: Math.min(FONT_SCALE_MAX, Math.max(FONT_SCALE_MIN, Number(s.fontScale) || 1)),
     theme: s.theme === 'dark' ? 'dark' : 'light',
+    lastMode: s.lastMode === 'LIVE' || s.lastMode === 'OFFLINE' ? s.lastMode : null,
   };
 }
 

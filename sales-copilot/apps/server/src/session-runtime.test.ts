@@ -140,6 +140,26 @@ describe('SessionRuntime LIVE pipeline (fake STT + counting LLM)', () => {
   });
 });
 
+describe('SessionRuntime session.update (商談目的の変更)', () => {
+  it('以後の助言生成は新しい商談目的を使う。セッション外では invalid_state', async () => {
+    const users: string[] = [];
+    const llm = new CountingLlm(async (req) => {
+      users.push(req.user);
+      return { text: '{}', usage: { inputTokens: 1, outputTokens: 1 }, model: 'fake' };
+    });
+    const h = runtimeHarness({ llm });
+    h.runtime.handleMessage({ type: 'session.update', purpose: '変更後の目的' });
+    expect(h.ofType('error').at(-1)).toMatchObject({ code: 'invalid_state' });
+    const sid = start(h, { purpose: 'Google Meet の商談（abc-defg-hij）' });
+    h.runtime.handleMessage({ type: 'session.update', purpose: 'A社 業務診断の結果共有' });
+    remoteFinal(h, sid, '月額の費用はどれくらいかかりますか？', 1000);
+    await waitFor(() => users.length > 0);
+    expect(users[0]).toContain('A社 業務診断の結果共有');
+    expect(users[0]).not.toContain('abc-defg-hij');
+    await h.runtime.end(false);
+  });
+});
+
 describe('SessionRuntime degrades safely (§16-1 #16)', () => {
   it('LIVE without keys → not_configured status + error (not silent idle), no external calls', async () => {
     const h = runtimeHarness({ llm: null, withStt: false });

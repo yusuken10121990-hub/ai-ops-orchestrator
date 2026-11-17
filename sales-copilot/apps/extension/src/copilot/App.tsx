@@ -17,6 +17,7 @@ import { copilotReducer, initialCopilotState, selectCardView, selectTranscript }
 import { PreSession, type PreSessionServerInfo, type StartParams } from './components/PreSession';
 import { LiveView, type LiveActions } from './components/LiveView';
 import { EndView } from './components/EndView';
+import { decideAutoStart } from './auto-start';
 
 const HEARTBEAT_MS = 2000;
 
@@ -53,6 +54,10 @@ export function App() {
   const [now, setNow] = useState(() => Date.now());
   const phaseRef = useRef(phase);
   phaseRef.current = phase;
+  /** Meet ポップアップの「接続」で開いた場合の自動開始（1 回だけ）。 */
+  const autoHandledRef = useRef<number | null>(null);
+  const [autoNote, setAutoNote] = useState<string | null>(null);
+  const [purpose, setPurpose] = useState<string | null>(null);
 
   // offscreen / service worker からのメッセージ
   useEffect(() => {
@@ -183,6 +188,8 @@ export function App() {
       dispatch({ type: 'reset' });
       setEndResult(null);
       displayedRef.current.clear();
+      setPurpose(p.purpose);
+      void saveSettings({ lastMode: p.mode });
       void sendSw({
         target: 'sw',
         type: 'ui.start',
@@ -209,6 +216,39 @@ export function App() {
     [settings],
   );
 
+  // Meet ポップアップの「接続」: 確認画面を挟まずに開始する（タップ＝同意②の確認）。できなければ理由と直し方を出す。
+  const auto = target?.autoStart ?? null;
+  const remoteState = snapshot?.sources.REMOTE ?? 'off';
+  useEffect(() => {
+    if (phase !== 'pre' || !auto || autoHandledRef.current === auto.requestedAt || !settings) return;
+    const d = decideAutoStart({
+      paired: isTokenUsable(settings, now),
+      health: server.health,
+      config: server.config,
+      configError: server.configError,
+      lastMode: settings.lastMode,
+      remote: remoteState,
+      elapsedMs: now - auto.requestedAt,
+    });
+    if (d.kind === 'wait') return;
+    autoHandledRef.current = auto.requestedAt;
+    void sendSw({ target: 'sw', type: 'ui.autoStartDone' });
+    if (d.kind === 'fail') {
+      setAutoNote(d.message);
+      return;
+    }
+    onStart({
+      purpose: auto.purpose,
+      customerName: null,
+      appliedFacts: [],
+      mode: d.mode,
+      selfCaptureEnabled: true,
+      micDeviceId: settings.micDeviceId,
+      offlineScriptId: null,
+      offlineUseAnthropic: false,
+    });
+  }, [phase, auto, settings, server, remoteState, now, onStart]);
+
   const actions: LiveActions = useMemo(
     () => ({
       sendClient: (message: ClientMessage) => void sendOffscreen({ target: 'offscreen', type: 'client', message }),
@@ -225,6 +265,10 @@ export function App() {
       end: (exp) => {
         setExportRequested(exp);
         void sendOffscreen({ target: 'offscreen', type: 'end', exportRequested: exp });
+      },
+      updatePurpose: (next) => {
+        setPurpose(next);
+        void sendOffscreen({ target: 'offscreen', type: 'client', message: { type: 'session.update', purpose: next } });
       },
       changeFont,
       toggleTheme,
@@ -255,6 +299,7 @@ export function App() {
         status={state.status}
         usage={state.usage}
         lastError={state.lastError ? `サーバー: ${state.lastError.message}` : null}
+        purpose={purpose}
         actions={actions}
       />
     );
@@ -267,8 +312,10 @@ export function App() {
       server={server}
       snapshot={snapshot}
       remoteLevel={levels.REMOTE}
-      starting={starting}
+      starting={starting || (!!auto && autoHandledRef.current !== auto.requestedAt && !autoNote)}
       startError={startError}
+      autoNote={autoNote}
+      initialPurpose={auto?.purpose ?? null}
       now={now}
       onStart={onStart}
       onOpenOptions={openOptions}

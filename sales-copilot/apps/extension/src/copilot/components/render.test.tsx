@@ -183,6 +183,20 @@ describe('LiveView 操作', () => {
     expect(a.end).toHaveBeenCalledWith(true);
   });
 
+  it('商談目的（1 タップ接続では会議名）を商談中に変更できる', () => {
+    const a = { ...actions(), updatePurpose: vi.fn() };
+    render(<LiveView {...base} view={viewOf()} snapshot={snapshot} actions={a} purpose="Google Meet の商談（abc-defg-hij）" />);
+    expect(screen.getByText(/商談目的: Google Meet の商談/)).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: '変更' }));
+    const input = screen.getByLabelText('商談目的') as HTMLInputElement;
+    // 入力中のキーはショートカットにならない
+    fireEvent.keyDown(input, { key: 'e' });
+    expect(screen.queryByText('商談を終了しますか？')).toBeNull();
+    fireEvent.change(input, { target: { value: '  A社 業務診断の結果共有 ' } });
+    fireEvent.click(screen.getByRole('button', { name: '保存' }));
+    expect(a.updatePurpose).toHaveBeenCalledWith('A社 業務診断の結果共有');
+  });
+
   it('全ボタンがキーボードで到達できる button 要素で、ショートカットを持つ', () => {
     render(<LiveView {...base} view={viewOf()} snapshot={snapshot} actions={actions()} />);
     const toolbar = screen.getByRole('toolbar');

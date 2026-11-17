@@ -38,6 +38,39 @@
 - **会議タブを閉じた／トラック終了（共有停止・権限取消）**: `tabs.onRemoved` とトラック `ended` を検知 → `source.state REMOTE lost` → 全停止（別タブへ勝手に切り替えない、スピーカー音をマイクで拾う方式へ黙って切り替えない）。
 - **マイクが外れた**: `devicechange` で選択デバイスの消失を検知 → SELF だけ停止（`device_changed`）し、UI に直し方を表示。会議側は継続（本人が選ぶ縮退）。
 
+## 2-B. Meet ポップアップのワンタップ接続（2026-11-17 追加・オーナー指示）
+
+オーナー指示（原文）: 「ミーツ開いたらボタンをポップアップで出すことできない？ 接続・拒否 みたいな感じで」「基本ワンタップで接続できるようにしたい」。
+
+**なぜ tabCapture ではないか**: `tabCapture.getMediaStreamId` は拡張の起動（アクションのクリック・`commands` のショートカット）の後でしか使えず、
+ページ内に出したボタンのクリックは拡張の起動に数えられない。ポップアップ＋tabCapture では「接続」の後にもう一度アイコンを押す2段階になる。
+そこで、**Meet のページの中で、Meet が既に持っている音声を使う**方式にした（確認ダイアログは出ない）。
+
+```
+[Meet ページ MAIN world: meet-page.js（document_start）]
+   RTCPeerConnection をプロキシで包み、受信した相手側の音声トラックを記録（「接続」まで処理も送信もしない）
+   「接続」後: 相手側トラック（track イベント・receiver・<audio> の srcObject）を 1 系統に混ぜる → REMOTE
+              Meet のページに許可済みの既定マイクを別途 getUserMedia → SELF（Meet のミュートとは独立）
+              WebAudio（ScriptProcessor。AudioWorklet はページの CSP で読めない可能性があるため）→ 同じ CaptureDsp で 16kHz PCM16
+        │ MessageChannel（window.postMessage で port を 1 回だけ受け渡し）
+[Meet ページ 隔離 world: meet-content.js]  Shadow DOM のポップアップ「接続／拒否」、拒否の記憶（sessionStorage・会議コードごと）
+        │ 「接続」→ runtime.sendMessage(meet.connect) → [service worker] 対象タブを記録・offscreen を用意・カンペ画面を開く（autoStart）
+        │ runtime Port（zerosys-meet-audio・PCM は base64）。offscreen は service worker が指定したタブからの Port だけ受ける
+[offscreen: CaptureController.armInPage]  既存のフレーム化・バックプレッシャー・WS・一時停止・終了をそのまま使う
+[copilot ウィンドウ]  autoStart: 開始前画面を経ずに開始（タップ＝同意②）。モード＝前回（LIVE は文字起こし・助言の両方が設定済みのときだけ）、
+                      商談目的＝会議名（商談中に「変更」→ session.update）。開始できなければ理由と直し方を開始前画面に出す
+```
+
+- **再生経路**: Meet 自身が相手の声を再生しているので、こちらは聞くだけ（destination へは無音の Gain 経由でつなぐだけ＝二重再生しない）。
+  tabCapture のように「取得するとタブの音が止まる」ことは無い。
+- **止め方**: 一時停止 → ページ側の会議音声処理を止め、マイクを解放。終了・ウィンドウを閉じる・ハートビート切れ → offscreen が `stop.all` を送り Port を閉じる
+  → ページ側でマイクのトラック停止・AudioContext close。Port が切れたら（タブを閉じた・再読み込み・別の会議へ移動）商談を止める。
+- **参加の判定**: 相手の音声トラックが届いた（RTCPeerConnection のフック）か、「通話から退出」ボタンがある。会議コード（`xxx-xxxx-xxx`）の URL だけ。
+- **SPEC §6-2 との関係**: SPEC の「ユーザー操作起点で tabCapture」はオーナーの今回の指示で、Meet ではページ内取得を主経路に変更（拡張アイコン＝tabCapture は代わりの経路として残す）。
+  DOM・字幕のスクレイピングはしない（音声トラックだけを使う）。スピーカー音をマイクで拾う方式へ切り替えることもしない。
+- **既知のリスク**: Meet の内部実装（WebRTC の使い方）が変わると、会議側の音声が取れなくなる可能性がある。その場合は会議側が「無音」に見えるので、
+  拡張アイコンからの開始に切り替える。**本物の Meet・Windows Chrome での動作は未検証**（docs/manual-checklist.md の A）。
+
 ## 3. 権限（manifest）
 
 | 権限 | 理由 |
@@ -48,7 +81,8 @@
 | `activeTab` | クリックしたタブを `targetTabId` で指定するため（公式: targetTabId には activeTab が必要） |
 | host: `http://127.0.0.1/*`, `http://localhost/*` | ローカルサーバーのみ。`<all_urls>` なし。CSP の `connect-src` もローカルのみに制限 |
 
-`tabs`・`scripting`・content script は使わない（カンペを会議タブへ注入しない）。
+`tabs`・`scripting` は使わない。content script は `https://meet.google.com/*` だけ（2-B の接続ポップアップと音声取得。カンペ自体は会議タブへ埋め込まない）。
+`web_accessible_resources` は持たない（Meet のページから拡張内部のファイルを読めない）。`check-dist.mjs` で、content script の対象が Meet だけであること・単一ファイルであること・文字列から HTML を作らないことを検査する。
 
 ## 4. 音声処理（SPEC §6-3）
 
@@ -78,7 +112,9 @@
 | Playwright 結合（ルート `pnpm test:e2e` の 1/2、`scripts/e2e-integration.mjs`） | **実サーバー**（OFFLINE・一時データ・APIキーなし）× 実拡張: 設定画面でペアリング（誤コード拒否を含む）→ 開始前の API 未設定表示・台本一覧 → OFFLINE 開始 → 文字起こし → 検証済みカード → 表示報告 → 手動ボタン3つ → 一時停止で文字起こし停止 → 終了で session.ended・出力なし → 出力ありで exports/ に書く → サーバーログに本文なし | 29/29 成功 |
 | Playwright（ルート `pnpm test:e2e` の 2/2、`pnpm --filter @sales-copilot/extension test:e2e`、ビルド後） | Chromium new headless に拡張を読み込み、モックサーバーに対し: 設定画面でマイク許可 → copilot で OFFLINE 開始 → hello/トークン・Origin・session.start 同意 → **偽マイク→offscreen→AudioWorklet→16kHz/200ms フレーム**受信 → カード描画と XSS 非実行 → 表示固定 → 自分OFFでフレーム停止 → 画面を閉じてハートビート切れで session.end＋切断 | 21/21 成功 |
 
-**自動化できていないもの**（実機チェック docs/manual-checklist.md）: アクションのクリックによる tabCapture（Playwright から拡張アイコンを押せない）、Meet 実音声の二系統、再生維持・ハウリング、実 Chrome の許可ダイアログ、`windows.onRemoved` による終了（スモークはタブで開くためハートビート経路で確認）、実 API 経由の助言、60 分連続稼働。
+| Playwright（ルート `pnpm test:e2e` の 3/3、`scripts/e2e-meet-popup.mjs`、2026-11-17） | `context.route` で返す**偽の Meet ページ**（本物の WebRTC ループバックで 440Hz を受信）× モックサーバー: 会議コードの無いページでは出ない → 相手のトラック受信で「接続／拒否」が出る（Shadow DOM）→ **「接続」1 回でカンペ画面・確認画面なしで開始**（consentConfirmed・LIVE・目的＝会議名）→ REMOTE（無音でない）と SELF が別系統 16kHz で届く → 目的の変更 → 一時停止で両系統停止 → 終了で切断・再表示しない → 「拒否」で何も開かない・再読み込みでも再表示しない → 終了画面が残っていても別の会議の「接続」1 回で開き直して開始 | 26/26 成功 |
+
+**自動化できていないもの**（実機チェック docs/manual-checklist.md）: **本物の Google Meet でのポップアップ表示・ワンタップ接続・相手と自分の二系統の文字起こし**、 アクションのクリックによる tabCapture（Playwright から拡張アイコンを押せない）、Meet 実音声の二系統、再生維持・ハウリング、実 Chrome の許可ダイアログ、`windows.onRemoved` による終了（スモークはタブで開くためハートビート経路で確認）、実 API 経由の助言、60 分連続稼働。
 
 ## 7. ビルド・読込
 

@@ -39,10 +39,20 @@ Google Meetの商談中に、会議タブの音声と自分のマイク音声を
 5. 拡張の設定画面（アイコン右クリック→オプション）でペアリング番号を入れて「ペアリング」。続けてマイク許可（★「許可」ボタンだけオーナー）。
 6. 鍵なしの試験モードで1回通す（README の OFFLINE 手順）。カンペが出ることを画面で確認する。
 7. ★鍵: Deepgram と Anthropic のAPIキーをオーナーに `.env` へ入れてもらう（AIは値を見ない・チャットに貼らせない）。
-   `DEEPGRAM_API_KEY=` と `ANTHROPIC_API_KEY=` の2行。入れたらサーバー再起動→再ペアリング。
+   `DEEPGRAM_API_KEY=` と `ANTHROPIC_API_KEY=` の2行。入れたらサーバー再起動（ペアリングはそのまま残る）。
    鍵が無い場合はここで止め、owner-todos.md に「Deepgram/AnthropicのAPIキー用意」を追記。
 8. ★実会議: オーナーの本物の商談（または試しのMeet）で `docs/manual-checklist.md` の8項目を確認。
    自動試験で通ったことと実会議で動いたことを分けて記録する。
+
+## 自動起動・ペアリング保存の実機確認（PR「copilot-always-ready」・クラウドでは未確認）
+1. 手で起動したサーバー（`pnpm start` の端末）を止める。`.env` に `SESSION_TOKEN_TTL_MS=` が残っていても無視される（起動時に警告のみ）。
+2. `pnpm autostart:install` → 「自動起動を登録しました」「サーバーを裏で起動しました」が出る。黒い画面が残らないこと。
+   スタートアップフォルダに `ZEROSYS-SalesCopilot-Server.lnk` があり、タスクスケジューラの `AIOps-*` が変わっていないこと。
+3. `pnpm pair` → 6桁が出る → 設定画面で「ペアリング」。
+4. PC を再起動 → サインイン → `pnpm` を何も実行せずに Meet に参加 → ポップアップの「接続」1回でカンペが出ること。
+5. `%LOCALAPPDATA%\ZEROSYS-SalesCopilot\` に `tokens.json`（ハッシュのみ）と `logs\server.log` があり、会話本文が書かれていないこと。
+6. `pnpm autostart:uninstall` → ショートカットが消え、サーバーが止まる。Meet の「接続」で「サーバーが起動していません → …」が出ること。
+   確認後、使い続けるなら `pnpm autostart:install` をもう一度。
 
 ## 注意（仕様上の約束）
 - 有料APIは鍵を入れただけでは動かない（開始ボタン＋確認が必要）。長時間テストを勝手に回さない。

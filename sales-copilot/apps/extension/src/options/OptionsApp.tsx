@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { FactCategory, PAIRING_CODE_PATTERN, type ApprovedFact } from '@sales-copilot/contracts';
 import { Badge, Meter, hasMicPermission, useAudioInputs, useLocalMicTest, usePrefs } from '../ui/common';
 import { clientFromSettings, describeApiError, type FactInput } from '../shared/api';
+import { checkPairing, PAIRING_CODE_HELP, pairingProblemLine, type PairingCheck } from '../shared/pairing';
 import { isTokenUsable, normalizeServerUrl, saveSettings, type Settings } from '../shared/settings';
 import { clampFrameMs } from '../audio/dsp/chunker';
 
@@ -67,6 +68,32 @@ function ServerSection({ settings }: { settings: Settings }) {
   const [msg, setMsg] = useState<{ text: string; error: boolean } | null>(null);
   const [frameMs, setFrameMs] = useState(String(settings.frameMs));
   const paired = isTokenUsable(settings, Date.now());
+  // サーバーに確かめた結果（期限は使うたびに延長されるので、保存値をサーバーの最新値に合わせる）
+  const [check, setCheck] = useState<PairingCheck | null>(null);
+  const token = settings.session?.token ?? null;
+  useEffect(() => {
+    let alive = true;
+    void (async () => {
+      const r = await checkPairing(clientFromSettings(settings), settings.session);
+      if (!alive) return;
+      setCheck(r);
+      if (r.kind === 'ok' && settings.session && settings.session.expiresAt !== r.expiresAt) {
+        await saveSettings({ session: { ...settings.session, expiresAt: r.expiresAt } });
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token, settings.serverUrl]);
+  const problem = check && (check.kind === 'server_down' || check.kind === 'pairing_expired') ? check.kind : null;
+
+  const unpair = async () => {
+    // サーバー側でも失効させる（つながらなくても拡張側は消す。サーバーの記録は期限で消える）
+    const r = await clientFromSettings(settings).revokePairing();
+    await saveSettings({ session: null });
+    setMsg({ text: r.ok ? '解除しました' : '拡張機能側は解除しました（サーバーにつながらないため、サーバー側の記録は期限まで残ります）', error: !r.ok });
+  };
 
   const saveUrl = async () => {
     const n = normalizeServerUrl(url);
@@ -77,15 +104,15 @@ function ServerSection({ settings }: { settings: Settings }) {
   };
 
   const pair = async () => {
-    if (!PAIRING_CODE_PATTERN.test(code)) return setMsg({ text: 'ペアリングコードは数字6桁です（サーバーの画面に表示されます）', error: true });
+    if (!PAIRING_CODE_PATTERN.test(code)) return setMsg({ text: `ペアリングコードは数字6桁です（${PAIRING_CODE_HELP}）`, error: true });
     const api = clientFromSettings({ serverUrl: settings.serverUrl, session: null });
     const r = await api.pair({ pairingCode: code, extensionId: chrome.runtime.id, clientName: 'ZEROSYS Sales Copilot 拡張' });
     if (!r.ok) return setMsg({ text: describeApiError(r.error), error: true });
     if (!r.data.ok) {
       const map = {
-        invalid_code: 'コードが違います。サーバーに表示された最新のコードを入力してください',
-        expired_code: 'コードの期限が切れました。サーバーで新しいコードを表示して入力してください',
-        already_paired: 'このコードは使用済みです。サーバーで新しいコードを表示してください',
+        invalid_code: 'コードが違います → pnpm pair で出した最新のコードを入力してください',
+        expired_code: 'コードの期限が切れました → pnpm pair をもう一度実行して新しいコードを入力してください',
+        already_paired: 'このコードは使用済みです → pnpm pair をもう一度実行して新しいコードを入力してください',
         origin_mismatch: '拡張機能IDがサーバーの許可と一致しません。サーバーの設定を確認してください',
         rate_limited: '試行が多すぎます。少し待ってからやり直してください',
       } as const;
@@ -93,7 +120,7 @@ function ServerSection({ settings }: { settings: Settings }) {
     }
     await saveSettings({ session: r.data.session });
     setCode('');
-    setMsg({ text: 'ペアリングしました', error: false });
+    setMsg({ text: 'ペアリングしました（使っている間は切れません。PC やサーバーを再起動してもそのまま使えます）', error: false });
   };
 
   return (
@@ -110,21 +137,28 @@ function ServerSection({ settings }: { settings: Settings }) {
       </div>
       <p>
         ペアリング:{' '}
-        {paired ? (
-          <Badge label={{ text: `済み（期限 ${fmt(settings.session?.expiresAt ?? null)}）`, tone: 'ok' }} />
+        {problem === 'pairing_expired' ? (
+          <Badge label={{ text: '期限切れ', tone: 'error' }} />
+        ) : paired ? (
+          <Badge label={{ text: `済み（期限 ${fmt(settings.session?.expiresAt ?? null)}・使うたびに延長）`, tone: 'ok' }} />
         ) : (
           <Badge label={{ text: settings.session ? '期限切れ' : '未ペアリング', tone: 'error' }} />
         )}
       </p>
+      {problem ? (
+        <p className="tone-error" role="alert">
+          {problem === 'pairing_expired' ? 'ペアリングが切れました → 下のペアリングコード欄で再ペアリング' : pairingProblemLine(problem)}
+        </p>
+      ) : null}
       <div className="field">
-        <label htmlFor="code">ペアリングコード（サーバー起動時に表示される数字6桁・一度限り）</label>
+        <label htmlFor="code">ペアリングコード（{PAIRING_CODE_HELP}）</label>
         <div className="row">
           <input id="code" inputMode="numeric" autoComplete="off" maxLength={6} value={code} onChange={(e) => setCode(e.target.value.replace(/\D/g, ''))} style={{ flex: 1, width: 'auto' }} />
           <button type="button" className="primary" onClick={() => void pair()}>
             ペアリング
           </button>
           {settings.session ? (
-            <button type="button" onClick={() => void saveSettings({ session: null })}>
+            <button type="button" onClick={() => void unpair()}>
               解除
             </button>
           ) : null}

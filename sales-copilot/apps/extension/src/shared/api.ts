@@ -7,6 +7,7 @@
 import {
   AUTH_HEADER,
   AUTH_SCHEME,
+  AuthCheckResponse,
   ConfigStatusResponse,
   FactCreateRequest,
   FactResponse,
@@ -21,6 +22,7 @@ import {
   type SessionToken,
 } from '@sales-copilot/contracts';
 import { z } from 'zod';
+import { PAIRING_EXPIRED_LINE, SERVER_DOWN_LINE } from './pairing';
 
 export type ApiError =
   | { kind: 'network' } // 通信断・サーバー未起動
@@ -90,6 +92,16 @@ export class ApiClient {
     return this.request('GET', '/health', z.unknown());
   }
 
+  /** ペアリングがまだ有効か（サーバーは使うたびに期限を延長する。最新の期限が返る）。 */
+  authCheck(): Promise<ApiResult<AuthCheckResponse>> {
+    return this.request('GET', '/auth/check', AuthCheckResponse);
+  }
+
+  /** 設定画面の「解除」: サーバー側でもこのトークンを失効させる。 */
+  revokePairing(): Promise<ApiResult<unknown>> {
+    return this.request('POST', '/auth/revoke', z.unknown(), {});
+  }
+
   configStatus(): Promise<ApiResult<ConfigStatusResponse>> {
     return this.request('GET', '/config/status', ConfigStatusResponse);
   }
@@ -145,9 +157,9 @@ export interface FactInput {
 export function describeApiError(e: ApiError): string {
   switch (e.kind) {
     case 'network':
-      return 'ローカルサーバーに接続できません（起動していない・URL違い・通信断）';
+      return SERVER_DOWN_LINE;
     case 'unauthorized':
-      return '認証できません（ペアリングが切れています）';
+      return PAIRING_EXPIRED_LINE;
     case 'not_found':
       return 'サーバーがこの機能に対応していません';
     case 'http':

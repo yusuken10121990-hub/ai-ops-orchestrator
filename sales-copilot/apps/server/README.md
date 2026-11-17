@@ -8,7 +8,8 @@ pnpm --filter @sales-copilot/server dev     # tsx watch
 ```
 
 起動すると端末にペアリングコード（6桁・10分・1回限り）が表示される。`.env`（ワークスペース直下）があれば読む。
-トークンはメモリにだけ持つので、サーバーを再起動したら拡張機能で再ペアリングが必要。
+ペアリングの記録（トークンの SHA-256 ハッシュのみ）は本人用フォルダの `tokens.json` に保存するので、再起動しても再ペアリング不要。
+端末なし（自動起動）のときは `pnpm pair` でコードを出す。詳細は [docs/security.md](../../docs/security.md)。
 node:sqlite の ExperimentalWarning が 1 行出るが動作に影響はない（Node 22）。
 
 ## HTTP
@@ -64,7 +65,8 @@ node:sqlite の ExperimentalWarning が 1 行出るが動作に影響はない�
 | `ADVICE_MAX_RETRIES` | 1 | 不正 JSON 等の再試行（最大 3） |
 | `AUDIO_MAX_QUEUE_MS` | 2000 | 系統ごとの未送信音声上限 |
 | `SESSION_RETENTION_MS` | 600000 | 終了後のメモリ保持上限 |
-| `SESSION_TOKEN_TTL_MS` / `PAIRING_CODE_TTL_MS` / `PAIRING_MAX_ATTEMPTS` | 12h / 10min / 5 | |
+| `SESSION_TOKEN_TTL_DAYS` / `PAIRING_CODE_TTL_MS` / `PAIRING_MAX_ATTEMPTS` | 180 日（使うたびに延長） / 10min / 5 | 旧 `SESSION_TOKEN_TTL_MS` は無視（警告のみ） |
+| `USER_DATA_DIR` / `TOKEN_STORE_FILE` / `LOG_FILE` | `%LOCALAPPDATA%\ZEROSYS-SalesCopilot` / `tokens.json` / なし | ペアリング記録・`pnpm pair` 用の秘密・自動起動時のログ |
 | `OFFLINE_SCRIPT` / `OFFLINE_REPLAY_SPEED` / `OFFLINE_USE_ANTHROPIC` | 先頭 / 1 / 未設定 | `OFFLINE_USE_ANTHROPIC=1` は「許可」。使うのは開始時に本人が選んだときだけ |
 | `PAIRING_CODE_FOR_TEST` | 未設定 | 自動テスト専用の固定コード。`NODE_ENV=test` 以外で設定されていると起動拒否 |
 | `DATA_DIR` / `EXPORT_DIR` | `data` / `exports` | ワークスペース直下からの相対 |

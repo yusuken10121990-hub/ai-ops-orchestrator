@@ -7,6 +7,7 @@
  * - Port が切れたら（終了・ウィンドウを閉じた・拡張の再読み込み）ページ内の取得を全部止める。
  */
 import {
+  connectFailure,
   initialPopupState,
   isDeclined,
   isPopupVisible,
@@ -27,6 +28,7 @@ import {
   type ToOffscreenPort,
   type ToPage,
 } from './wire';
+import { REPAIR_BUTTON_LABEL } from '../shared/pairing';
 import type { MeetConnectResult, ToSw } from '../shared/runtime-messages';
 
 declare global {
@@ -168,14 +170,22 @@ function el<K extends keyof HTMLElementTagNameMap>(tag: K, attrs: Record<string,
       if (state.kind === 'error') box.appendChild(el('p', { class: 'err', role: 'alert' }, state.message));
       box.appendChild(el('p', {}, '相手に説明・同意済みの場合のみ接続してください'));
       const row = el('div', { class: 'row' });
-      const ok = el('button', { class: 'b primary', type: 'button' }, state.kind === 'error' ? 'もう一度接続' : '接続');
+      const openOptions = () => void chrome.runtime.sendMessage({ target: 'sw', type: 'ui.openOptions' } satisfies ToSw).catch(() => {});
+      const repair = state.kind === 'error' && state.fix === 'options';
+      if (repair) {
+        // ペアリング切れ: 直す操作（設定画面）を主ボタンに。再ペアリング後に「もう一度接続」
+        const opt = el('button', { class: 'b primary', type: 'button' }, REPAIR_BUTTON_LABEL);
+        opt.addEventListener('click', openOptions);
+        row.append(opt);
+      }
+      const ok = el('button', { class: repair ? 'b' : 'b primary', type: 'button' }, state.kind === 'error' ? 'もう一度接続' : '接続');
       ok.addEventListener('click', onConnect);
       const no = el('button', { class: 'b', type: 'button' }, '拒否');
       no.addEventListener('click', () => dispatch({ type: 'decline' }));
       row.append(ok, no);
-      if (state.kind === 'error') {
+      if (state.kind === 'error' && !repair) {
         const opt = el('button', { class: 'b', type: 'button' }, '設定を開く');
-        opt.addEventListener('click', () => void chrome.runtime.sendMessage({ target: 'sw', type: 'ui.openOptions' } satisfies ToSw).catch(() => {}));
+        opt.addEventListener('click', openOptions);
         row.append(opt);
       }
       box.appendChild(row);
@@ -229,17 +239,17 @@ function el<K extends keyof HTMLElementTagNameMap>(tag: K, attrs: Record<string,
     chrome.runtime
       .sendMessage(req)
       .then((res: MeetConnectResult | undefined) => {
-        if (!res?.ok) throw new Error(res?.error ?? '拡張機能から応答がありません');
+        if (!res?.ok) {
+          stopPage();
+          dispatch(connectFailure(res));
+          return;
+        }
         attachOffscreen();
         dispatch({ type: 'connect.ok' });
       })
       .catch((e: unknown) => {
         stopPage();
-        const detail = e instanceof Error ? e.message : String(e);
-        dispatch({
-          type: 'connect.fail',
-          message: `接続できませんでした（${detail}）。拡張機能を再読み込みした場合はこのページを再読み込みしてから「もう一度接続」を押してください。`,
-        });
+        dispatch(connectFailure(null, e instanceof Error ? e.message : String(e)));
       });
   }
 

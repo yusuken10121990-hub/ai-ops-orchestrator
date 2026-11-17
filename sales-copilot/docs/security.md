@@ -10,15 +10,52 @@ SPEC §14 の実装内容と、それを確認する自動テスト。
 
 ## ペアリングとトークン
 
-- 起動時に 6 桁の一度限りのペアリングコードを発行し、**端末（TTY）にだけ**表示する（ログには出さない。TTY でない場合は表示せず警告のみ）。
-  `pnpm start` / `pnpm dev` は端末をそのまま渡すので表示される。
+- 起動時に 6 桁の一度限りのペアリングコードを発行し、**端末（TTY）にだけ**表示する（ログには出さない。TTY でない場合は表示しない）。
+  `pnpm start` / `pnpm dev` は端末をそのまま渡すので表示される。自動起動（端末なし）では `pnpm pair` で出す（下記）。
 - 自動テスト専用の固定コード `PAIRING_CODE_FOR_TEST` は **`NODE_ENV=test` のときだけ**受け付ける。それ以外の環境で設定されていると
   サーバーは起動を拒否する（`config.ts` の `pairingCodeForTest`、`units.test.ts` で確認）。コード自体はログに出さない。
 - `POST /pair`（`{ pairingCode, extensionId, clientName }`）: `Origin: chrome-extension://<extensionId>` と body の ID が一致すること。
   `ALLOWED_EXTENSION_ID` を設定した場合はその ID に限定。コードは単回使用・10 分有効（`PAIRING_CODE_TTL_MS`）・
   試行 5 回（`PAIRING_MAX_ATTEMPTS`）で失効（以後はサーバー再起動で新コード）。
-- 成功時にランダム 32byte（base64url）のセッショントークンを返す。有効期限 12 時間（`SESSION_TOKEN_TTL_MS`）、
-  スコープ `session` / `settings`、拡張機能 ID に束縛。サーバーは SHA-256 ハッシュのみ保持（再起動で全失効）。
+- 成功時にランダム 32byte（base64url）のセッショントークンを返す。スコープ `session` / `settings`、拡張機能 ID に束縛。
+  有効期限 180 日（`SESSION_TOKEN_TTL_DAYS`）で、**検証に成功するたびに now + 期限へ延長**（スライド。ディスクへの保存は 1 時間に 1 回まで）。
+  旧設定 `SESSION_TOKEN_TTL_MS`（以前の `.env.example` は 12 時間）は無視し、起動時に警告だけ出す。
+- `GET /auth/check`（Bearer 必須）: 有効なら最新の期限を返す。拡張機能は Meet の「接続」前と設定画面でこれを呼び、保存している期限を合わせる。
+  401 なら「ペアリングが切れました → 設定画面で再ペアリング」を出す。`POST /auth/revoke`: 設定画面の「解除」。そのトークンを失効させ記録からも消す。
+
+## ペアリング記録の永続化（脅威モデル）
+
+再起動のたびの再ペアリングをなくすため、トークンの記録を本人用フォルダに保存する。
+
+- 場所: `USER_DATA_DIR`（既定 Windows `%LOCALAPPDATA%\ZEROSYS-SalesCopilot`、macOS `~/Library/Application Support/ZEROSYS-SalesCopilot`、
+  その他 `$XDG_STATE_HOME`（`~/.local/state`）配下）の `tokens.json`（`TOKEN_STORE_FILE` で変更可）。
+- 中身: トークンの **SHA-256 ハッシュ（hex）**・拡張機能 ID・スコープ・発行/期限/最終使用時刻のみ。**平文トークンは保存しない。**
+  ファイルを盗まれてもハッシュから 256bit のトークンは復元できず、なりすましには使えない。
+- 書き込み: 同じフォルダの一時ファイル（0600 で作成）に書いて fsync → rename（原子的。途中で落ちても壊れた JSON を残さない）。
+  フォルダ 0700 / ファイル 0600（POSIX）。Windows では chmod はほぼ効かないが、`%LOCALAPPDATA%` は既定でそのユーザー（と管理者・SYSTEM）だけが
+  アクセスできる ACL。壊れたファイルは使わずに起動し（再ペアリングが必要になる）、次の保存で置き換える。
+- 件数上限 20（再ペアリングのたびに増え続けない。最後に使ったのが古い順に消す）。期限切れは読み込み時・検証時に消す。
+- 残る危険と対策:
+  - **長寿命化**: 拡張機能の保存領域（`chrome.storage.local`）からトークンが盗まれると、使われ続ける限り有効。
+    ただしトークンは拡張機能 ID・127.0.0.1 の Host・Origin に束縛され、同じ PC 上でしか使えない。漏えいが疑われたら「解除」か
+    `tokens.json` の削除（サーバー停止中）で全失効。使わなければ 180 日で失効。
+  - **同じ PC の同じユーザーで動く悪意あるプログラム**は、もともと拡張機能のデータもこのファイルも読める（OS のユーザー境界の内側）。
+    この設計はその境界を前提にしており、別ユーザー・別 PC・Web ページからの悪用を防ぐことを目的にする。
+
+## pnpm pair（端末なしでペアリングコードを出す）
+
+自動起動のサーバーは TTY を持たないため、コードを出す経路を別に用意する。最も単純で安全な方式として次を選んだ。
+
+- サーバーは起動ごとにランダム 32byte の秘密を作り、本人用フォルダの `local-admin.json`（0600・原子的書き込み）に
+  `{ host, port, pid, secret }` を置く。終了時に消す（別の起動が上書きしていれば消さない）。
+- `pnpm pair`（`scripts/pair.mjs`）はそのファイルを読み、`POST http://127.0.0.1:<port>/local/pairing-code` に
+  ヘッダー `x-zerosys-local-secret` を付けて送る。サーバーは SHA-256 同士を timingSafeEqual で比べ、一致すれば新しいコード（10 分・1 回限り・
+  試行上限あり。通常のペアリングと同じ）を発行して返す。コードはその端末に表示するだけで、ログ・ファイルには書かない。
+- **`Origin` 付きの要求は拒否（403）**: Web ページや拡張機能のページからは、秘密を知っていてもこの経路を使えない。Host 検査（421）も通常どおり。
+- 秘密が無い構成（テスト等）ではこのルートは 404。
+- 選ばなかった案: 「設定画面にコードを表示」は、拡張機能がローカルの秘密ファイルを読めないため、結局ブラウザから届く何かを信用する必要があり、
+  Web ページからの悪用面が増える。`pnpm pair` なら「この PC のこのユーザーのファイルを読める人」だけに限定できる。
+
 - HTTP: `Authorization: Bearer <token>`。WebSocket: 接続後最初の `hello` メッセージの `token`（5 秒以内。来なければ 4408 で切断、
   不正なら 4401）。**URL クエリに token / access_token / key 等が付いたリクエストは 400 で拒否**（受け付けない）。
 
@@ -42,6 +79,16 @@ SPEC §14 の実装内容と、それを確認する自動テスト。
 - リクエストログ（URL・ヘッダー）は出さない。エラーはスタック・メッセージを出さず name / code / kind のみ。
 - テスト: OFFLINE セッションを WS 経由で最後まで流し、全ログ行に「再生スクリプトの発話本文（8 文字断片）・顧客名・目的・
   カンペ文・トークン・ペアリングコード・偽 API キー」が含まれないことを確認（`offline-e2e.test.ts`、SPEC §16-1 #15）。
+
+## 自動起動（Windows）
+
+- `pnpm autostart:install` は本人のスタートアップフォルダ（`%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup`）に
+  `ZEROSYS-SalesCopilot-Server.lnk` を 1 つ置くだけ。管理者権限・タスクスケジューラは使わない（`AIOps-*` 等の既存タスクに触れない）。
+- ショートカット → PowerShell（Hidden・最小化）→ `scripts/autostart/start-hidden.ps1`（ASCII のみ）→ node `scripts/autostart-run.mjs`
+  （見張り役。二重起動防止・異常終了時は待って再起動・10 分に 5 回落ちたら停止）→ サーバー。待受は従来どおり 127.0.0.1 のみ。
+- ログは `USER_DATA_DIR\logs\server.log`（5MB ごとにローテーション・3 世代・0600）と `autostart.log`（起動/終了・終了コードのみ）。
+  通常ログと同じく会話本文・トークン・キー・ペアリングコードは出さない。
+- APIキーは従来どおり `.env` のみ。自動起動の仕組みはキーを読まない・書かない。
 
 ## データ
 

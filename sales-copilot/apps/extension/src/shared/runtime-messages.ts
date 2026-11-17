@@ -57,6 +57,8 @@ export type ToSw =
 export interface MeetConnectResult {
   ok: boolean;
   error?: string;
+  /** 事前確認で分かった問題（サーバー未起動・ペアリング切れ）。error にはその直し方の 1 行が入る。 */
+  problem?: import('./pairing').PairingProblem;
 }
 
 /** 会議音声の取り方。tab = 拡張アイコン（tabCapture）、inpage = Meet ポップアップの「接続」（ページ内取得）。 */

@@ -1,4 +1,5 @@
 import { existsSync } from 'node:fs';
+import { homedir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { BudgetLimits, PriceTable } from '@sales-copilot/contracts';
@@ -16,7 +17,22 @@ export interface ServerConfig {
   allowedExtensionId: string | null;
   dataDir: string;
   exportDir: string;
+  /**
+   * 本人用データフォルダ（ペアリング記録・ローカル管理用の秘密・自動起動時のログ）。
+   * Windows: %LOCALAPPDATA%\ZEROSYS-SalesCopilot。USER_DATA_DIR で変更可。
+   */
+  userDataDir: string;
+  /** ペアリング記録（トークンの sha256 ハッシュのみ）の保存先。TOKEN_STORE_FILE で変更可。 */
+  tokenStoreFile: string;
+  /** ログをファイルへ書く（自動起動用・ローテーションあり）。未設定なら標準出力。 */
+  logFile: string | null;
+  /** トークンの有効期間（使うたびに延長）。既定 180 日（SESSION_TOKEN_TTL_DAYS）。 */
   tokenTtlMs: number;
+  /**
+   * 旧設定 SESSION_TOKEN_TTL_MS（以前の .env.example は 12 時間を書いていた）が .env に残っている。
+   * 毎日の再ペアリングを無くすため使わない（起動時に警告だけ出す）。
+   */
+  legacyTokenTtlIgnored: boolean;
   pairingCodeTtlMs: number;
   pairingMaxAttempts: number;
 
@@ -96,6 +112,33 @@ function bool(env: Env, k: string, def: boolean): boolean {
   return v === '1' || v.toLowerCase() === 'true';
 }
 
+export const DEFAULT_TOKEN_TTL_MS = 180 * 24 * 60 * 60 * 1000;
+export const APP_DIR_NAME = 'ZEROSYS-SalesCopilot';
+/** ローカル管理用の秘密（pnpm pair が読む）のファイル名。 */
+export const LOCAL_ADMIN_FILE = 'local-admin.json';
+
+/**
+ * 本人用データフォルダ。scripts/user-data-dir.mjs と同じ規則（テストで一致を確認）。
+ * USER_DATA_DIR があればそれ。無ければ Windows: %LOCALAPPDATA%\ZEROSYS-SalesCopilot、
+ * macOS: ~/Library/Application Support/ZEROSYS-SalesCopilot、その他: $XDG_STATE_HOME（~/.local/state）配下。
+ */
+export function userDataDirFor(env: Env, platform: NodeJS.Platform = process.platform, home: string = homedir()): string {
+  const v = env.USER_DATA_DIR?.trim();
+  if (v) return v;
+  if (platform === 'win32') return path.join(env.LOCALAPPDATA?.trim() || path.join(home, 'AppData', 'Local'), APP_DIR_NAME);
+  if (platform === 'darwin') return path.join(home, 'Library', 'Application Support', APP_DIR_NAME);
+  return path.join(env.XDG_STATE_HOME?.trim() || path.join(home, '.local', 'state'), APP_DIR_NAME);
+}
+
+/** SESSION_TOKEN_TTL_DAYS（1〜400 日）。未設定なら 180 日。 */
+export function tokenTtlMsFrom(env: Env): number {
+  const v = str(env, 'SESSION_TOKEN_TTL_DAYS');
+  if (v === null) return DEFAULT_TOKEN_TTL_MS;
+  const d = Number(v);
+  if (!Number.isFinite(d) || d < 1 || d > 400) throw new Error('SESSION_TOKEN_TTL_DAYS must be 1..400');
+  return Math.round(d * 24 * 60 * 60 * 1000);
+}
+
 /** PAIRING_CODE_FOR_TEST は NODE_ENV=test のときだけ受け付ける。本番起動で使われないよう、それ以外は起動エラー。 */
 export function pairingCodeForTest(env: Env): string | null {
   const v = str(env, 'PAIRING_CODE_FOR_TEST');
@@ -129,6 +172,7 @@ export function loadConfig(env: Env = process.env): ServerConfig {
     priceTable = parsed.success ? parsed.data : null;
   }
 
+  const userDataDir = path.resolve(userDataDirFor(env));
   return {
     host: str(env, 'HOST') ?? '127.0.0.1',
     port: int(env, 'PORT', 8787),
@@ -136,7 +180,11 @@ export function loadConfig(env: Env = process.env): ServerConfig {
     allowedExtensionId: str(env, 'ALLOWED_EXTENSION_ID'),
     dataDir: path.resolve(WORKSPACE_ROOT, str(env, 'DATA_DIR') ?? 'data'),
     exportDir: path.resolve(WORKSPACE_ROOT, str(env, 'EXPORT_DIR') ?? 'exports'),
-    tokenTtlMs: int(env, 'SESSION_TOKEN_TTL_MS', 12 * 60 * 60 * 1000),
+    userDataDir,
+    tokenStoreFile: path.resolve(userDataDir, str(env, 'TOKEN_STORE_FILE') ?? 'tokens.json'),
+    logFile: str(env, 'LOG_FILE') === null ? null : path.resolve(userDataDir, str(env, 'LOG_FILE')!),
+    tokenTtlMs: tokenTtlMsFrom(env),
+    legacyTokenTtlIgnored: str(env, 'SESSION_TOKEN_TTL_MS') !== null,
     pairingCodeTtlMs: int(env, 'PAIRING_CODE_TTL_MS', 10 * 60 * 1000),
     pairingMaxAttempts: int(env, 'PAIRING_MAX_ATTEMPTS', 5),
     deepgram: {

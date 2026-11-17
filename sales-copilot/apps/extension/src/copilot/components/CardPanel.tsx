@@ -5,7 +5,7 @@ import type { CardView } from '../state';
 
 /**
  * カンペ表示。会話・助言は全て React のテキストノードとして描画する（HTML として解釈しない／XSS 対策）。
- * 【次に言う一言】を一番大きく（ひと目で読める）。【今の一手】はその上に小さく、【今は言わない】と根拠は下に控えめに。
+ * 並び順は【次に言う一言】（一番大きく）→【今は言わない】→【今の一手】→根拠。読む順に上から並べる。
  */
 
 const KIND_LABEL: Record<AdviceKind, string> = {
@@ -49,16 +49,26 @@ export interface CardPanelProps {
   onUnpin?: () => void;
 }
 
+/** 状態バッジは「参考」「無効」のときだけ出す（現行は金枠だけで示し、文字を増やさない）。 */
+function StatusChip({ status }: { status: CardView['displayStatus'] }) {
+  if (!status || status === 'current') return null;
+  return <Badge label={cardStatusLabel(status)} prefix="状態" />;
+}
+
+/** 参考・無効はバッジ（と無効のお知らせ）で示すので、同じ意味の注意文は重ねない。 */
+const DUPLICATE_STATUS_WARNINGS = new Set(['stale', 'pinned_stale']);
+
 export function CardPanel({ view, onUnpin }: CardPanelProps) {
   if (!view.card || !view.displayStatus) {
     return (
       <section className="card status-empty" aria-label="カンペ" aria-live="polite">
         <div className="card-top">
-          <span className="slot-label">【今の一手】</span>
-          <span className="headline">待機</span>
+          <span className="slot-label say-label">【次に言う一言】</span>
         </div>
-        <div className="slot-label say-label">【次に言う一言】</div>
         <div className="say-empty">今は相手の説明を聞く場面です。必要になったらここに表示します。</div>
+        <div className="move-line">
+          <span className="slot-label">【今の一手】</span> <span className="headline">待機</span>
+        </div>
       </section>
     );
   }
@@ -67,22 +77,17 @@ export function CardPanel({ view, onUnpin }: CardPanelProps) {
   const invalid = status === 'invalidated';
   const quiet = c.action !== 'show';
   const trig = triggerLabel(c);
+  const warnings = view.warnings.filter((w) => !DUPLICATE_STATUS_WARNINGS.has(w.code));
   return (
     <section className={`card status-${status}`} aria-label="カンペ" aria-live="polite" data-advice-id={c.adviceId}>
       <div className="card-top">
-        <span className="slot-label">【今の一手】</span>
-        <span className="headline">{quiet ? c.headline || '待機' : c.headline}</span>
+        <span className="slot-label say-label">【次に言う一言】</span>
         <span className="chips">
-          <Badge label={cardStatusLabel(status)} prefix="状態" />
+          <StatusChip status={status} />
           {view.mode === 'pinned' ? <Badge label={{ text: '表示固定中', tone: 'info' }} /> : null}
           <span className="badge tone-muted">{KIND_LABEL[c.kind]}</span>
           {trig ? <span className="badge tone-muted">{trig}</span> : null}
         </span>
-      </div>
-
-      <div className="slot-label say-label">
-        【次に言う一言】
-        {status === 'reference' && !invalid ? <span className="tone-warn"> 参考扱いです（現行の推奨ではありません）</span> : null}
       </div>
       {invalid ? (
         <div className="notice-line error" role="alert">
@@ -111,17 +116,19 @@ export function CardPanel({ view, onUnpin }: CardPanelProps) {
       <div className="avoid-line">
         <span className="slot-label">【今は言わない】</span> <span className="avoid">{invalid ? '—' : c.avoid ?? '特になし'}</span>
       </div>
+      <div className="move-line">
+        <span className="slot-label">【今の一手】</span> <span className="headline">{quiet ? c.headline || '待機' : c.headline}</span>
+      </div>
 
-      {view.warnings.length > 0 ? (
+      {warnings.length > 0 ? (
         <ul className="plain small card-warnings" aria-label="注意">
-          {view.warnings.map((w) => (
+          {warnings.map((w) => (
             <li key={w.code} className="tone-warn">
               注意: {w.message}
             </li>
           ))}
         </ul>
       ) : null}
-
       <details className="reason">
         <summary>根拠・確認事項</summary>
         <p>

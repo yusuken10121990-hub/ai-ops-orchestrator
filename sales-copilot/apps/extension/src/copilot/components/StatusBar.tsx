@@ -85,8 +85,18 @@ export function collectNotices(input: { snapshot: OffscreenSnapshot; lastError: 
   for (const h of [sourceFixHint(input.snapshot.sources.REMOTE, 'REMOTE'), sourceFixHint(input.snapshot.sources.SELF, 'SELF')]) {
     if (h) push({ key: `hint:${h}`, tone: 'error', text: h, openOptions: h.includes('設定画面') });
   }
-  for (const w of [...input.warnings].reverse()) push({ key: `warning:${w.code}:${w.message}`, tone: 'warn', text: `注意: ${w.message}` });
+  // 自分の音声を自分で OFF にしたときは状態表示（「自分の音声OFF」）だけで伝える。サーバーの同じ趣旨の注意は重ねない。
+  const selfOff = input.snapshot.sources.SELF === 'user_off';
+  for (const w of [...input.warnings].reverse()) {
+    if (selfOff && isSelfOffWarning(w)) continue;
+    push({ key: `warning:${w.code}:${w.message}`, tone: 'warn', text: `注意: ${w.message}` });
+  }
   return out;
+}
+
+/** サーバーの「自分の音声取得はOFF」注意（degraded_capture）。 */
+function isSelfOffWarning(w: WarningMessage): boolean {
+  return w.code === 'degraded_capture' && w.message.includes('自分の音声取得はOFF');
 }
 
 /** 詳細な状態（SPEC §4-3）。無音・権限なし・API未設定・通信断を区別する。普段は折りたたむ。 */
@@ -151,7 +161,11 @@ export interface StatusLineProps extends StatusBarProps {
   onTheme(): void;
 }
 
-/** 1 行の状態表示。全体の状態 1 つ + 送信/保存（安全表示）+ 文字サイズ・明暗。押すと詳細が開く。 */
+/**
+ * 1 行の状態表示（折り返さない）。全体の状態 1 つ + 送信/保存（安全表示・常に見える）+「⋯」メニュー。
+ * 文字サイズ・明暗は「⋯」の中（ショートカット + / - / d はそのまま）。状態を押すと詳細が上に開く。
+ * 読み上げは状態の文言（.health-text）だけを polite で通知する（行全体を live にしない）。
+ */
 export function StatusLine(props: StatusLineProps) {
   const [open, setOpen] = useState(false);
   const health = overallHealth(props);
@@ -159,7 +173,12 @@ export function StatusLine(props: StatusLineProps) {
   const saving = props.status?.storage === 'export_on_end' ? '終了時に出力' : '保存なし';
   return (
     <div className="statusline-wrap">
-      <div className="statusline" role="status" aria-label="状態">
+      {open ? (
+        <div id="status-details" className="status-details">
+          <StatusBar snapshot={props.snapshot} status={props.status} usage={props.usage} />
+        </div>
+      ) : null}
+      <div className="statusline" aria-label="状態">
         <button
           type="button"
           className={`health tone-${health.tone}`}
@@ -169,32 +188,34 @@ export function StatusLine(props: StatusLineProps) {
           title="状態の詳細を開く"
         >
           <span className="dot" aria-hidden="true" />
-          <span className="health-text">{health.text}</span>
+          <span className="health-text" aria-live="polite">
+            {health.text}
+          </span>
           <span className="caret" aria-hidden="true">
-            {open ? '▴' : '▾'}
+            {open ? '▾' : '▴'}
           </span>
         </button>
         <span className="safety small">
           <span className={`tone-${sending.tone}`}>{sending.text === '停止' ? '外部送信停止' : sending.text}</span>・
           <span>{saving}</span>
         </span>
-        <span className="prefs">
-          <button type="button" aria-label="文字を小さく" aria-keyshortcuts="-" onClick={() => props.onFont(-0.1)}>
-            A−
-          </button>
-          <button type="button" aria-label="文字を大きく" aria-keyshortcuts="+" onClick={() => props.onFont(0.1)}>
-            A＋
-          </button>
-          <button type="button" aria-label="明暗の切替" aria-keyshortcuts="d" onClick={props.onTheme}>
-            明暗
-          </button>
-        </span>
+        <details className="menu">
+          <summary aria-label="表示の設定（文字サイズ・明暗）" title="文字サイズ・明暗">
+            ⋯
+          </summary>
+          <div className="menu-panel">
+            <button type="button" aria-label="文字を小さく" aria-keyshortcuts="-" onClick={() => props.onFont(-0.1)}>
+              A−<kbd>-</kbd>
+            </button>
+            <button type="button" aria-label="文字を大きく" aria-keyshortcuts="+" onClick={() => props.onFont(0.1)}>
+              A＋<kbd>+</kbd>
+            </button>
+            <button type="button" aria-label="明暗の切替" aria-keyshortcuts="d" onClick={props.onTheme}>
+              明暗<kbd>D</kbd>
+            </button>
+          </div>
+        </details>
       </div>
-      {open ? (
-        <div id="status-details" className="status-details">
-          <StatusBar snapshot={props.snapshot} status={props.status} usage={props.usage} />
-        </div>
-      ) : null}
     </div>
   );
 }

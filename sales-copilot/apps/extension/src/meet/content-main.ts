@@ -4,7 +4,9 @@
  * - 「接続」1 タップで: MAIN world に取得開始を指示 → service worker へ開始依頼（カンペ画面を開く）
  *   → offscreen との runtime Port を開き、16kHz PCM16 を中継する。
  * - 「拒否」/×: その会議では何も取得しない。タブが開いている間（sessionStorage）は再表示しない。
- * - Port が切れたら（終了・ウィンドウを閉じた・拡張の再読み込み）ページ内の取得を全部止める。
+ * - 商談が終わった合図（stop.all）でだけページ内の取得を全部止める。Port が切れただけなら（画面共有・切替・
+ *   一時的な切断）取得は続けたまま、少しずつ間隔を空けてつなぎ直す（link-policy.ts）。
+ * - タブを隠す・ウィンドウを切り替える・画面共有を始める／やめる では何もしない（visibilitychange で止めない）。
  */
 import {
   connectFailure,
@@ -28,6 +30,7 @@ import {
   type ToOffscreenPort,
   type ToPage,
 } from './wire';
+import { LeaveDetector, RECONNECT_MAX_MS, reconnectDelay } from './link-policy';
 import { REPAIR_BUTTON_LABEL } from '../shared/pairing';
 import type { MeetConnectResult, ToSw } from '../shared/runtime-messages';
 
@@ -82,6 +85,12 @@ function el<K extends keyof HTMLElementTagNameMap>(tag: K, attrs: Record<string,
   let pagePort: MessagePort | null = null;
   let rtcActive = false;
   let offPort: chrome.runtime.Port | null = null;
+  /** 接続中の商談の会議コード（null = 商談なし）。Port が一時的に切れていても商談中なら残る。 */
+  let liveCode: string | null = null;
+  let reconnectAttempt = 0;
+  let reconnectSince = 0;
+  let reconnectTimer: number | null = null;
+  const leave = new LeaveDetector();
 
   const toPage = (msg: ToPage) => pagePort?.postMessage(msg);
 
@@ -99,7 +108,7 @@ function el<K extends keyof HTMLElementTagNameMap>(tag: K, attrs: Record<string,
         tick();
         return;
       }
-      if (!offPort) return; // 接続前の音声はどこへも送らない
+      if (!offPort) return; // 接続前・つなぎ直し中の音声はどこへも送らない
       let out: ToOffscreenPort;
       if (m.type === 'pcm') out = { type: 'pcm', source: m.source, b64: pcmToBase64(m.pcm), levelDb: m.levelDb };
       else out = { type: m.type, name: m.name };
@@ -205,24 +214,70 @@ function el<K extends keyof HTMLElementTagNameMap>(tag: K, attrs: Record<string,
   // ---------------------------------------------------------------- 接続
   const stopPage = () => toPage({ type: 'stop.all' });
 
+  /** 商談の終わり（終了・ウィンドウを閉じた・退出・つなぎ直しを諦めた）。ここでだけページ内の取得を止める。 */
+  const sessionOver = () => {
+    if (reconnectTimer !== null) window.clearTimeout(reconnectTimer);
+    reconnectTimer = null;
+    const p = offPort;
+    offPort = null;
+    liveCode = null;
+    leave.reset();
+    stopPage();
+    if (p) {
+      try {
+        p.disconnect();
+      } catch {
+        /* 切断済み */
+      }
+    }
+    dispatch({ type: 'capture.ended' });
+  };
+
   const attachOffscreen = () => {
-    const p = chrome.runtime.connect({ name: MEET_PORT_NAME });
+    let p: chrome.runtime.Port;
+    try {
+      p = chrome.runtime.connect({ name: MEET_PORT_NAME });
+    } catch {
+      // 拡張が再読み込みされた等で、もうつながらない
+      scheduleReconnect();
+      return;
+    }
     offPort = p;
     p.onMessage.addListener((raw: unknown) => {
       const m = raw as FromOffscreenPort;
       if (!m || typeof m.type !== 'string') return;
+      if (offPort === p) reconnectAttempt = 0; // つながった（受け付けられた）
       if (m.type === 'stop.all') {
-        stopPage();
+        // 商談が終わった（終了・ウィンドウを閉じた・タブを閉じた・このタブは受け付けない）
+        if (offPort === p) sessionOver();
         return;
       }
       toPage(m);
     });
     p.onDisconnect.addListener(() => {
-      if (offPort === p) offPort = null;
-      stopPage();
-      dispatch({ type: 'capture.ended' });
+      void chrome.runtime.lastError;
+      if (offPort !== p) return;
+      offPort = null;
+      // 終わった合図なしに切れた: 取得は続けたまま、つなぎ直す（画面共有・切替・一時的な切断）
+      if (liveCode !== null) scheduleReconnect();
+      else sessionOver();
     });
   };
+
+  function scheduleReconnect(): void {
+    if (liveCode === null || reconnectTimer !== null) return;
+    const now = Date.now();
+    if (reconnectAttempt === 0) reconnectSince = now;
+    const delay = reconnectDelay(reconnectAttempt++);
+    if (now - reconnectSince + delay > RECONNECT_MAX_MS) {
+      sessionOver();
+      return;
+    }
+    reconnectTimer = window.setTimeout(() => {
+      reconnectTimer = null;
+      if (liveCode !== null && !offPort) attachOffscreen();
+    }, delay);
+  }
 
   function onConnect(): void {
     const code = state.kind === 'prompt' || state.kind === 'error' ? state.code : null;
@@ -244,6 +299,9 @@ function el<K extends keyof HTMLElementTagNameMap>(tag: K, attrs: Record<string,
           dispatch(connectFailure(res));
           return;
         }
+        liveCode = code;
+        reconnectAttempt = 0;
+        leave.reset();
         attachOffscreen();
         dispatch({ type: 'connect.ok' });
       })
@@ -258,11 +316,26 @@ function el<K extends keyof HTMLElementTagNameMap>(tag: K, attrs: Record<string,
 
   function tick(): void {
     const code = parseMeetingCode(window.location.href);
-    // 接続中に別の会議へ移った: 前の会議の取得は続けない
-    if (offPort && state.code !== null && code !== state.code) {
-      offPort.disconnect();
-      offPort = null;
-      stopPage();
+    if (liveCode !== null) {
+      // 商談中: 通話から退出したときだけ終える（URL が一時的に変わる・画面共有・タブ切替では終えない）
+      const v = leave.observe({ now: Date.now(), code, liveCode, inCall: rtcActive || joinedByDom() });
+      if (v === 'left') {
+        const p = offPort;
+        if (p) {
+          // offscreen が理由（call_left）を記録して stop.all を返す。返ってこなければ少し後に自分で終える
+          try {
+            p.postMessage({ type: 'call.left' } satisfies ToOffscreenPort);
+          } catch {
+            /* 切断済み */
+          }
+          window.setTimeout(() => {
+            if (offPort === p) sessionOver();
+          }, 2000);
+          leave.reset();
+        } else sessionOver();
+      }
+      // 商談中はポップアップの状態を変えない（Meet 内の画面遷移で出し直さない）
+      return;
     }
     const joined = code !== null && (rtcActive || joinedByDom());
     dispatch({ type: 'observe', code, joined, declined: code !== null && isDeclined(store, code) });

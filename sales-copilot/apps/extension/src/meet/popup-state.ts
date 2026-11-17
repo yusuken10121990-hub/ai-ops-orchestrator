@@ -1,3 +1,4 @@
+import { DEFAULT_PURPOSE } from '@sales-copilot/contracts';
 /**
  * Meet 参加時の「接続／拒否」ポップアップの状態（純粋関数。DOM・chrome API に依存しない）。
  *
@@ -100,13 +101,13 @@ export function isPopupVisible(s: PopupState): boolean {
 }
 
 /**
- * 商談目的の既定値: Meet のタブタイトル（「Meet - 」等を除く）。名前が無ければ会議コード入り。
+ * 商談目的の既定値: Meet のタブタイトル（「Meet - 」等を除く）。名前が無ければ「商談」。
  * 開始を止めないための既定値で、商談中に変更できる。
  */
 export function purposeFromMeetTitle(title: string | null | undefined, code: string | null): string {
   let t = (title ?? '').replace(/\s+/g, ' ').trim();
   t = t.replace(/^(Google\s+)?Meet\s*[-–—:：]\s*/i, '').replace(/\s*[-–—]\s*(Google\s+)?Meet$/i, '').trim();
-  if (!t || /^(Google\s+)?Meet$/i.test(t) || (code && t === code)) t = code ? `Google Meet の商談（${code}）` : 'Google Meet の商談';
+  if (!t || /^(Google\s+)?Meet$/i.test(t) || (code && t === code)) t = DEFAULT_PURPOSE;
   return t.slice(0, 500);
 }
 

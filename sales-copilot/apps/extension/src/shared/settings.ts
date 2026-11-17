@@ -15,7 +15,10 @@ export interface Settings {
   maxBufferedBytes: number;
   fontScale: number;
   theme: ThemePref;
-  /** 前回開始したモード（Meet ポップアップの 1 タップ接続で同じモードから始める）。 */
+  /**
+   * 旧版の「前回開始したモード」。今は使わない・保存しない（ワンタップは常に LIVE）。
+   * 古い保存値が残っていても読み捨てる（sanitize で null）。
+   */
   lastMode: SessionMode | null;
 }
 
@@ -58,7 +61,7 @@ export function sanitizeSettings(raw: Partial<Settings> | undefined): Settings {
       Number.isFinite(s.maxBufferedBytes) && s.maxBufferedBytes >= 16 * 1024 ? s.maxBufferedBytes : DEFAULT_MAX_BUFFERED_BYTES,
     fontScale: Math.min(FONT_SCALE_MAX, Math.max(FONT_SCALE_MIN, Number(s.fontScale) || 1)),
     theme: s.theme === 'dark' ? 'dark' : 'light',
-    lastMode: s.lastMode === 'LIVE' || s.lastMode === 'OFFLINE' ? s.lastMode : null,
+    lastMode: null,
   };
 }
 

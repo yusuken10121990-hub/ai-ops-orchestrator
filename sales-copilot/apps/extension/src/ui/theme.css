@@ -568,3 +568,9 @@ table.facts td {
   overflow: hidden;
   clip: rect(0 0 0 0);
 }
+
+/* 開始直後のモード表示（LIVE / OFFLINE テスト）。色だけに頼らず文字で区別する */
+.mode-banner { margin: 0 0 8px; padding: 10px 12px; border-radius: 8px; font-weight: 700; font-size: 1.15em; border: 2px solid currentColor; }
+.mode-banner.small { font-size: 0.9em; padding: 4px 8px; }
+.mode-live { color: var(--ok, #137333); }
+.mode-offline { color: var(--warn, #b06000); }

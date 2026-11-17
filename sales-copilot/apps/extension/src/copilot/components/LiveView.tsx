@@ -6,6 +6,7 @@ import type { CardView } from '../state';
 import { CardPanel } from './CardPanel';
 import { NoticeLine, StatusLine, collectNotices, type StatusBarProps } from './StatusBar';
 import { TranscriptPanel } from './TranscriptPanel';
+import { ModeBanner } from './ModeBanner';
 import type { TranscriptSegmentMessage } from '@sales-copilot/contracts';
 
 export interface LiveActions {
@@ -145,6 +146,7 @@ export function LiveView(props: LiveViewProps) {
     <div className="app live">
       <h1 className="sr-only">ZEROSYS カンペ</h1>
       <main className="prompter">
+        <ModeBanner mode={props.status?.mode ?? null} />
         <CardPanel view={view} onUnpin={card && pinned ? () => actions.unpin(card.adviceId) : undefined} />
         {pinned ? <p className="small dim">表示固定は画面の切替を止めるだけです。解析は続いています（止めるには「停止 S」）。</p> : null}
 

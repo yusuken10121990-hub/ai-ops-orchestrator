@@ -6,6 +6,8 @@ import { PipelineStatus, SessionLifecycleState, SessionMode, StatusReason, Stora
 import { UsageSnapshot } from './usage';
 
 export const PROTOCOL_VERSION = 1 as const;
+/** 商談目的を入れなかったときの既定値。 */
+export const DEFAULT_PURPOSE = '商談';
 
 const Id = z.string().min(1).max(128);
 const EpochMs = z.number().int().nonnegative();
@@ -29,7 +31,15 @@ export const HelloMessage = z
 export const SessionStartMessage = z
   .object({
     type: z.literal('session.start'),
-    purpose: z.string().min(1).max(500),
+    /**
+     * 商談目的は任意（2026-11-17 オーナー「こんなの入れなくていいんだけど」）。未指定・空欄なら「商談」。
+     * 開始を止める理由にしない。
+     */
+    purpose: z
+      .string()
+      .max(500)
+      .optional()
+      .transform((v) => (v ?? '').trim() || DEFAULT_PURPOSE),
     /** 顧客名は任意（SPEC §3）。 */
     customerName: z.string().min(1).max(100).optional(),
     /** 今回適用する承認済み条件と使用バージョン。 */
@@ -100,9 +110,33 @@ export const SessionUpdateMessage = z
   .object({ type: z.literal('session.update'), purpose: z.string().trim().min(1).max(500) })
   .strict();
 
+/**
+ * 終了の理由（会話の内容は含まない）。サーバーのログと終了画面に出す。
+ * - user_end: 「終了」ボタン / window_closed: カンペ画面を閉じた / tab_closed: Meet のタブを閉じた
+ * - call_left: 通話から退出した / meet_lost: Meet のページとつながらないまま猶予が切れた
+ * - connection_lost: サーバーとの接続が切れたまま再接続の猶予が切れた（サーバー側で判定）
+ */
+export const SessionEndReason = z.enum([
+  'user_end',
+  'window_closed',
+  'tab_closed',
+  'call_left',
+  'meet_lost',
+  'connection_lost',
+  'no_permission',
+  'error',
+]);
+export type SessionEndReason = z.infer<typeof SessionEndReason>;
+
 export const SessionEndMessage = z
-  .object({ type: z.literal('session.end'), exportRequested: z.boolean() })
+  .object({ type: z.literal('session.end'), exportRequested: z.boolean(), reason: SessionEndReason.optional() })
   .strict();
+
+/**
+ * 接続が一時的に切れた後、同じ商談を続ける（hello の直後に送る。session.start の代わり）。
+ * サーバーは猶予時間（SESSION_RESUME_GRACE_MS）の間だけ商談を保持している。
+ */
+export const SessionResumeMessage = z.object({ type: z.literal('session.resume'), sessionId: Id }).strict();
 
 /** 拡張側の音量検出による発話中状態。SELF 発話中は大きなカード更新を抑える（SPEC §8-2）。 */
 export const SpeakingStateMessage = z
@@ -148,6 +182,7 @@ export const ClientMessage = z.union([
   FeedbackMessage,
   SessionUpdateMessage,
   SessionEndMessage,
+  SessionResumeMessage,
   SpeakingStateMessage,
   AdviceDisplayedMessage,
   AudioGapMessage,
@@ -287,7 +322,14 @@ export const SessionEndedMessage = z
     sessionId: Id,
     exportPath: z.string().min(1).max(1000).nullable(),
     reviewAvailableUntil: EpochMs,
+    /** 終了の理由（会話の内容は含まない）。古いサーバーは送らない。 */
+    endReason: SessionEndReason.optional(),
   })
+  .strict();
+
+/** session.resume の結果。ok=false なら商談はもう無い（猶予切れ・別の接続が使用中）。 */
+export const SessionResumedMessage = z
+  .object({ type: z.literal('session.resumed'), sessionId: Id, ok: z.boolean() })
   .strict();
 
 export const ServerMessage = z.discriminatedUnion('type', [
@@ -301,6 +343,7 @@ export const ServerMessage = z.discriminatedUnion('type', [
   UsageMessage,
   ErrorMessage,
   SessionEndedMessage,
+  SessionResumedMessage,
 ]);
 export type ServerMessage = z.infer<typeof ServerMessage>;
 export type ServerMessageType = ServerMessage['type'];
@@ -315,6 +358,8 @@ export type SpeakingStateMessage = z.infer<typeof SpeakingStateMessage>;
 export type AdviceDisplayedMessage = z.infer<typeof AdviceDisplayedMessage>;
 export type AudioGapMessage = z.infer<typeof AudioGapMessage>;
 export type SessionEndedMessage = z.infer<typeof SessionEndedMessage>;
+export type SessionResumeMessage = z.infer<typeof SessionResumeMessage>;
+export type SessionResumedMessage = z.infer<typeof SessionResumedMessage>;
 export type StatusMessage = z.infer<typeof StatusMessage>;
 export type TranscriptSegmentMessage = z.infer<typeof TranscriptSegmentMessage>;
 export type AdviceCardMessage = z.infer<typeof AdviceCardMessage>;

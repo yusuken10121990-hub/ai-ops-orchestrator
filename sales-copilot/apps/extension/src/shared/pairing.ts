@@ -38,3 +38,13 @@ export type PairingProblem = 'not_paired' | 'pairing_expired' | 'server_down';
 export function pairingProblemLine(p: PairingProblem): string {
   return p === 'server_down' ? SERVER_DOWN_LINE : p === 'not_paired' ? NOT_PAIRED_LINE : PAIRING_EXPIRED_LINE;
 }
+
+/** これより先の期限は「期限なし」と表示する（サーバー既定の期限なし＝約 100 年）。 */
+export const NO_EXPIRY_DISPLAY_MS = 50 * 365 * 24 * 60 * 60 * 1000;
+
+/** 設定画面の「ペアリング: 済み（…）」の文言。 */
+export function pairingStatusText(expiresAt: number | null, now: number, fmt: (ms: number | null) => string): string {
+  if (expiresAt !== null && expiresAt - now > NO_EXPIRY_DISPLAY_MS) return '済み（期限なし・「解除」を押すまで有効）';
+  return `済み（期限 ${fmt(expiresAt)}・使うたびに延長）`;
+}
+export const pairedLabel = pairingStatusText;

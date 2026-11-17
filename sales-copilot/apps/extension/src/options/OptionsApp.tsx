@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { FactCategory, PAIRING_CODE_PATTERN, type ApprovedFact } from '@sales-copilot/contracts';
 import { Badge, Meter, hasMicPermission, useAudioInputs, useLocalMicTest, usePrefs } from '../ui/common';
 import { clientFromSettings, describeApiError, type FactInput } from '../shared/api';
-import { checkPairing, PAIRING_CODE_HELP, pairingProblemLine, type PairingCheck } from '../shared/pairing';
+import { checkPairing, PAIRING_CODE_HELP, pairedLabel, pairingProblemLine, type PairingCheck } from '../shared/pairing';
 import { isTokenUsable, normalizeServerUrl, saveSettings, type Settings } from '../shared/settings';
 import { clampFrameMs } from '../audio/dsp/chunker';
 import { LearningSection } from './LearningSection';
@@ -142,7 +142,7 @@ function ServerSection({ settings }: { settings: Settings }) {
         {problem === 'pairing_expired' ? (
           <Badge label={{ text: '期限切れ', tone: 'error' }} />
         ) : paired ? (
-          <Badge label={{ text: `済み（期限 ${fmt(settings.session?.expiresAt ?? null)}・使うたびに延長）`, tone: 'ok' }} />
+          <Badge label={{ text: pairedLabel(settings.session?.expiresAt ?? null, Date.now(), fmt), tone: 'ok' }} />
         ) : (
           <Badge label={{ text: settings.session ? '期限切れ' : '未ペアリング', tone: 'error' }} />
         )}

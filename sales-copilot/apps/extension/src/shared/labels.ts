@@ -86,6 +86,8 @@ export function localSourceLabel(s: LocalSourceState): Label {
       return { text: 'タブ終了', tone: 'error' };
     case 'device_changed':
       return { text: 'デバイス変更', tone: 'warn' };
+    case 'reconnecting':
+      return { text: '再接続中', tone: 'warn' };
     case 'error':
       return { text: 'エラー', tone: 'error' };
   }
@@ -99,6 +101,8 @@ export function wsLabel(s: WsState): Label {
       return { text: '接続中', tone: 'info' };
     case 'open':
       return { text: '接続', tone: 'ok' };
+    case 'reconnecting':
+      return { text: '再接続中', tone: 'warn' };
     case 'closed':
       return { text: '通信断', tone: 'error' };
     case 'error':

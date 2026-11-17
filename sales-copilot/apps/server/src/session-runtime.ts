@@ -12,6 +12,7 @@ import {
   type PipelineState,
   type PipelineStatus,
   type ServerMessage,
+  type SessionEndReason,
   type SessionMode,
   type SessionStartMessage,
   type StatusReason,
@@ -166,8 +167,11 @@ export class SessionRuntime {
       case 'session.start':
         return this.start(msg);
       case 'session.end':
-        void this.end(msg.exportRequested);
+        void this.end(msg.exportRequested, msg.reason ?? 'user_end');
         return;
+      case 'session.resume':
+        // 再接続は接続の受付側（app.ts）で処理する。ここに届くのは同じ接続で二重に送った場合だけ
+        return this.error('invalid_state', 'session.resume must be the first message after hello', true);
       case 'analysis.pause':
         void this.pause();
         return;
@@ -260,9 +264,28 @@ export class SessionRuntime {
     });
   }
 
-  /** WS 切断（ウィンドウを閉じた等）: 見えない状態で取得を続けないため終了する。 */
+  /**
+   * WS が切れた（拡張の再接続待ち）。音声は届かないので STT の接続だけ閉じ、商談は保持する。
+   * 猶予内に session.resume が来なければ、受付側が end(false, 'connection_lost') を呼ぶ。
+   * @returns 保持する商談があるか（無ければ受付側はすぐ破棄してよい）。
+   */
+  detach(): boolean {
+    if (!this.hasSession) return false;
+    this.stopRecognizers();
+    this.log.info({ sessionId: this.sessionId }, 'session detached (waiting for reconnect)');
+    return true;
+  }
+
+  /** 再接続して同じ商談を続ける。現在の状態を新しい接続へ送り直す。 */
+  reattach(): void {
+    if (!this.hasSession) return;
+    this.log.info({ sessionId: this.sessionId }, 'session resumed');
+    this.sendStatus();
+  }
+
+  /** 互換用: 猶予なしで切断＝終了（SESSION_RESUME_GRACE_MS=0）。 */
   async onDisconnect(): Promise<void> {
-    if (this.hasSession) await this.end(false);
+    if (this.hasSession) await this.end(false, 'connection_lost');
   }
 
   /** 承認済み条件が変更・失効した（設定画面）。この商談の該当カードを無効化する。 */
@@ -442,7 +465,7 @@ export class SessionRuntime {
     this.sendStatus();
   }
 
-  async end(exportRequested: boolean): Promise<void> {
+  async end(exportRequested: boolean, endReason: SessionEndReason = 'user_end'): Promise<void> {
     if (!this.lifecycle || this.ended) return;
     this.lifecycle.end();
     this.ended = true;
@@ -470,6 +493,7 @@ export class SessionRuntime {
     this.log.info(
       {
         sessionId: this.sessionId,
+        endReason,
         exported: exportPath !== null,
         cards: this.cards.size,
         latency: this.latency.stats().counts,
@@ -497,7 +521,7 @@ export class SessionRuntime {
     });
     if (this.d.config.retentionMs <= 0) clear();
     // 終了処理（任意の出力）が全て済んだ後に、確定通知を1回だけ送る
-    this.d.send({ type: 'session.ended', sessionId: this.sessionId!, exportPath, reviewAvailableUntil: retainedUntil });
+    this.d.send({ type: 'session.ended', sessionId: this.sessionId!, exportPath, reviewAvailableUntil: retainedUntil, endReason });
   }
 
   /** STT 接続・生成要求・待機・タイマーを止める（pause/end 共通）。 */

@@ -26,6 +26,8 @@ export function overallHealth({ snapshot, status, usage }: Pick<StatusBarProps, 
   const mode = modeText(status);
   const candidates: Label[] = [];
   const add = (prefix: string, l: Label) => candidates.push({ text: prefix ? `${prefix}${l.text}` : l.text, tone: l.tone });
+  // 一時的に切れているだけ（画面共有・切替など）。商談は終わっていないことを最優先で伝える
+  if (snapshot.reconnecting) return { text: `${mode}・再接続中（商談は続いています）`, tone: 'warn' };
 
   if (snapshot.ws !== 'open') add('サーバー', wsLabel(snapshot.ws));
   if (snapshot.paused) add('', { text: '解析一時停止中', tone: 'warn' });

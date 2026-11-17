@@ -6,7 +6,7 @@ import { AuthCheckResponse, LocalPairingCodeResponse } from '@sales-copilot/cont
 import { buildApp, type AppHandle } from './app';
 import { AuthManager } from './auth';
 import { coachingBinding } from './coaching-binding';
-import { DEFAULT_TOKEN_TTL_MS, loadConfig, userDataDirFor } from './config';
+import { DEFAULT_TOKEN_TTL_MS, NO_EXPIRY_TTL_MS, loadConfig, userDataDirFor } from './config';
 import { RollingFileStream } from './logger';
 import { loadReplay } from './main';
 import { Store } from './store';
@@ -109,6 +109,23 @@ describe('pairing survives a server restart (tokens.json)', () => {
     const b = await boot(file, clock, { ttlMs: 10 * DAY });
     expect((await check(b.h, token)).statusCode).toBe(401);
     expect(JSON.parse(readFileSync(file, 'utf8')).tokens).toEqual([]);
+  });
+
+  it('既定（期限なし）: 10 年使わずに再起動しても使える。使えば延長（スライド）し、「解除」すれば使えなくなる', async () => {
+    const file = path.join(tmp(), 'tokens.json');
+    const clock = { t: 1_800_000_000_000 };
+    const a = await boot(file, clock);
+    const token = await pairOnce(a.h);
+    await a.h.app.close();
+    handles.length = 0;
+    clock.t += 3650 * DAY;
+    const b = await boot(file, clock);
+    const r = await check(b.h, token);
+    expect(r.statusCode).toBe(200);
+    expect(AuthCheckResponse.parse(r.json()).expiresAt).toBe(clock.t + NO_EXPIRY_TTL_MS);
+    const rv = await b.h.app.inject({ method: 'POST', url: '/auth/revoke', headers: { host: HOST, origin: ORIGIN, authorization: `Bearer ${token}`, 'content-type': 'application/json' }, payload: {} });
+    expect(rv.statusCode).toBeLessThan(300);
+    expect((await check(b.h, token)).statusCode).toBe(401);
   });
 
   it('revoke (設定画面の「解除」) removes the token from memory and from the file; it stays revoked after a restart', async () => {
@@ -262,13 +279,16 @@ describe('pnpm pair: POST /local/pairing-code', () => {
 });
 
 describe('config', () => {
-  it('default TTL is 180 days; the legacy 12h SESSION_TOKEN_TTL_MS in old .env files is ignored', () => {
-    expect(loadConfig({}).tokenTtlMs).toBe(180 * DAY);
-    const legacy = loadConfig({ SESSION_TOKEN_TTL_MS: '43200000' });
-    expect(legacy.tokenTtlMs).toBe(180 * DAY);
+  it('default TTL is no expiry (「永久にしておいてよ」); SESSION_TOKEN_TTL_DAYS=0 also means no expiry; the legacy 12h SESSION_TOKEN_TTL_MS is ignored', () => {
+    expect(loadConfig({}).tokenTtlMs).toBe(NO_EXPIRY_TTL_MS);
+    expect(loadConfig({ SESSION_TOKEN_TTL_DAYS: '0' }).tokenTtlMs).toBe(NO_EXPIRY_TTL_MS);
+    expect(NO_EXPIRY_TTL_MS).toBeGreaterThan(99 * 365 * DAY);
+    const legacy = loadConfig({ SESSION_TOKEN_TTL_MS: String(12 * 3600_000) });
+    expect(legacy.tokenTtlMs).toBe(NO_EXPIRY_TTL_MS);
     expect(legacy.legacyTokenTtlIgnored).toBe(true);
     expect(loadConfig({ SESSION_TOKEN_TTL_DAYS: '30' }).tokenTtlMs).toBe(30 * DAY);
-    expect(() => loadConfig({ SESSION_TOKEN_TTL_DAYS: '0' })).toThrow();
+    expect(() => loadConfig({ SESSION_TOKEN_TTL_DAYS: '-1' })).toThrow();
+    expect(() => loadConfig({ SESSION_TOKEN_TTL_DAYS: '401' })).toThrow();
   });
 
   it('user data dir: %LOCALAPPDATA%\\ZEROSYS-SalesCopilot on Windows, overridable; same rule as scripts/user-data-dir.mjs', () => {

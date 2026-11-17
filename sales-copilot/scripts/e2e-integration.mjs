@@ -170,7 +170,7 @@ try {
   await page.getByText(/ペアリング: 済み/).waitFor({ timeout: 10000 });
   check('開始前: API未設定を表示（実サーバーの /config/status）', (await page.getByText(/文字起こし（deepgram \/ nova-3 \/ ja）: API未設定/).count()) === 1);
   check('開始前: LIVE 不可の理由を表示', (await page.getByText(/LIVE: 利用できません/).count()) === 1);
-  await page.getByLabel('商談目的（必須）').fill(PURPOSE);
+  await page.getByLabel('商談目的（任意）').fill(PURPOSE);
   await page.getByLabel('顧客名（任意）').fill(CUSTOMER);
   await page.getByText('OFFLINEテスト（APIキー不要').click();
   const scriptSelect = page.getByLabel('再生する架空会話');
@@ -324,7 +324,7 @@ try {
   const page2 = await context.newPage();
   await page2.goto(`chrome-extension://${extId}/copilot.html`);
   await page2.getByText('接続OK').waitFor({ timeout: 10000 });
-  await page2.getByLabel('商談目的（必須）').fill(PURPOSE);
+  await page2.getByLabel('商談目的（任意）').fill(PURPOSE);
   await page2.getByText('自分の音声を取得する').click();
   await page2.getByText('OFFLINEテスト（APIキー不要').click();
   await page2.getByLabel('再生する架空会話').selectOption(SCRIPT_2);

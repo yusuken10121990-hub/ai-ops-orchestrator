@@ -230,6 +230,17 @@ describe('integration additions (session.ended / advice.displayed / audio.gap / 
     expect(ClientMessage.safeParse({ ...gap, reason: 'whatever' }).success).toBe(false);
   });
 
+  it('session.start: 商談目的は任意（未指定・空欄は「商談」）。開始を止めない', () => {
+    const base = { type: 'session.start', appliedFacts: [], mode: 'LIVE', selfCaptureEnabled: true, consentConfirmed: true };
+    const a = ClientMessage.safeParse(base);
+    const b = ClientMessage.safeParse({ ...base, purpose: '   ' });
+    const c = ClientMessage.safeParse({ ...base, purpose: ' A社 定例 ' });
+    expect(a.success && a.data.type === 'session.start' && a.data.purpose).toBe('商談');
+    expect(b.success && b.data.type === 'session.start' && b.data.purpose).toBe('商談');
+    expect(c.success && c.data.type === 'session.start' && c.data.purpose).toBe('A社 定例');
+    expect(ClientMessage.safeParse({ ...base, purpose: 'x'.repeat(501) }).success).toBe(false);
+  });
+
   it('session.update carries a non-empty purpose (<=500) and nothing else', () => {
     expect(ClientMessage.safeParse({ type: 'session.update', purpose: 'A社 定例' }).success).toBe(true);
     expect(ClientMessage.safeParse({ type: 'session.update', purpose: '   ' }).success).toBe(false);

@@ -23,6 +23,7 @@ const snapshot: OffscreenSnapshot = {
   sessionId: 's1',
   inputSampleRate: 48000,
   stopReason: null,
+  reconnecting: false,
 };
 
 function viewOf(card = makeCard()) {

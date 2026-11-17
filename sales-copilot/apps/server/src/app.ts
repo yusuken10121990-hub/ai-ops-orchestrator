@@ -282,13 +282,34 @@ export async function buildApp(deps: AppDeps): Promise<AppHandle> {
 
   // --- WebSocket -------------------------------------------------------------
 
+  /**
+   * 再接続待ちの商談（WS が切れた後、SESSION_RESUME_GRACE_MS の間だけ保持）。
+   * 画面共有・ウィンドウ切替・一時的な通信断で商談が終わらないようにする（オーナーの実商談で発生）。
+   */
+  interface Conn {
+    socket: WebSocket;
+  }
+  const connOf = new WeakMap<SessionRuntime, Conn>();
+  const detached = new Map<string, { runtime: SessionRuntime; timer: ReturnType<typeof setTimeout> }>();
+
+  const endDetached = (sessionId: string) => {
+    const e = detached.get(sessionId);
+    if (!e) return;
+    detached.delete(sessionId);
+    clearTimeout(e.timer);
+    void e.runtime.end(false, 'connection_lost').finally(() => runtimes.delete(e.runtime));
+  };
+
   app.get('/ws', { websocket: true }, (socket: WebSocket, req) => {
     const extId = parseExtensionOrigin(req.headers.origin);
     let authed = false;
+    /** この接続が今送っている先（再接続で別の接続へ引き継がれたら、こちらの close では何もしない）。 */
+    const conn: Conn = { socket };
     const send = (m: ServerMessage) => {
-      if (socket.readyState === 1) socket.send(JSON.stringify(m));
+      const s = conn.socket;
+      if (s.readyState === 1) s.send(JSON.stringify(m));
     };
-    const runtime = new SessionRuntime({
+    let runtime = new SessionRuntime({
       config,
       logger,
       store,
@@ -310,9 +331,42 @@ export async function buildApp(deps: AppDeps): Promise<AppHandle> {
         t.unref?.();
       },
     });
+    connOf.set(runtime, conn);
+    let first = true;
     const helloTimer = setTimeout(() => {
       if (!authed) socket.close(WS_CLOSE.timeout, 'hello timeout');
     }, deps.helloTimeoutMs ?? 5000);
+
+    /** 同じ商談を引き継ぐ。保持中（切断済み）か、古い接続がまだ開いている（半開き）場合のどちらでも。 */
+    const resume = (sessionId: string): boolean => {
+      let target: SessionRuntime | null = null;
+      const d = detached.get(sessionId);
+      if (d) {
+        clearTimeout(d.timer);
+        detached.delete(sessionId);
+        target = d.runtime;
+      } else {
+        for (const r of runtimes) if (r !== runtime && r.hasSession && r.currentSessionId === sessionId) target = r;
+      }
+      if (!target || !target.hasSession) return false;
+      const old = connOf.get(target);
+      const oldSocket = old?.socket;
+      // 新しい接続へ付け替える（古い接続の close は「引き継ぎ済み」として無視される）
+      runtimes.delete(runtime);
+      runtime = target;
+      if (old) old.socket = socket;
+      connOf.set(target, conn);
+      conn.socket = socket;
+      if (oldSocket && oldSocket !== socket && oldSocket.readyState <= 1) {
+        try {
+          oldSocket.close(1000, 'resumed elsewhere');
+        } catch {
+          /* noop */
+        }
+      }
+      runtimes.add(target);
+      return true;
+    };
 
     socket.on('message', (data: Buffer, isBinary: boolean) => {
       if (!authed) {
@@ -337,6 +391,7 @@ export async function buildApp(deps: AppDeps): Promise<AppHandle> {
         return;
       }
       if (isBinary) {
+        first = false;
         runtime.handleAudio(data);
         return;
       }
@@ -345,6 +400,16 @@ export async function buildApp(deps: AppDeps): Promise<AppHandle> {
         send({ type: 'error', code: 'invalid_message', message: 'invalid message', recoverable: true });
         return;
       }
+      if (parsed.message.type === 'session.resume' && first && !runtime.hasSession) {
+        first = false;
+        const sid = parsed.message.sessionId;
+        const ok = resume(sid);
+        send({ type: 'session.resumed', sessionId: sid, ok });
+        if (ok) runtime.reattach();
+        else logger.info({ route: '/ws' }, 'session resume rejected (not found or expired)');
+        return;
+      }
+      first = false;
       try {
         runtime.handleMessage(parsed.message);
       } catch (e) {
@@ -354,7 +419,18 @@ export async function buildApp(deps: AppDeps): Promise<AppHandle> {
     });
     socket.on('close', () => {
       clearTimeout(helloTimer);
-      void runtime.onDisconnect().finally(() => runtimes.delete(runtime));
+      // 別の接続へ引き継ぎ済みなら何もしない
+      if (conn.socket !== socket) return;
+      const r = runtime;
+      const sid = r.currentSessionId;
+      const grace = config.resumeGraceMs;
+      if (sid && grace > 0 && r.detach()) {
+        const timer = setTimeout(() => endDetached(sid), grace);
+        timer.unref?.();
+        detached.set(sid, { runtime: r, timer });
+        return;
+      }
+      void r.onDisconnect().finally(() => runtimes.delete(r));
     });
   });
 

@@ -33,6 +33,26 @@ interface Client {
   of<T extends ServerMessage['type']>(t: T): Extract<ServerMessage, { type: T }>[];
 }
 
+async function connectClient(port: number, token: string): Promise<Client> {
+  const ws = new WebSocket(`ws://127.0.0.1:${port}/ws`, { origin: ORIGIN });
+  const client: Client = {
+    ws,
+    msgs: [],
+    invalid: [],
+    send: (o) => ws.send(JSON.stringify(o)),
+    of: (t) => client.msgs.filter((m) => m.type === t) as never,
+  };
+  ws.on('message', (d) => {
+    const p = parseServerMessage(String(d));
+    if (p.ok) client.msgs.push(p.message);
+    else client.invalid.push(String(d).slice(0, 80));
+  });
+  await new Promise<void>((r) => ws.on('open', () => r()));
+  client.send({ type: 'hello', protocolVersion: 1, clientVersion: 'e2e', token });
+  await waitFor(() => client.msgs.some((m) => m.type === 'hello.ack'));
+  return client;
+}
+
 async function setup(cfg: Partial<ServerConfig>, liveLlm: CountingLlm | null) {
   const { logger, capture } = testLogger('debug');
   const store = new Store(':memory:');
@@ -50,22 +70,7 @@ async function setup(cfg: Partial<ServerConfig>, liveLlm: CountingLlm | null) {
     body: JSON.stringify({ pairingCode: code, extensionId: ORIGIN.slice(19), clientName: 'e2e' }),
   });
   const token = ((await pr.json()) as { session: { token: string } }).session.token;
-  const ws = new WebSocket(`ws://127.0.0.1:${port}/ws`, { origin: ORIGIN });
-  const client: Client = {
-    ws,
-    msgs: [],
-    invalid: [],
-    send: (o) => ws.send(JSON.stringify(o)),
-    of: (t) => client.msgs.filter((m) => m.type === t) as never,
-  };
-  ws.on('message', (d) => {
-    const p = parseServerMessage(String(d));
-    if (p.ok) client.msgs.push(p.message);
-    else client.invalid.push(String(d).slice(0, 80));
-  });
-  await new Promise<void>((r) => ws.on('open', () => r()));
-  client.send({ type: 'hello', protocolVersion: 1, clientVersion: 'e2e', token });
-  await waitFor(() => client.msgs.some((m) => m.type === 'hello.ack'));
+  const client = await connectClient(port, token);
   return { h, client, capture, token, code, port, store, config };
 }
 
@@ -148,10 +153,14 @@ describe('OFFLINE session end-to-end over WebSocket', () => {
     expect(usage.llmInputTokens).toBe(callsAtEnd * 100);
   });
 
-  it('closing the socket ends the session (no invisible capture)', async () => {
+  it('closing the socket with SESSION_RESUME_GRACE_MS=0 ends the session at once (no invisible capture)', async () => {
     const llm = new CountingLlm();
-    const { client, h } = await setup(
-      { offline: { script: 'decline-respect', speed: 20, useAnthropic: true }, anthropic: { ...testConfig().anthropic, apiKey: FAKE_ANTHROPIC_KEY } },
+    const { client, h, capture } = await setup(
+      {
+        resumeGraceMs: 0,
+        offline: { script: 'decline-respect', speed: 20, useAnthropic: true },
+        anthropic: { ...testConfig().anthropic, apiKey: FAKE_ANTHROPIC_KEY },
+      },
       llm,
     );
     startOffline(client, { offlineUseAnthropic: true });
@@ -161,6 +170,65 @@ describe('OFFLINE session end-to-end over WebSocket', () => {
     const calls = llm.calls;
     await sleep(800);
     expect(llm.calls).toBe(calls);
+    expect(capture.text).toMatch(/"endReason":"connection_lost"/);
+  });
+
+  it('a dropped socket keeps the session; session.resume on a new socket continues the SAME session (screen share / window switch)', async () => {
+    const { client, h, port, token, capture } = await setup({ resumeGraceMs: 5000, offline: { script: 'decline-respect', speed: 20, useAnthropic: false } }, null);
+    startOffline(client);
+    await waitFor(() => client.of('transcript.segment').length > 0, 5000);
+    const sid = client.of('status').at(-1)!.sessionId!;
+    client.ws.close();
+    await sleep(300);
+    expect(h.reviews.size).toBe(0); // まだ終わっていない
+    const c2 = await connectClient(port, token);
+    c2.send({ type: 'session.resume', sessionId: sid });
+    await waitFor(() => c2.of('session.resumed').length === 1);
+    expect(c2.of('session.resumed')[0]).toMatchObject({ sessionId: sid, ok: true });
+    await waitFor(() => c2.of('status').length > 0);
+    expect(c2.of('status').at(-1)).toMatchObject({ sessionId: sid, lifecycle: 'capturing' });
+    // 同じ商談の続き: 新しい接続からの操作（手動ボタン）が同じ商談で処理される
+    c2.send({ type: 'advice.request', kind: 'next_step', requestId: 'after-resume' });
+    await waitFor(() => c2.of('advice.card').length > 0 || c2.of('error').length > 0, 4000);
+    expect(c2.of('error').filter((e) => e.code === 'invalid_state')).toEqual([]);
+    c2.send({ type: 'session.end', exportRequested: false, reason: 'user_end' });
+    await waitFor(() => c2.of('session.ended').length === 1);
+    expect(c2.of('session.ended')[0]).toMatchObject({ sessionId: sid, endReason: 'user_end' });
+    expect(h.reviews.size).toBe(1);
+    const log = capture.text;
+    expect(log).toMatch(/session detached/);
+    expect(log).toMatch(/session resumed/);
+    expect(log).toMatch(/"endReason":"user_end"/);
+  });
+
+  it('resume after the grace period is rejected and the session ended with endReason=connection_lost', async () => {
+    const { client, h, port, token, capture } = await setup({ resumeGraceMs: 300, offline: { script: 'decline-respect', speed: 20, useAnthropic: false } }, null);
+    startOffline(client);
+    await waitFor(() => client.of('status').some((s) => s.sessionId), 5000);
+    const sid = client.of('status').at(-1)!.sessionId!;
+    client.ws.close();
+    await waitFor(() => h.reviews.size === 1, 3000);
+    expect(capture.text).toMatch(/"endReason":"connection_lost"/);
+    const c2 = await connectClient(port, token);
+    c2.send({ type: 'session.resume', sessionId: sid });
+    await waitFor(() => c2.of('session.resumed').length === 1);
+    expect(c2.of('session.resumed')[0]!.ok).toBe(false);
+    expect(h.runtimes.size).toBe(1); // 新しい接続の分だけ
+  });
+
+  it('a half-open old socket is taken over by session.resume (the old socket is closed, the session keeps going)', async () => {
+    const { client, port, token } = await setup({ resumeGraceMs: 5000, offline: { script: 'decline-respect', speed: 20, useAnthropic: false } }, null);
+    startOffline(client);
+    await waitFor(() => client.of('status').some((s) => s.sessionId), 5000);
+    const sid = client.of('status').at(-1)!.sessionId!;
+    const c2 = await connectClient(port, token);
+    c2.send({ type: 'session.resume', sessionId: sid });
+    await waitFor(() => c2.of('session.resumed').length === 1);
+    expect(c2.of('session.resumed')[0]!.ok).toBe(true);
+    await waitFor(() => client.ws.readyState === WebSocket.CLOSED, 3000);
+    c2.send({ type: 'session.end', exportRequested: false, reason: 'call_left' });
+    await waitFor(() => c2.of('session.ended').length === 1);
+    expect(c2.of('session.ended')[0]!.endReason).toBe('call_left');
   });
 
   it('export only when requested: JSON + MD written to exports/, path available in review', async () => {

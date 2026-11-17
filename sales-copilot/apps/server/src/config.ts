@@ -26,7 +26,7 @@ export interface ServerConfig {
   tokenStoreFile: string;
   /** ログをファイルへ書く（自動起動用・ローテーションあり）。未設定なら標準出力。 */
   logFile: string | null;
-  /** トークンの有効期間（使うたびに延長）。既定 180 日（SESSION_TOKEN_TTL_DAYS）。 */
+  /** トークンの有効期間（使うたびに延長）。既定は期限なし（SESSION_TOKEN_TTL_DAYS=0 / 未設定）。 */
   tokenTtlMs: number;
   /**
    * 旧設定 SESSION_TOKEN_TTL_MS（以前の .env.example は 12 時間を書いていた）が .env に残っている。
@@ -62,6 +62,11 @@ export interface ServerConfig {
   priceTable: PriceTable | null;
   /** 解析停止/終了後に会話データ（振り返り用）をメモリに残す上限。 */
   retentionMs: number;
+  /**
+   * 拡張との接続が切れたとき、同じ商談を再接続で続けられるよう保持する時間（SESSION_RESUME_GRACE_MS）。
+   * 既定 60 秒。0 = 切れたら即終了（以前の動作）。保持中は STT・助言生成を新たに始めない（音声が来ないため）。
+   */
+  resumeGraceMs: number;
   /** 1系統あたりの未送信音声キュー上限（ms）。 */
   maxAudioQueueMs: number;
   offline: {
@@ -112,7 +117,13 @@ function bool(env: Env, k: string, def: boolean): boolean {
   return v === '1' || v.toLowerCase() === 'true';
 }
 
-export const DEFAULT_TOKEN_TTL_MS = 180 * 24 * 60 * 60 * 1000;
+/**
+ * 「期限なし」の実体（約 100 年）。期限は数値のまま扱う（保存形式・拡張との契約を変えないため）。
+ * 2026-11-17 オーナー「永久にしておいてよ」。解除（revoke）と tokens.json の削除で失効できる。
+ */
+export const NO_EXPIRY_TTL_MS = 100 * 365 * 24 * 60 * 60 * 1000;
+/** 既定は期限なし（SESSION_TOKEN_TTL_DAYS 未設定 または 0）。使うたびに延長する動作はそのまま。 */
+export const DEFAULT_TOKEN_TTL_MS = NO_EXPIRY_TTL_MS;
 export const APP_DIR_NAME = 'ZEROSYS-SalesCopilot';
 /** ローカル管理用の秘密（pnpm pair が読む）のファイル名。 */
 export const LOCAL_ADMIN_FILE = 'local-admin.json';
@@ -130,12 +141,13 @@ export function userDataDirFor(env: Env, platform: NodeJS.Platform = process.pla
   return path.join(env.XDG_STATE_HOME?.trim() || path.join(home, '.local', 'state'), APP_DIR_NAME);
 }
 
-/** SESSION_TOKEN_TTL_DAYS（1〜400 日）。未設定なら 180 日。 */
+/** SESSION_TOKEN_TTL_DAYS: 0 または未設定 = 期限なし（既定）。1〜400 = その日数（使うたびに延長）。 */
 export function tokenTtlMsFrom(env: Env): number {
   const v = str(env, 'SESSION_TOKEN_TTL_DAYS');
   if (v === null) return DEFAULT_TOKEN_TTL_MS;
   const d = Number(v);
-  if (!Number.isFinite(d) || d < 1 || d > 400) throw new Error('SESSION_TOKEN_TTL_DAYS must be 1..400');
+  if (d === 0) return NO_EXPIRY_TTL_MS;
+  if (!Number.isFinite(d) || d < 1 || d > 400) throw new Error('SESSION_TOKEN_TTL_DAYS must be 0 (no expiry) or 1..400');
   return Math.round(d * 24 * 60 * 60 * 1000);
 }
 
@@ -218,6 +230,7 @@ export function loadConfig(env: Env = process.env): ServerConfig {
     },
     priceTable,
     retentionMs: int(env, 'SESSION_RETENTION_MS', 10 * 60 * 1000),
+    resumeGraceMs: int(env, 'SESSION_RESUME_GRACE_MS', 60 * 1000),
     maxAudioQueueMs: int(env, 'AUDIO_MAX_QUEUE_MS', 2000),
     offline: {
       script: str(env, 'OFFLINE_SCRIPT'),

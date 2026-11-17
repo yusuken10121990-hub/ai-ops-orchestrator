@@ -10,6 +10,11 @@
 import type { CaptureSourceKey } from '../shared/runtime-messages';
 
 export const MEET_PORT_NAME = 'zerosys-meet-audio';
+/**
+ * カンペ画面（copilot.html）→ offscreen の Port。画面が閉じると確実に切れる（タイマーと違い、
+ * 画面が隠れても間引かれない）。以前の「2 秒ごとのハートビート」の代わり。
+ */
+export const UI_PORT_NAME = 'zerosys-copilot-ui';
 /** MAIN world との握手に使う印（window.postMessage）。 */
 export const BRIDGE_HELLO = 'zerosys-copilot/bridge-hello';
 
@@ -33,7 +38,9 @@ export type FromPage =
 export type ToOffscreenPort =
   | { type: 'pcm'; source: CaptureSourceKey; b64: string; levelDb: number }
   | { type: 'self.error'; name: string }
-  | { type: 'remote.error'; name: string };
+  | { type: 'remote.error'; name: string }
+  /** 通話から退出した（ページ内の移動・画面共有・タブ切替では送らない）。 */
+  | { type: 'call.left' };
 
 export type FromOffscreenPort =
   | { type: 'remote.enable'; enabled: boolean }
@@ -112,5 +119,6 @@ export function parseToOffscreenPort(raw: unknown): ToOffscreenPort | null {
     return { type: 'pcm', source: m.source, b64: m.b64, levelDb: m.levelDb };
   }
   if ((m.type === 'self.error' || m.type === 'remote.error') && typeof m.name === 'string') return { type: m.type, name: m.name.slice(0, 64) };
+  if (m.type === 'call.left') return { type: 'call.left' };
   return null;
 }

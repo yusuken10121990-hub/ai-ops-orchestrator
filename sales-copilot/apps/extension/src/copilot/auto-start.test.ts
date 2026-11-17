@@ -7,22 +7,14 @@ const cfg = (live: boolean, stt = live, llm = live): ModeConfig => ({
   llm: { configured: llm, provider: 'anthropic', model: 'm' },
 });
 
-describe('chooseAutoMode（前回のモード／API設定）', () => {
-  it('前回 LIVE で文字起こし・助言生成が設定済みなら LIVE', () => {
-    expect(chooseAutoMode('LIVE', cfg(true))).toBe('LIVE');
+describe('chooseAutoMode（ワンタップは LIVE だけ）', () => {
+  it('文字起こし・助言生成が設定済みなら必ず LIVE', () => {
+    expect(chooseAutoMode(cfg(true))).toBe('LIVE');
   });
-  it('初回（前回なし）も設定済みなら LIVE', () => {
-    expect(chooseAutoMode(null, cfg(true))).toBe('LIVE');
-  });
-  it('API 未設定なら OFFLINE（前回 LIVE でも）', () => {
-    expect(chooseAutoMode('LIVE', cfg(false))).toBe('OFFLINE');
-    expect(chooseAutoMode(null, cfg(true, true, false))).toBe('OFFLINE');
-  });
-  it('前回 OFFLINE なら OFFLINE のまま', () => {
-    expect(chooseAutoMode('OFFLINE', cfg(true))).toBe('OFFLINE');
-  });
-  it('どちらも使えなければ null', () => {
-    expect(chooseAutoMode(null, { ...cfg(false), modes: { LIVE: false, OFFLINE: false } })).toBeNull();
+  it('API 未設定なら null（OFFLINE に勝手に落とさない）', () => {
+    expect(chooseAutoMode(cfg(false))).toBeNull();
+    expect(chooseAutoMode(cfg(true, true, false))).toBeNull();
+    expect(chooseAutoMode(cfg(true, false, true))).toBeNull();
   });
 });
 
@@ -31,7 +23,6 @@ const base: AutoStartInput = {
   health: 'ok',
   config: cfg(true),
   configError: null,
-  lastMode: 'LIVE',
   remote: 'armed',
   elapsedMs: 500,
 };
@@ -51,8 +42,17 @@ describe('decideAutoStart', () => {
     if (d.kind === 'fail') expect(d.message).toMatch(/接続」をもう一度|拡張アイコン/);
     expect(decideAutoStart({ ...base, remote: 'error' }).kind).toBe('fail');
   });
-  it('OFFLINE は会議音声を待たない', () => {
-    expect(decideAutoStart({ ...base, config: cfg(false), remote: 'off' })).toEqual({ kind: 'start', mode: 'OFFLINE' });
+  it('事故の再発防止: 前回が OFFLINE（試験）でも、API 設定済みならワンタップは LIVE', () => {
+    // 2026-11-17 実商談: 試験で使った OFFLINE が残っていて、本番の商談が架空会話の再生で始まった
+    expect(decideAutoStart({ ...base, lastMode: 'OFFLINE' } as AutoStartInput)).toEqual({ kind: 'start', mode: 'LIVE' });
+  });
+  it('API 未設定なら OFFLINE で勝手に始めず、直し方と「OFFLINE テストを選ぶ」道を出す', () => {
+    const d = decideAutoStart({ ...base, config: cfg(false), remote: 'off' });
+    expect(d.kind).toBe('fail');
+    if (d.kind === 'fail') {
+      expect(d.message).toMatch(/APIキー/);
+      expect(d.message).toMatch(/OFFLINE テスト/);
+    }
   });
   it('未ペアリング・サーバー停止・設定取得失敗は、何をすればよいかを返す', () => {
     const a = decideAutoStart({ ...base, paired: false });

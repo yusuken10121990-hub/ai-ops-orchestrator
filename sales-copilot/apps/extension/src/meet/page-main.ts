@@ -41,8 +41,15 @@ declare global {
 
   let ctx: AudioContext | null = null;
   const getCtx = (): AudioContext => {
-    if (!ctx || ctx.state === 'closed') ctx = new NativeAudioContext({ latencyHint: 'interactive' });
-    if (ctx.state === 'suspended') void ctx.resume().catch(() => {});
+    if (!ctx || ctx.state === 'closed') {
+      const c = new NativeAudioContext({ latencyHint: 'interactive' });
+      // 画面共有・出力デバイスの切替などで止められたら動かし直す（タブを切り替えても止めない）
+      c.addEventListener('statechange', () => {
+        if (ctx === c && c.state !== 'running' && c.state !== 'closed') void c.resume().catch(() => {});
+      });
+      ctx = c;
+    }
+    if (ctx.state !== 'running') void ctx.resume().catch(() => {});
     return ctx;
   };
 
@@ -137,6 +144,7 @@ declare global {
     emit,
     setInterval: (fn, ms) => window.setInterval(fn, ms),
     clearInterval: (id) => window.clearInterval(id as number),
+    now: () => performance.now(),
   });
 
   hook = installRtcHook(window as unknown as Record<string, unknown>, (t) => audio.addRemoteTrack(t));

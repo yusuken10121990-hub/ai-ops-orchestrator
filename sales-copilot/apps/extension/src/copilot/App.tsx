@@ -18,8 +18,10 @@ import { PreSession, type PreSessionServerInfo, type StartParams } from './compo
 import { LiveView, type LiveActions } from './components/LiveView';
 import { EndView } from './components/EndView';
 import { decideAutoStart } from './auto-start';
+import { UI_PORT_NAME } from '../meet/wire';
 
-const HEARTBEAT_MS = 2000;
+/** offscreen との Port が切れたとき（offscreen がまだ無い・作り直し）につなぎ直す間隔。 */
+const UI_PORT_RETRY_MS = 1000;
 
 function sendOffscreen(msg: ToOffscreen): Promise<unknown> {
   return chrome.runtime.sendMessage(msg).catch(() => undefined);
@@ -81,7 +83,12 @@ export function App() {
           break;
         case 'server':
           if (m.message.type === 'session.ended') {
-            setEndResult({ source: 'session.ended', exportPath: m.message.exportPath, reviewAvailableUntil: m.message.reviewAvailableUntil });
+            setEndResult({
+              source: 'session.ended',
+              exportPath: m.message.exportPath,
+              reviewAvailableUntil: m.message.reviewAvailableUntil,
+              ...(m.message.endReason ? { endReason: m.message.endReason } : {}),
+            });
           }
           dispatch({ type: 'server', message: m.message });
           break;
@@ -96,13 +103,32 @@ export function App() {
     void sendOffscreen({ target: 'offscreen', type: 'getState' }).then((s) => {
       if (s && typeof s === 'object' && 'phase' in s) setSnapshot(s as OffscreenSnapshot);
     });
-    // UI が消えたら offscreen 側が取得を止める（ハートビート）
-    const hb = setInterval(() => void sendOffscreen({ target: 'offscreen', type: 'heartbeat' }), HEARTBEAT_MS);
-    void sendOffscreen({ target: 'offscreen', type: 'heartbeat' });
+    // この画面が開いていることを offscreen へ Port で伝える（閉じたら確実に切れる。画面が隠れても切れない）。
+    // 以前の 2 秒ごとのハートビートは、画面共有・ウィンドウ切替で画面が隠れると Chrome に間引かれ、商談が勝手に終わっていた。
+    let uiPort: chrome.runtime.Port | null = null;
+    let retry: ReturnType<typeof setTimeout> | null = null;
+    let disposed = false;
+    const connectUi = () => {
+      if (disposed) return;
+      try {
+        const p = chrome.runtime.connect({ name: UI_PORT_NAME });
+        uiPort = p;
+        p.onDisconnect.addListener(() => {
+          void chrome.runtime.lastError; // 受け手がいない（offscreen 未作成）ときの警告を消す
+          if (uiPort === p) uiPort = null;
+          if (!disposed) retry = setTimeout(connectUi, UI_PORT_RETRY_MS);
+        });
+      } catch {
+        retry = setTimeout(connectUi, UI_PORT_RETRY_MS);
+      }
+    };
+    connectUi();
     const clock = setInterval(() => setNow(Date.now()), 1000);
     return () => {
+      disposed = true;
       chrome.runtime.onMessage.removeListener(onMsg);
-      clearInterval(hb);
+      if (retry) clearTimeout(retry);
+      uiPort?.disconnect();
       clearInterval(clock);
     };
   }, []);
@@ -189,7 +215,7 @@ export function App() {
       setEndResult(null);
       displayedRef.current.clear();
       setPurpose(p.purpose);
-      void saveSettings({ lastMode: p.mode });
+      // モードは保存しない（ワンタップは常に LIVE。OFFLINE を既定として持ち越さない）
       void sendSw({
         target: 'sw',
         type: 'ui.start',
@@ -226,7 +252,6 @@ export function App() {
       health: server.health,
       config: server.config,
       configError: server.configError,
-      lastMode: settings.lastMode,
       remote: remoteState,
       elapsedMs: now - auto.requestedAt,
     });

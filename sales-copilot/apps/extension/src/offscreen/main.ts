@@ -5,7 +5,7 @@
  */
 import { CaptureController, type AudioGraphLike, type CaptureDeps, type InPageLink, type MediaStreamLike, type PcmListener } from './capture-controller';
 import type { FromOffscreen, ToOffscreen } from '../shared/runtime-messages';
-import { MEET_PORT_NAME, base64ToPcm, parseToOffscreenPort } from '../meet/wire';
+import { MEET_PORT_NAME, UI_PORT_NAME, base64ToPcm, parseToOffscreenPort } from '../meet/wire';
 
 const WORKLET_URL = chrome.runtime.getURL('capture-worklet.js');
 const PROCESSOR_NAME = 'sales-copilot-capture';
@@ -101,13 +101,31 @@ const controller = new CaptureController(deps);
 // Meet ポップアップの「接続」: service worker が指定したタブの content script からの Port だけ受け付ける
 let expectedInPageTab: number | null = null;
 chrome.runtime.onConnect.addListener((port) => {
+  if (port.name === UI_PORT_NAME) {
+    // カンペ画面（拡張内のページ）だけ。タブ内のスクリプトからは受け付けない
+    if (port.sender?.tab?.id !== undefined && !port.sender.url?.startsWith(chrome.runtime.getURL(''))) {
+      port.disconnect();
+      return;
+    }
+    controller.uiConnected();
+    port.onDisconnect.addListener(() => controller.uiDisconnected());
+    return;
+  }
   if (port.name !== MEET_PORT_NAME) return;
   const tabId = port.sender?.tab?.id;
-  if (tabId === undefined || tabId !== expectedInPageTab) {
+  // 新しい「接続」か、商談中に一時的に切れた同じタブからの再接続だけ受け付ける
+  const reconnect = tabId !== undefined && controller.acceptsInPageReconnect(tabId);
+  if (tabId === undefined || (tabId !== expectedInPageTab && !reconnect)) {
+    // 受け付けない: 「もう再接続しなくてよい」と伝えてから切る
+    try {
+      port.postMessage({ type: 'stop.all' });
+    } catch {
+      /* noop */
+    }
     port.disconnect();
     return;
   }
-  expectedInPageTab = null;
+  if (tabId === expectedInPageTab) expectedInPageTab = null;
   let open = true;
   const link: InPageLink = {
     send(msg) {
@@ -130,13 +148,14 @@ chrome.runtime.onConnect.addListener((port) => {
     if (m.type === 'pcm') {
       const pcm = base64ToPcm(m.b64);
       if (pcm) controller.inPagePcm(link, m.source, pcm, m.levelDb);
-    } else controller.inPageError(link, m.type === 'self.error' ? 'SELF' : 'REMOTE', m.name);
+    } else if (m.type === 'call.left') controller.inPageCallLeft(link);
+    else controller.inPageError(link, m.type === 'self.error' ? 'SELF' : 'REMOTE', m.name);
   });
   port.onDisconnect.addListener(() => {
     open = false;
     controller.inPageLost(link);
   });
-  void controller.armInPage(link);
+  void controller.armInPage(link, tabId);
 });
 
 chrome.runtime.onMessage.addListener((raw: unknown, _sender, sendResponse) => {

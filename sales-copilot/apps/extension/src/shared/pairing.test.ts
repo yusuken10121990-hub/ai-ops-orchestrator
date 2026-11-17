@@ -40,3 +40,13 @@ describe('lines (what happened → how to fix)', () => {
     expect(describeApiError({ kind: 'network' })).toBe(SERVER_DOWN_LINE);
   });
 });
+
+describe('ペアリングの表示（「永久にしておいてよ」）', () => {
+  it('サーバー既定の期限なし（約 100 年）は「期限なし」と出す。期限を設定した場合は日付', async () => {
+    const { pairingStatusText } = await import('./pairing');
+    const now = 1_800_000_000_000;
+    const fmt = () => '2027-05-01 09:00';
+    expect(pairingStatusText(now + 100 * 365 * 86400_000, now, fmt)).toBe('済み（期限なし・「解除」を押すまで有効）');
+    expect(pairingStatusText(now + 30 * 86400_000, now, fmt)).toBe('済み（期限 2027-05-01 09:00・使うたびに延長）');
+  });
+});

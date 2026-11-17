@@ -133,9 +133,9 @@ describe('purposeFromMeetTitle（商談目的の既定値）', () => {
     expect(purposeFromMeetTitle('A社 定例 - Google Meet', 'abc-defg-hij')).toBe('A社 定例');
   });
   it('会議名が無ければ会議コード入りの既定文', () => {
-    expect(purposeFromMeetTitle('Meet - abc-defg-hij', 'abc-defg-hij')).toBe('Google Meet の商談（abc-defg-hij）');
-    expect(purposeFromMeetTitle('Google Meet', 'abc-defg-hij')).toBe('Google Meet の商談（abc-defg-hij）');
-    expect(purposeFromMeetTitle('', null)).toBe('Google Meet の商談');
+    expect(purposeFromMeetTitle('Meet - abc-defg-hij', 'abc-defg-hij')).toBe('商談');
+    expect(purposeFromMeetTitle('Google Meet', 'abc-defg-hij')).toBe('商談');
+    expect(purposeFromMeetTitle('', null)).toBe('商談');
   });
   it('500 文字までに切る（サーバーの上限）', () => {
     expect(purposeFromMeetTitle('あ'.repeat(800), null)).toHaveLength(500);

@@ -2,7 +2,10 @@ import { describe, expect, it } from 'vitest';
 import { decodeAudioFrame } from '@sales-copilot/contracts';
 import {
   CaptureController,
-  HEARTBEAT_TIMEOUT_MS,
+  IN_PAGE_GRACE_MS,
+  UI_GRACE_MS,
+  WS_RESUME_MAX_MS,
+  endReasonOf,
   toWsUrl,
   type AudioGraphLike,
   type CaptureDeps,
@@ -287,13 +290,108 @@ describe('CaptureController', () => {
     expect(env.emitted.some((m) => m.type === 'offscreen.stopped')).toBe(true);
   });
 
-  it('UI のハートビートが途切れたら取得を止める', async () => {
+  it('カンペ画面が隠れて（画面共有・ウィンドウ切替）ハートビートが来なくても止めない', async () => {
     const env = setup();
     await startLive(env);
+    env.ctl.uiConnected();
     env.ctl.heartbeat();
-    env.advance(HEARTBEAT_TIMEOUT_MS + 3000);
+    env.advance(10 * 60_000); // 10 分間タイマーが間引かれても
     await flush();
-    expect(env.ctl.snapshot()).toMatchObject({ phase: 'stopped', stopReason: 'heartbeat_lost' });
+    expect(env.ctl.snapshot()).toMatchObject({ phase: 'live', stopReason: null });
+  });
+
+  it('カンペ画面との Port が全部切れて UI_GRACE_MS 戻らなければ window_closed で止める（再読み込みは許す）', async () => {
+    const env = setup();
+    const ws = await startLive(env);
+    env.ctl.uiConnected();
+    env.ctl.uiDisconnected();
+    env.advance(UI_GRACE_MS - 1000);
+    env.ctl.uiConnected(); // 画面の再読み込みでつながり直した
+    env.advance(UI_GRACE_MS * 2);
+    await flush();
+    expect(env.ctl.snapshot().phase).toBe('live');
+    env.ctl.uiDisconnected();
+    env.advance(UI_GRACE_MS + 10);
+    await flush();
+    expect(env.ctl.snapshot()).toMatchObject({ phase: 'stopped', stopReason: 'window_closed' });
+    expect(ws.sentJson).toContainEqual({ type: 'session.end', exportRequested: false, reason: 'window_closed' });
+  });
+
+  it('WS が切れても終わらせず「再接続中」→ 新しい WS で hello → session.resume → 同じ商談の音声を新しい世代で送る', async () => {
+    const env = setup();
+    const ws = await startLive(env);
+    env.graph.remote[0]!.onPcm(new Int16Array(1600), -20);
+    const gen0 = decodeAudioFrame(ws.sentBinary[0]!).header.streamGeneration;
+    ws.readyState = 3;
+    ws.onclose?.({ code: 1006 });
+    expect(env.ctl.snapshot()).toMatchObject({ phase: 'live', ws: 'reconnecting', reconnecting: true });
+    env.advance(600);
+    await flush();
+    const ws2 = env.sockets[1]!;
+    expect(ws2).toBeDefined();
+    ws2.readyState = 1;
+    ws2.onopen?.();
+    await flush();
+    expect(ws2.sentJson[0]).toMatchObject({ type: 'hello', token: config.token });
+    ws2.serverSend({ type: 'hello.ack', protocolVersion: 1, serverVersion: 't' });
+    await flush();
+    expect(ws2.sentJson[1]).toEqual({ type: 'session.resume', sessionId: 'sess-1' });
+    ws2.serverSend({ type: 'session.resumed', sessionId: 'sess-1', ok: true });
+    await flush();
+    await flush();
+    expect(env.ctl.snapshot()).toMatchObject({ phase: 'live', ws: 'open', reconnecting: false, sessionId: 'sess-1' });
+    env.graph.remote[0]!.onPcm(new Int16Array(1600), -20);
+    const h = decodeAudioFrame(ws2.sentBinary[0]!).header;
+    expect(h.sessionId).toBe('sess-1');
+    expect(h.streamGeneration).toBeGreaterThan(gen0);
+    expect(h.sequence).toBe(0);
+  });
+
+  it('再接続はバックオフで繰り返し、WS_RESUME_MAX_MS を超えたら connection_failed で止める', async () => {
+    const env = setup();
+    const ws = await startLive(env);
+    ws.readyState = 3;
+    ws.onclose?.({ code: 1006 });
+    for (let i = 0; i < 40 && env.ctl.snapshot().phase === 'live'; i++) {
+      env.advance(1000);
+      await flush();
+      const last = env.sockets.at(-1)!;
+      if (last !== ws && last.readyState === 0) {
+        last.readyState = 3;
+        last.onerror?.();
+        await flush();
+      }
+    }
+    env.advance(WS_RESUME_MAX_MS);
+    await flush();
+    expect(env.sockets.length).toBeGreaterThan(3);
+    expect(env.ctl.snapshot()).toMatchObject({ phase: 'stopped', stopReason: 'connection_failed' });
+  });
+
+  it('サーバーにもう商談が無い（session.resumed ok=false）なら止める', async () => {
+    const env = setup();
+    const ws = await startLive(env);
+    ws.readyState = 3;
+    ws.onclose?.({ code: 1006 });
+    env.advance(600);
+    await flush();
+    const ws2 = env.sockets[1]!;
+    ws2.readyState = 1;
+    ws2.onopen?.();
+    await flush();
+    ws2.serverSend({ type: 'hello.ack', protocolVersion: 1, serverVersion: 't' });
+    await flush();
+    ws2.serverSend({ type: 'session.resumed', sessionId: 'sess-1', ok: false });
+    await flush();
+    await flush();
+    expect(env.ctl.snapshot()).toMatchObject({ phase: 'stopped', stopReason: 'connection_failed' });
+  });
+
+  it('停止理由 → サーバーへ送る終了理由', () => {
+    expect(endReasonOf('user_end')).toBe('user_end');
+    expect(endReasonOf('call_left')).toBe('call_left');
+    expect(endReasonOf('connection_failed')).toBe('connection_lost');
+    expect(endReasonOf('heartbeat_lost')).toBe('window_closed');
   });
 
   it('会議タブのトラック終了で lost を通知して停止（別タブへ切り替えない）', async () => {
@@ -502,14 +600,57 @@ describe('CaptureController — Meet ページ内取得（ワンタップ接続�
     expect(env.ctl.activeTimerCount).toBe(0);
   });
 
-  it('Port が切れた（タブを閉じた・再読み込み）ら商談を止める', async () => {
+  it('Port が切れても止めない（再接続中）。同じタブから再接続したら REMOTE と SELF を再開して同じ商談を続ける', async () => {
     const env = setup();
     const link = new FakeLink();
-    const ws = await startLive(env, () => env.ctl.armInPage(link));
+    const ws = await startLive(env, () => env.ctl.armInPage(link, 7));
     env.ctl.inPageLost(link);
     await flush();
-    expect(env.ctl.snapshot()).toMatchObject({ phase: 'stopped', stopReason: 'tab_closed' });
-    expect(ws.sentJson).toContainEqual(expect.objectContaining({ type: 'source.state', source: 'REMOTE', state: 'lost' }));
+    expect(env.ctl.snapshot()).toMatchObject({ phase: 'live', reconnecting: true, sources: { REMOTE: 'reconnecting', SELF: 'reconnecting' } });
+    expect(ws.sentJson).toContainEqual({ type: 'source.state', source: 'REMOTE', state: 'lost', reason: 'reconnecting' });
+    expect(env.ctl.acceptsInPageReconnect(7)).toBe(true);
+    expect(env.ctl.acceptsInPageReconnect(8)).toBe(false);
+    env.advance(IN_PAGE_GRACE_MS - 5000);
+    const link2 = new FakeLink();
+    await env.ctl.armInPage(link2, 7);
+    expect(env.ctl.snapshot()).toMatchObject({ phase: 'live', reconnecting: false, sources: { REMOTE: 'capturing', SELF: 'capturing' } });
+    expect(link2.types()).toContain('self.start');
+    expect(ws.sentJson).toContainEqual({ type: 'source.state', source: 'REMOTE', state: 'ok' });
+    const before = ws.sentBinary.length;
+    env.ctl.inPagePcm(link2, 'REMOTE', new Int16Array(1600), -20);
+    expect(ws.sentBinary.length).toBeGreaterThan(before);
+    env.advance(IN_PAGE_GRACE_MS * 2); // 猶予タイマーは取り消し済み
+    await flush();
+    expect(env.ctl.snapshot().phase).toBe('live');
+  });
+
+  it('Port が切れたまま IN_PAGE_GRACE_MS 戻らなければ meet_lost で止める', async () => {
+    const env = setup();
+    const link = new FakeLink();
+    const ws = await startLive(env, () => env.ctl.armInPage(link, 7));
+    env.ctl.inPageLost(link);
+    env.advance(IN_PAGE_GRACE_MS + 10);
+    await flush();
+    expect(env.ctl.snapshot()).toMatchObject({ phase: 'stopped', stopReason: 'meet_lost' });
+    expect(ws.sentJson).toContainEqual({ type: 'session.end', exportRequested: false, reason: 'meet_lost' });
+  });
+
+  it('通話から退出（call.left）・タブを閉じた で止める（理由をサーバーへ送る）', async () => {
+    const env = setup();
+    const link = new FakeLink();
+    const ws = await startLive(env, () => env.ctl.armInPage(link, 7));
+    env.ctl.inPageCallLeft(link);
+    await flush();
+    expect(env.ctl.snapshot()).toMatchObject({ phase: 'stopped', stopReason: 'call_left' });
+    expect(ws.sentJson).toContainEqual({ type: 'session.end', exportRequested: false, reason: 'call_left' });
+
+    const env2 = setup();
+    const l2 = new FakeLink();
+    const ws2 = await startLive(env2, () => env2.ctl.armInPage(l2, 9));
+    env2.ctl.tabClosed();
+    await flush();
+    expect(env2.ctl.snapshot()).toMatchObject({ phase: 'stopped', stopReason: 'tab_closed' });
+    expect(ws2.sentJson).toContainEqual({ type: 'session.end', exportRequested: false, reason: 'tab_closed' });
   });
 
   it('ページ側のマイクが拒否されたら SELF を「許可なし」にする（商談は続ける）', async () => {

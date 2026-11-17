@@ -19,9 +19,11 @@ export type LocalSourceState =
   | 'track_ended'
   | 'tab_closed'
   | 'device_changed'
+  /** 一時的に切れた（画面共有・切替・ページ側の再接続待ち）。商談は続いている。 */
+  | 'reconnecting'
   | 'error';
 
-export type WsState = 'none' | 'connecting' | 'open' | 'closed' | 'error' | 'unauthorized';
+export type WsState = 'none' | 'connecting' | 'open' | 'reconnecting' | 'closed' | 'error' | 'unauthorized';
 
 export interface StartConfig {
   serverUrl: string;
@@ -37,7 +39,12 @@ export type StopReason =
   | 'user_end'
   | 'window_closed'
   | 'tab_closed'
+  /** 通話から退出した（Meet のページで検知）。 */
+  | 'call_left'
+  /** Meet のページとの接続が切れたまま、再接続の猶予が切れた。 */
+  | 'meet_lost'
   | 'track_ended'
+  /** 旧版のみ（今はハートビートで止めない）。 */
   | 'heartbeat_lost'
   | 'no_permission'
   | 'connection_failed'
@@ -106,6 +113,8 @@ export interface OffscreenSnapshot {
   sessionId: string | null;
   inputSampleRate: number | null;
   stopReason: StopReason | null;
+  /** サーバーまたは Meet のページと一時的に切れていて、再接続中（商談は終わっていない）。 */
+  reconnecting: boolean;
 }
 
 // ---- offscreen → UI / service worker ----
@@ -122,7 +131,13 @@ export type FromOffscreen =
  * session.ended を受け取れなかった場合だけ GET /sessions/:id/review で確認する（source='review'）。
  */
 export type EndResult =
-  | { source: 'session.ended' | 'review'; exportPath: string | null; reviewAvailableUntil: number | null }
+  | {
+      source: 'session.ended' | 'review';
+      exportPath: string | null;
+      reviewAvailableUntil: number | null;
+      /** サーバーが記録した終了理由（session.ended のときだけ）。 */
+      endReason?: import('@sales-copilot/contracts').SessionEndReason;
+    }
   | { source: 'unknown' };
 
 export type AnyRuntimeMessage = ToSw | ToOffscreen | FromOffscreen;

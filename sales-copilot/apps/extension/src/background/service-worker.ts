@@ -169,7 +169,15 @@ async function meetConnect(tab: chrome.tabs.Tab, meetingCode: string, purpose: s
   const st = await load();
   const old = st.copilotWindowId !== null ? await chrome.windows.get(st.copilotWindowId).catch(() => null) : null;
   if (old && (await hasOffscreen())) {
-    const snap = (await toOffscreen({ target: 'offscreen', type: 'getState' })) as { phase?: string } | undefined;
+    const snap = (await toOffscreen({ target: 'offscreen', type: 'getState' })) as
+      | { phase?: string; sources?: { REMOTE?: string } }
+      | undefined;
+    // 同じタブで商談中に Meet を再読み込みした等: 同じ商談につなぎ直す（新しい商談を始めない）
+    if (isBusy(snap?.phase) && st.targetTabId === tabId && snap?.sources?.REMOTE === 'reconnecting') {
+      await toOffscreen({ target: 'offscreen', type: 'inpage.expect', tabId });
+      await chrome.windows.update(old.id!, { focused: true }).catch(() => {});
+      return { ok: true };
+    }
     if (isBusy(snap?.phase)) {
       await chrome.windows.update(old.id!, { focused: true }).catch(() => {});
       return { ok: false, error: '別の商談のカンペが動いています。先にカンペ画面で「終了」してください' };

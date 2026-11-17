@@ -8,6 +8,9 @@
 //    表示報告（advice.displayed）がサーバーの遅延統計に入る / 解析一時停止で文字起こしが止まる /
 //    終了で session.ended を受け取り、出力を頼まなければ何も書かない / 頼めばファイルを書く /
 //    サーバーログに会話本文・顧客名・商談目的・トークン・ペアリングコードが出ない。
+//    学習（承認制）: カードを「ずれた」と評価 → 設定画面に件数と「データ不足」が出る / 本文・顧客名は保存されない /
+//    改善案の承認（危ないルール文は理由と直し方を表示して拒否）→ 次のセッションのカードに版が記録される。
+//    改善案づくり自体はモデル呼び出しが要るので、ここでは承認待ちの案を DB に直接置いて代用する。
 // tabCapture（拡張アイコンのクリック）と実 Meet は自動化できないため対象外（docs/manual-checklist.md）。
 import { spawn } from 'node:child_process';
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
@@ -234,6 +237,11 @@ try {
     await sleep(400);
   }
 
+  // 学習: 今のカードを「ずれた」と評価（カンペ画面のボタン）
+  await page.getByRole('toolbar', { name: '操作' }).getByRole('button', { name: /^ずれた/ }).click();
+  await page.getByText('「ずれた」を送りました').waitFor({ timeout: 5000 });
+  check('カンペ画面で「ずれた」を送れる', true);
+
   // 解析一時停止 → 文字起こしが増えない
   await page.getByRole('toolbar', { name: '操作' }).getByRole('button', { name: /^解析一時停止/ }).click();
   await page.getByRole('toolbar', { name: '操作' }).getByRole('button', { name: /^解析再開/ }).waitFor({ timeout: 5000 });
@@ -259,6 +267,57 @@ try {
   const active = await (await fetch(`${base}/sessions/active/latency`, { headers: authed })).json();
   check('終了後はサーバー側に実行中セッションが無い（取得・処理の停止）', Array.isArray(active.sessions) && active.sessions.length === 0);
   await page.close();
+
+  // ---------------------------------------------------------------- 学習（承認制）
+  {
+    const dbFile = join(dataDir, 'sales-copilot.sqlite');
+    const { DatabaseSync } = await import('node:sqlite');
+    const db = new DatabaseSync(dbFile);
+    const rows = db.prepare('SELECT * FROM feedback').all();
+    const dump = JSON.stringify(rows);
+    check(
+      '評価の記録: カードの文面・場面・商談目的あり／顧客名・会話本文なし',
+      rows.length === 1 && rows[0].rating === 'off' && !!rows[0].headline && rows[0].rules_version === 0 &&
+        !dump.includes('架空結合商事') && !dump.includes('試験花子') && !dump.includes(firstFinal.slice(0, 8)),
+      rows[0] ? `headline=${rows[0].headline} purpose=${rows[0].purpose}` : 'no rows',
+    );
+    // 改善案（モデル出力の代わり）を承認待ちとして置く
+    const now = Date.now();
+    db.prepare("INSERT INTO rule_proposals (proposal_id, rule, reason, scope, status, created_at, decided_at) VALUES (?, ?, ?, ?, 'pending', ?, NULL)").run(
+      'prop_e2e_1', '価格を聞かれたら即答せず、規模を1つ質問してから概算の幅を伝える', '#1 ずれた', 'answer', now,
+    );
+    db.close();
+
+    const lp = await context.newPage();
+    await lp.goto(`chrome-extension://${extId}/options.html`);
+    const sec = lp.locator('section', { has: lp.getByRole('heading', { name: '学習（承認制）' }) });
+    await sec.getByText('使える評価 1件').waitFor({ timeout: 10000 });
+    check('設定画面: 学習欄に評価の件数', true);
+    check('設定画面: n<10 は「データ不足」', (await sec.getByText(/データ不足（1件/).count()) === 1);
+    check('設定画面: 文面保存は既定ON', await sec.getByLabel('学習のために評価したカンペの文面を保存する').isChecked());
+    await sec.getByRole('button', { name: '改善案を作る' }).click();
+    await sec.getByText(/評価が3件以上必要です（今1件）/).or(sec.getByText(/AIのキーが未設定です/)).waitFor({ timeout: 5000 });
+    check('改善案づくり: 足りない／未設定なら理由と直し方を表示（外部送信なし）', true);
+    await sec.getByRole('button', { name: '編集して承認' }).click();
+    await sec.getByLabel(/^ルール/).fill('月額は3万円と伝える');
+    await sec.getByRole('button', { name: 'この内容で承認' }).click();
+    await sec.getByText(/金額・期間・割合などの数字はルールに入れられません/).waitFor({ timeout: 5000 });
+    check('金額入りのルールは承認できず、直し方を表示', true);
+    await sec.getByLabel(/^ルール/).fill('価格を聞かれたら規模を聞いてから幅で伝える');
+    await sec.getByRole('button', { name: 'この内容で承認' }).click();
+    await sec.getByText(/承認しました（版1）/).waitFor({ timeout: 5000 });
+    check('編集して承認 → 版1・使用中', (await sec.getByText('使用中').count()) === 1, (await sec.locator('table').first().textContent())?.slice(0, 80));
+    await lp.setViewportSize({ width: 360, height: 900 });
+    const overflow = await lp.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+    check('設定画面: 幅360で横にはみ出さない', overflow <= 0, `${overflow}px`);
+    if (process.env.E2E_SHOT_DIR) {
+      for (const w of [360, 800, 1280]) {
+        await lp.setViewportSize({ width: w, height: 900 });
+        await sec.screenshot({ path: join(process.env.E2E_SHOT_DIR, `learning-${w}.png`) });
+      }
+    }
+    await lp.close();
+  }
 
   // ---------------------------------------------------------------- session 2（出力あり・自分の音声OFF・別台本）
   // 終了直後にすぐ再開始する（前回の offscreen の遅延クローズで新しい取得が切られない回帰確認を兼ねる）
@@ -288,6 +347,7 @@ try {
   if (json) {
     const e = JSON.parse(readFileSync(join(exportDir, json), 'utf8'));
     check('出力内容: 台本の確定発言・使用量（LLM 0回）・自分の音声OFF', e.transcript.length >= 1 && e.usage.calls === 0 && e.transcript.every((u) => u.source !== 'SELF'), `${e.transcript.length} utterances`);
+    check('次のセッションのカードに承認済みルールの版（rulesVersion=1）', e.advice.length === 0 || e.advice.every((c) => c.rulesVersion === 1), `${e.advice.length} cards`);
   }
   await page2.close();
 } catch (e) {

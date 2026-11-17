@@ -28,6 +28,7 @@ import {
 import type { AdviceLlm, SpeechRecognizer } from '@sales-copilot/providers';
 import { AuthManager, bearerToken, isAllowedHostHeader, parseExtensionOrigin, urlCarriesCredential } from './auth';
 import type { CoachingPort } from './coaching-port';
+import { registerLearningRoutes } from './learning-routes';
 import { providerStatus, type ServerConfig } from './config';
 import type { ReplayScript } from './replay';
 import { SERVER_VERSION, SessionRuntime, type SessionReview } from './session-runtime';
@@ -41,6 +42,8 @@ export interface AppDeps {
   coaching: CoachingPort;
   createLiveRecognizer: (source: CaptureSource) => SpeechRecognizer | null;
   liveLlm: AdviceLlm | null;
+  /** 学習（承認制）の改善案づくり用 LLM。未指定なら liveLlm を使う。 */
+  proposalLlm?: AdviceLlm | null;
   loadReplay: (name: string | null) => ReplayScript;
   /** GET /offline/scripts の一覧（タイトル等のみ）。 */
   listOfflineScripts?: () => OfflineScriptInfo[];
@@ -256,6 +259,14 @@ export async function buildApp(deps: AppDeps): Promise<AppHandle> {
       advice: r.data?.advice ?? [],
       audioGaps: r.data?.audioGaps ?? [],
     });
+  });
+
+  registerLearningRoutes(app, {
+    config,
+    logger,
+    store,
+    proposalLlm: deps.proposalLlm === undefined ? deps.liveLlm : deps.proposalLlm,
+    preHandler: requireAuth('settings'),
   });
 
   app.get('/offline/scripts', { preHandler: requireAuth('session') }, async () => {

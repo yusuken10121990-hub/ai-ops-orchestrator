@@ -5,6 +5,7 @@ import { clientFromSettings, describeApiError, type FactInput } from '../shared/
 import { checkPairing, PAIRING_CODE_HELP, pairingProblemLine, type PairingCheck } from '../shared/pairing';
 import { isTokenUsable, normalizeServerUrl, saveSettings, type Settings } from '../shared/settings';
 import { clampFrameMs } from '../audio/dsp/chunker';
+import { LearningSection } from './LearningSection';
 
 const CATEGORY_LABEL: Record<FactCategory, string> = {
   price_initial: '初期費用',
@@ -54,6 +55,7 @@ export function OptionsApp() {
           <ServerSection settings={settings} />
           <MicSection settings={settings} />
           <FactsSection settings={settings} />
+          <LearningSection settings={settings} />
         </>
       ) : (
         <p>読み込み中…</p>

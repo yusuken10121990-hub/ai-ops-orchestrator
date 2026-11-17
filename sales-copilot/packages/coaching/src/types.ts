@@ -69,6 +69,11 @@ export interface AdviceContext {
   approvedFacts: ApprovedFact[];
   /** 片側欠落などの縮退中か。 */
   degraded: boolean;
+  /**
+   * 営業補正ルール（承認済み・有効なものだけ）。セッション開始時点の版で固定する。
+   * 承認済み条件・アプリ側の出力ルールより優先しない。
+   */
+  coachingRules?: ReadonlyArray<{ ruleId: string; text: string; scope: string }>;
 }
 
 export type AdviceOutcome = 'ok' | 'repaired' | 'fallback';

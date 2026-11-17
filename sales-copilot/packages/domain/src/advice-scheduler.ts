@@ -54,6 +54,8 @@ export type SchedulerEvent =
 export interface AdviceSchedulerOptions {
   sessionId: string;
   promptVersion: string;
+  /** 営業補正ルール（承認済み）の版。指定時はカードに記録する。 */
+  rulesVersion?: number;
   clock?: Clock;
   idGenerator?: IdGenerator;
   /** 自動助言のクールダウン（SPEC §8-2 初期6秒）。 */
@@ -91,7 +93,7 @@ interface PendingRequest {
  * - 野中（SELF）発話中は大きなカード更新を保留
  */
 export class AdviceScheduler {
-  private readonly o: Required<Omit<AdviceSchedulerOptions, 'canStart'>> & { canStart: () => boolean };
+  private readonly o: Required<Omit<AdviceSchedulerOptions, 'canStart' | 'rulesVersion'>> & { canStart: () => boolean };
   private readonly clock: Clock;
   private readonly ids: IdGenerator;
   private seq = 0;
@@ -109,7 +111,10 @@ export class AdviceScheduler {
   private readonly abortedJobs = new Set<string>();
   private readonly cards = new Map<string, AdviceCard>();
 
+  private readonly rulesVersion: number | undefined;
+
   constructor(opts: AdviceSchedulerOptions) {
+    this.rulesVersion = opts.rulesVersion;
     this.clock = opts.clock ?? systemClock;
     this.ids = opts.idGenerator ?? createSequentialIdGenerator();
     this.o = {
@@ -232,6 +237,7 @@ export class AdviceScheduler {
         sessionId: this.o.sessionId,
         contextRevision: job.contextRevision,
         promptVersion: this.o.promptVersion,
+        ...(this.rulesVersion !== undefined ? { rulesVersion: this.rulesVersion } : {}),
         createdAt: now,
         expiresAt: now + this.o.staleMs,
         trigger: job.trigger,

@@ -40,6 +40,11 @@ let cached: Record<string, unknown> | null = null;
  * - 全オブジェクト additionalProperties:false / 全フィールド required（.strict() 由来）
  * - 長さ・件数制約は除去（API 非対応）。上限の説明はシステムプロンプトのアプリ側ルールに記載。
  */
+/** 任意の Zod スキーマから structured outputs 用 JSON Schema（非対応の制約キーワードを除去）を作る。 */
+export function toLlmJsonSchema(schema: z.ZodType): Record<string, unknown> {
+  return strip(z.toJSONSchema(schema)) as Record<string, unknown>;
+}
+
 export function adviceOutputJsonSchema(): Record<string, unknown> {
   if (!cached) {
     cached = strip(z.toJSONSchema(AdviceLlmOutputBase)) as Record<string, unknown>;

@@ -11,7 +11,29 @@ export type {
   AdviceResult,
 } from './types';
 export { AdviceLlmError, isAdviceLlmError, isAbortError } from './errors';
-export { createAdviceEngine, holdOutput, confirmLaterOutput, type AdviceEngine, type AdviceEngineOptions } from './engine';
+export {
+  createAdviceEngine,
+  holdOutput,
+  confirmLaterOutput,
+  manualFallbackOutput,
+  type AdviceEngine,
+  type AdviceEngineOptions,
+} from './engine';
+export {
+  classifyObjection,
+  detectDecline,
+  latestCustomerTurns,
+  manualAnchor,
+  respondsToObjection,
+  hasNextStepAsk,
+  politeCloseOutput,
+  closingAskOutput,
+  objectionRebuttalOutput,
+  OBJECTION_LABEL,
+  type ObjectionType,
+  type ManualAnchor,
+  type DeclineDetection,
+} from './objection';
 export {
   validateAdvice,
   respectfulCloseOutput,

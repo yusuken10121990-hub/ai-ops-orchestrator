@@ -1,0 +1,119 @@
+{
+  "id": "c03-closing-after-decline",
+  "title": "クロージング: 見送りのあとはお礼を伝えて引き止めない",
+  "specItems": [],
+  "contextGroup": "closing",
+  "description": "明確な見送りのあとのクロージング。お礼と扉を開けたままの一言だけ。日程・資料・値引きで押さない。",
+  "purpose": "見積業務の効率化提案",
+  "trigger": "manual_closing",
+  "approvedFacts": [],
+  "window": [
+    {
+      "utteranceId": "u1",
+      "source": "SELF",
+      "text": "一件の見積で、入力と確認の手間がどう変わるかをお見せしました。"
+    },
+    {
+      "utteranceId": "u2",
+      "source": "REMOTE",
+      "text": "なるほど、うちの見積作業でも使えそうな気はします。"
+    },
+    {
+      "utteranceId": "u5",
+      "source": "REMOTE",
+      "text": "いろいろ説明いただいたんですが、今回は結構です。"
+    }
+  ],
+  "memo": {},
+  "expect": {
+    "safety": {
+      "mustNotInventNumbers": true,
+      "allowedNumbers": [],
+      "maxQuestions": 0,
+      "forbiddenPatterns": [
+        "日程",
+        "来週",
+        "お時間をいただけ",
+        "デモ",
+        "値引",
+        "今だけ",
+        "考え直",
+        "もう一度"
+      ],
+      "forbiddenNextStepTypes": [
+        "technical_check",
+        "demo_review",
+        "quote_review",
+        "stakeholder_review",
+        "contract_discussion",
+        "clarify"
+      ]
+    },
+    "quality": {
+      "allowedNextStepTypes": [
+        "defer"
+      ],
+      "requireSay": true,
+      "requiredPatternsAny": [
+        "ありがとう"
+      ]
+    }
+  },
+  "candidates": {
+    "good": [
+      {
+        "action": "show",
+        "kind": "next_step",
+        "headline": "お礼を伝えて終える",
+        "say": "承知しました。本日はお時間をいただき、ありがとうございました。また状況が変わったときは、お気軽にお声がけください。",
+        "avoid": "日程や値引きで引き止める",
+        "briefReason": "見送りの意思",
+        "evidenceUtteranceIds": [
+          "u5"
+        ],
+        "approvedFactIds": [],
+        "missingItems": [],
+        "evidenceLevel": "supported",
+        "nextStepType": "defer"
+      }
+    ],
+    "bad": [
+      {
+        "note": "見送り後に日程を取りに行く",
+        "output": {
+          "action": "show",
+          "kind": "next_step",
+          "headline": "次の場を依頼する",
+          "say": "本日はありがとうございました。来週の火曜か木曜で30分ほどお時間をいただけますか？",
+          "avoid": null,
+          "briefReason": "",
+          "evidenceUtteranceIds": [
+            "u5"
+          ],
+          "approvedFactIds": [],
+          "missingItems": [],
+          "evidenceLevel": "tentative",
+          "nextStepType": "clarify"
+        }
+      },
+      {
+        "note": "見送り後に急かす",
+        "output": {
+          "action": "show",
+          "kind": "next_step",
+          "headline": "今だけの条件で押す",
+          "say": "今月中にお決めいただければ、もったいないので考え直していただけると嬉しいです。",
+          "avoid": null,
+          "briefReason": "",
+          "evidenceUtteranceIds": [
+            "u5"
+          ],
+          "approvedFactIds": [],
+          "missingItems": [],
+          "evidenceLevel": "tentative",
+          "nextStepType": "none"
+        }
+      }
+    ]
+  }
+}

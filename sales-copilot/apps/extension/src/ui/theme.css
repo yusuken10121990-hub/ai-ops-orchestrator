@@ -456,8 +456,14 @@ button.link {
 }
 .controls-primary {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(4, 1fr);
   gap: 6px;
+}
+/* 手動ボタンは4つ。狭い窓（横に並べたサイドパネル等）では 2×2 にして文字を切らない */
+@media (max-width: 560px) {
+  .controls-primary {
+    grid-template-columns: repeat(2, 1fr);
+  }
 }
 .controls button.big {
   min-height: 48px;

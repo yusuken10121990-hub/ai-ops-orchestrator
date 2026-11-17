@@ -8,7 +8,7 @@ import {
   COMPANY_WIDE_RE,
   CONTACT_PUSH_RE,
   CONTRACT_PUSH_RE,
-  DECLINE_RE,
+  DISCOUNT_RE,
   FEASIBILITY_TOPIC_RE,
   FREE_RE,
   PER_PERSON_RE,
@@ -20,10 +20,12 @@ import {
   extractNumericExprs,
   findForcedBinary,
   findGuarantee,
+  isMeetingDurationRequest,
   normalizeForRules,
   numericKeys,
   topicLabel,
 } from './text-rules';
+import { detectDecline, hasNextStepAsk, manualAnchor, politeCloseOutput, PRESSURE_RE, respondsToObjection } from './objection';
 import type { AdviceContext } from './types';
 
 /** 表示前検証のルールコード（会話本文を含まない。ログに出してよい）。 */
@@ -47,7 +49,10 @@ export type ValidationRule =
   | 'declined_push'
   | 'next_step_unresolved'
   | 'weak_positive_contract'
-  | 'terms_contradiction';
+  | 'terms_contradiction'
+  | 'unverified_discount'
+  | 'off_topic'
+  | 'closing_without_ask';
 
 export type IssueSeverity = 'block' | 'repair' | 'warn';
 
@@ -76,6 +81,7 @@ const PROMISE_RULES: ReadonlySet<ValidationRule> = new Set([
   'reduction_promise',
   'capability_claim',
   'scope_conflation',
+  'unverified_discount',
 ]);
 
 const PUSHING_NEXT_STEPS: ReadonlySet<NextStepType> = new Set([
@@ -128,10 +134,9 @@ function customerTexts(ctx: AdviceContext): string[] {
   return ctx.window.filter((u) => u.source === 'REMOTE').map((u) => u.text);
 }
 
-function isDeclined(ctx: AdviceContext): boolean {
+export function isDeclined(ctx: Pick<AdviceContext, 'memo' | 'window'>): boolean {
   if (activeDeclineItems(ctx).length > 0) return true;
-  const remote = ctx.window.filter((u) => u.source === 'REMOTE');
-  return remote.slice(-3).some((u) => DECLINE_RE.test(normalizeForRules(u.text)));
+  return detectDecline(ctx.window, 3).declined;
 }
 
 function hasStrongIntent(ctx: AdviceContext): boolean {
@@ -263,26 +268,34 @@ export function validateAdvice(raw: unknown, ctx: AdviceContext): ValidationResu
   const anchorEvidence = o.evidenceUtteranceIds.length > 0 ? o.evidenceUtteranceIds : lastRemote ? [lastRemote.utteranceId] : [];
 
   // 2) 文脈に基づく置き換え（拒否・未解決・弱い反応・条件矛盾）
+  const declined = isDeclined(ctx);
+  let replaced = false;
   if (o.action === 'show' && !issues.some((i) => i.severity === 'block')) {
     const say = o.say ?? '';
-    const declined = isDeclined(ctx);
     const pushing =
       PUSHING_NEXT_STEPS.has(o.nextStepType) ||
       o.nextStepType === 'clarify' ||
       countQuestions(say) > 0 ||
       CONTACT_PUSH_RE.test(say) ||
-      CONTRACT_PUSH_RE.test(say);
+      CONTRACT_PUSH_RE.test(say) ||
+      PRESSURE_RE.test(normalizeForRules(visibleText(o)));
     const contradiction = findTermsContradiction(ctx, facts);
     const unresolved = unresolvedMemoItems(ctx);
+    const before = o;
     if (declined && pushing) {
       issue(issues, 'declined_push', 'repair');
-      const declineEv = activeDeclineItems(ctx).flatMap((i) => i.evidenceUtteranceIds).filter((id) => knownUtt.has(id));
-      o = respectfulCloseOutput(declineEv.length > 0 ? [...new Set(declineEv)].slice(0, 12) : anchorEvidence);
+      const declineEv = [
+        ...activeDeclineItems(ctx).flatMap((i) => i.evidenceUtteranceIds),
+        ...detectDecline(ctx.window, 3).evidenceUtteranceIds,
+      ].filter((id) => knownUtt.has(id));
+      const ev2 = declineEv.length > 0 ? [...new Set(declineEv)].slice(0, 12) : anchorEvidence;
+      // クロージングではお礼を伝えて扉を開けたまま終える（どちらも引き止めない）
+      o = ctx.trigger === 'manual_closing' ? politeCloseOutput(ev2) : respectfulCloseOutput(ev2);
     } else if (contradiction && !(o.approvedFactIds.includes(contradiction.factId) && !/いつでも|縛りはありません|大丈夫です/.test(say))) {
       issue(issues, 'terms_contradiction', 'repair');
       o = termsClarifyOutput(contradiction, anchorEvidence);
     } else if (
-      (o.kind === 'next_step' || ctx.trigger === 'manual_next_step') &&
+      (o.kind === 'next_step' || ctx.trigger === 'manual_next_step' || ctx.trigger === 'manual_closing') &&
       UNRESOLVED_BLOCKED_STEPS.has(o.nextStepType) &&
       unresolved.length > 0
     ) {
@@ -293,6 +306,21 @@ export function validateAdvice(raw: unknown, ctx: AdviceContext): ValidationResu
     } else if ((o.nextStepType === 'contract_discussion' || CONTRACT_PUSH_RE.test(say)) && !hasStrongIntent(ctx)) {
       issue(issues, 'weak_positive_contract', 'repair');
       o = interestCheckOutput(anchorEvidence);
+    }
+    replaced = o !== before;
+  }
+
+  // 2b) 手動ボタンの関連性: 切り返しは相手の直近の発言の論点に答える / クロージングは次の一歩を依頼する
+  if (!replaced) {
+    if (ctx.trigger === 'manual_rebuttal') {
+      const anchor = manualAnchor(ctx.window);
+      if (anchor.type !== 'decline' && anchor.type !== 'other' && (o.action !== 'show' || !respondsToObjection(o, anchor.type))) {
+        issue(issues, 'off_topic', 'block');
+      }
+    } else if (ctx.trigger === 'manual_closing' && !declined) {
+      if (o.action !== 'show' || !hasNextStepAsk(o.say) || o.nextStepType === 'none' || o.nextStepType === 'defer') {
+        issue(issues, 'closing_without_ask', 'block');
+      }
     }
   }
 
@@ -305,7 +333,8 @@ export function validateAdvice(raw: unknown, ctx: AdviceContext): ValidationResu
     const factText = usedFacts.map((f) => f.value).join('\n');
 
     // 数値の出所
-    const nums = extractNumericExprs(text);
+    const schedulingAsk = ctx.trigger === 'manual_closing' || ctx.trigger === 'manual_next_step' || o.kind === 'next_step';
+    const nums = extractNumericExprs(text).filter((n) => !(schedulingAsk && n.category === 'min' && isMeetingDurationRequest(text, n.raw)));
     if (nums.length > 0) {
       const allowed = new Set<string>([...numericKeys(factText)]);
       for (const t of customerTexts(ctx)) for (const k of numericKeys(t)) allowed.add(k);
@@ -327,6 +356,7 @@ export function validateAdvice(raw: unknown, ctx: AdviceContext): ValidationResu
     if (banned.some((b) => b.length > 0 && norm.includes(b))) issue(issues, 'banned_phrase', 'block');
 
     if (FREE_RE.test(norm) && !/無料|0円/.test(normalizeForRules(factText))) issue(issues, 'unverified_free_offer', 'block');
+    if (DISCOUNT_RE.test(norm) && !DISCOUNT_RE.test(normalizeForRules(factText))) issue(issues, 'unverified_discount', 'block');
 
     const hasTechFact = o.approvedFactIds.some((id) => usedFacts.find((f) => f.factId === id)?.category === 'tech_spec');
     if (!hasTechFact && (CAPABILITY_RE.test(norm) || ACCURACY_CLAIM_RE.test(norm))) {

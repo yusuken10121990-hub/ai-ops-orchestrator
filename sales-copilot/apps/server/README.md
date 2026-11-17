@@ -61,7 +61,11 @@ node:sqlite の ExperimentalWarning が 1 行出るが動作に影響はない�
 | `DEEPGRAM_ENDPOINTING_MS` | 300 | `false` で無効 |
 | `DEEPGRAM_UTTERANCE_END_MS` | 1000 | `off` で無効 |
 | `DEEPGRAM_SMART_FORMAT` / `DEEPGRAM_PUNCTUATE` | true / false | |
-| `ANTHROPIC_EFFORT` | low | `low`/`medium`/`high`/`none` |
+| `ANTHROPIC_MODEL` | claude-haiku-5-5 | 自動カード（発言ごと・低遅延）用のモデル |
+| `ANTHROPIC_MANUAL_MODEL` | claude-sonnet-5-5 | 手動ボタン（切り返し・次に聞く・次の約束・クロージング）用のモデル。押したときだけ呼ぶ |
+| `ANTHROPIC_EFFORT` | low | `low`/`medium`/`high`/`none`（両モデル共通） |
+| `ADVICE_TIMEOUT_MS` / `ADVICE_MANUAL_TIMEOUT_MS` | 6000 / 15000 | 自動カード / 手動ボタン1回の生成の上限 |
+| `PRICE_LLM_MANUAL_INPUT_PER_MTOK` / `PRICE_LLM_MANUAL_OUTPUT_PER_MTOK` | 未設定 | 手動用モデルの単価（出典・確認日は `PRICE_SOURCE` / `PRICE_CHECKED_DATE`）。別モデルで未設定なら、手動ボタン使用後は金額を出さない |
 | `ADVICE_MAX_RETRIES` | 1 | 不正 JSON 等の再試行（最大 3） |
 | `AUDIO_MAX_QUEUE_MS` | 2000 | 系統ごとの未送信音声上限 |
 | `SESSION_RETENTION_MS` | 600000 | 終了後のメモリ保持上限 |

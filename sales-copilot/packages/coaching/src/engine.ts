@@ -1,7 +1,8 @@
 import type { AdviceLlmOutput, AdviceWarning } from '@sales-copilot/contracts';
 import { AdviceLlmError, makeAbortError } from './errors';
 import { buildAdvicePrompt, promptVersion } from './prompt';
-import { validateAdvice, type BlockCategory, type ValidationRule } from './validate';
+import { closingAskOutput, manualAnchor, objectionRebuttalOutput, politeCloseOutput } from './objection';
+import { isDeclined, validateAdvice, type BlockCategory, type ValidationRule } from './validate';
 import type { AdviceContext, AdviceErrorKind, AdviceLlm, AdviceResult } from './types';
 
 export interface AdviceEngineOptions {
@@ -67,6 +68,27 @@ export function confirmLaterOutput(): AdviceLlmOutput {
     evidenceLevel: 'insufficient',
     nextStepType: 'clarify',
   };
+}
+
+/**
+ * 手動ボタン（切り返し・クロージング）で生成が検証に通らなかったときの代わりの案。
+ * 押したのに「今は聞く」だけを返さないよう、相手の直近の発言の論点に合わせた固定文を使う（会話本文は埋め込まない）。
+ * その案も表示前検証に通したものだけを返す。通らなければ null。
+ */
+export function manualFallbackOutput(ctx: AdviceContext): AdviceLlmOutput | null {
+  if (ctx.trigger !== 'manual_rebuttal' && ctx.trigger !== 'manual_closing') return null;
+  const anchor = manualAnchor(ctx.window);
+  const ev = anchor.target ? [anchor.target.utteranceId] : [];
+  let candidate: AdviceLlmOutput;
+  if (ctx.trigger === 'manual_closing') {
+    candidate = isDeclined(ctx) ? politeCloseOutput(ev) : closingAskOutput(anchor.type, ev);
+  } else {
+    // 論点が読み取れない発言は従来どおり（確認を約束する案 / 聞く）
+    if (!anchor.target || anchor.type === 'other') return null;
+    candidate = objectionRebuttalOutput(anchor.type, ev);
+  }
+  const v = validateAdvice(candidate, ctx);
+  return v.verdict === 'blocked' ? null : v.output;
 }
 
 function parseJsonText(text: string): unknown {
@@ -178,8 +200,19 @@ export function createAdviceEngine(opts: AdviceEngineOptions): AdviceEngine {
           v.blockCategory === 'schema'
             ? { type: 'schema' }
             : { type: 'blocked', category: v.blockCategory ?? 'style', rules: v.issues.filter((x) => x.severity === 'block').map((x) => x.rule) };
-        const codes = v.issues.filter((x) => x.severity === 'block').map((x) => x.rule).join(', ');
-        retryNote = `\n\n<retry_note>\n前回の出力は表示前検証で不合格でした（理由コード: ${codes}）。スキーマと上限を守り、承認済み条件や顧客の発言に無い数値・保証・無料・可否の言い切りを含めずに出力し直してください。\n</retry_note>`;
+        const blockRules = v.issues.filter((x) => x.severity === 'block').map((x) => x.rule);
+        const codes = blockRules.join(', ');
+        const extra = [
+          blockRules.includes('off_topic')
+            ? '<latest_customer_data> の最後の発言（相手の懸念・反論）に、そのまま答える台詞にしてください。別の論点に移らないでください。'
+            : '',
+          blockRules.includes('closing_without_ask')
+            ? '締めの一言に加えて、具体的な次の一歩を一つ依頼する台詞にしてください（質問は一つまで）。'
+            : '',
+        ]
+          .filter(Boolean)
+          .join('\n');
+        retryNote = `\n\n<retry_note>\n前回の出力は表示前検証で不合格でした（理由コード: ${codes}）。スキーマと上限を守り、承認済み条件や顧客の発言に無い数値・保証・無料・値引き・可否の言い切りを含めずに出力し直してください。${extra ? `\n${extra}` : ''}\n</retry_note>`;
         continue;
       }
       return {
@@ -205,14 +238,14 @@ export function createAdviceEngine(opts: AdviceEngineOptions): AdviceEngine {
       output = holdOutput(HOLD_REASON[lastFailure.kind]);
       fallbackReason = lastFailure.kind;
     } else if (lastFailure.type === 'schema') {
-      output = holdOutput(HOLD_REASON.schema);
+      output = manualFallbackOutput(ctx) ?? holdOutput(HOLD_REASON.schema);
       fallbackReason = 'schema_invalid';
     } else if (lastFailure.category === 'unverified_promise') {
-      output = confirmLaterOutput();
+      output = manualFallbackOutput(ctx) ?? confirmLaterOutput();
       fallbackReason = `validation_blocked:${lastFailure.rules.join('+')}`;
       warnings.push({ code: 'unverified_promise', message: '根拠のない数値・保証を含む案を止め、確認を約束する案に切り替えました' });
     } else {
-      output = holdOutput(HOLD_REASON.blocked_style);
+      output = manualFallbackOutput(ctx) ?? holdOutput(HOLD_REASON.blocked_style);
       fallbackReason = `validation_blocked:${lastFailure.rules.join('+')}`;
     }
     return {

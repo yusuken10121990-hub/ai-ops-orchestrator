@@ -70,6 +70,7 @@ export function LiveView(props: LiveViewProps) {
     { key: 'r', label: '切り返し', primary: true, run: () => request('rebuttal'), disabled: !live || snapshot.paused },
     { key: 'q', label: '次に聞く', primary: true, run: () => request('next_question'), disabled: !live || snapshot.paused },
     { key: 'n', label: '次の約束', primary: true, run: () => request('next_step'), disabled: !live || snapshot.paused },
+    { key: 'c', label: 'クロージング', primary: true, run: () => request('closing'), disabled: !live || snapshot.paused },
     {
       key: 'p',
       label: pinned ? '解除' : '固定',

@@ -39,6 +39,8 @@ function triggerLabel(c: AdviceCard): string | null {
       return '次に聞く（手動）';
     case 'manual_next_step':
       return '次の約束（手動）';
+    case 'manual_closing':
+      return 'クロージング（手動）';
     default:
       return null;
   }

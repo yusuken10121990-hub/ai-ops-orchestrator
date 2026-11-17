@@ -62,7 +62,7 @@ describe('createAdviceEngine', () => {
     expect(res.outcome).toBe('ok');
     expect(res.output).toEqual(good);
     expect(res.promptVersion).toBe(engine.promptVersion);
-    expect(res.promptVersion).toMatch(/^builder-2-[0-9a-f]{12}$/);
+    expect(res.promptVersion).toMatch(/^builder-3-[0-9a-f]{12}$/);
     expect(res.usage).toEqual({ inputTokens: 100, outputTokens: 50 });
     expect(res.model).toBe('fake-advice-llm');
     const req = llm.requests[0]!;
@@ -246,15 +246,25 @@ describe('createAdviceEngine', () => {
     expect(facts).toEqual([{ factId: 'fact-maint', category: 'maintenance_scope', value: maint.value, scope: maint.scope, version: 3 }]);
   });
 
-  it('includes 2–3 style examples, not all 18', async () => {
+  it('includes only a few relevant style examples, not all 18 (切り返し: no unrelated defaults)', async () => {
     const llm = new FakeAdviceLlm([{ output: good }]);
     await createAdviceEngine({ llm }).generate(ctx(), sig());
     const user = llm.requests[0]!.user;
     const block = user.split('<style_examples>')[1]!.split('</style_examples>')[0]!;
     const n = parseStyleExamples(block).length;
-    expect(n).toBeGreaterThanOrEqual(2);
+    expect(n).toBeGreaterThanOrEqual(1);
     expect(n).toBeLessThanOrEqual(3);
     expect(block).toContain('L.「途中でやめられますか？」');
+    // 以前は既定で「イメージが湧きません」「月いくら」の例を足しており、解約の質問に価格の話が混ざる原因だった
+    expect(block).not.toContain('D.「イメージが湧きません」');
+    expect(block).not.toContain('K.「結局、月いくらですか？」');
+  });
+
+  it('auto trigger still pads to 2 style examples', async () => {
+    const llm = new FakeAdviceLlm([{ output: good }]);
+    await createAdviceEngine({ llm }).generate(ctx({ trigger: 'auto' }), sig());
+    const block = llm.requests[0]!.user.split('<style_examples>')[1]!.split('</style_examples>')[0]!;
+    expect(parseStyleExamples(block).length).toBeGreaterThanOrEqual(2);
   });
 
   it('degraded mode is announced in the prompt', async () => {

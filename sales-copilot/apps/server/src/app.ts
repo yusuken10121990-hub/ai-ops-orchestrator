@@ -42,6 +42,8 @@ export interface AppDeps {
   coaching: CoachingPort;
   createLiveRecognizer: (source: CaptureSource) => SpeechRecognizer | null;
   liveLlm: AdviceLlm | null;
+  /** 手動ボタン用の実 LLM（ANTHROPIC_MANUAL_MODEL）。未指定なら liveLlm を使う。 */
+  manualLlm?: AdviceLlm | null;
   /** 学習（承認制）の改善案づくり用 LLM。未指定なら liveLlm を使う。 */
   proposalLlm?: AdviceLlm | null;
   loadReplay: (name: string | null) => ReplayScript;
@@ -295,6 +297,7 @@ export async function buildApp(deps: AppDeps): Promise<AppHandle> {
       coaching: deps.coaching,
       createLiveRecognizer: deps.createLiveRecognizer,
       liveLlm: deps.liveLlm,
+      manualLlm: deps.manualLlm === undefined ? deps.liveLlm : deps.manualLlm,
       loadReplay: deps.loadReplay,
       send,
       now,

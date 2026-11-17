@@ -4,7 +4,7 @@ import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { CardPanel } from './CardPanel';
 import { TranscriptPanel } from './TranscriptPanel';
 import { LiveView, type LiveActions } from './LiveView';
-import { StatusBar } from './StatusBar';
+import { StatusBar, collectNotices, overallHealth } from './StatusBar';
 import { EndView } from './EndView';
 import { makeCard } from '../test-cards';
 import { copilotReducer, initialCopilotState, selectCardView } from '../state';
@@ -129,7 +129,46 @@ describe('StatusBar: 待機を一括りにしない', () => {
     expect(t).toContain('LIVE');
     rerender(<StatusBar snapshot={{ ...snapshot, sources: { SELF: 'no_permission', REMOTE: 'capturing' } }} status={status} usage={null} />);
     expect(container.textContent).toContain('権限なし');
-    expect(container.textContent).toContain('設定画面でマイクを許可');
+  });
+});
+
+describe('状態は 1 行にまとめる', () => {
+  const status = {
+    type: 'status' as const,
+    sessionId: 's1',
+    lifecycle: 'capturing' as const,
+    mode: 'LIVE' as const,
+    externalSending: true,
+    storage: 'memory_only' as const,
+    pipelines: {
+      capture: {
+        SELF: { state: 'active' as const, reason: null, since: 0 },
+        REMOTE: { state: 'active' as const, reason: null, since: 0 },
+      },
+      stt: { state: 'active' as const, reason: null, since: 0 },
+      advice: { state: 'active' as const, reason: null, since: 0 },
+    },
+    at: 0,
+  };
+  it('問題なし → 「LIVE・正常」', () => {
+    expect(overallHealth({ snapshot, status, usage: null })).toEqual({ text: 'LIVE・正常', tone: 'ok' });
+  });
+  it('会議側が無音 → 「LIVE・会議側が無音」', () => {
+    const s = { ...status, pipelines: { ...status.pipelines, capture: { ...status.pipelines.capture, REMOTE: { state: 'waiting' as const, reason: 'silence' as const, since: 0 } } } };
+    expect(overallHealth({ snapshot, status: s, usage: null }).text).toBe('LIVE・会議側が無音');
+  });
+  it('一番重い問題を出し、件数を添える（通信断はエラー）', () => {
+    const s = { ...status, pipelines: { ...status.pipelines, capture: { ...status.pipelines.capture, REMOTE: { state: 'waiting' as const, reason: 'silence' as const, since: 0 } } } };
+    const h = overallHealth({ snapshot: { ...snapshot, ws: 'closed' }, status: s, usage: null });
+    expect(h.tone).toBe('error');
+    expect(h.text).toContain('通信断');
+  });
+  it('お知らせは同じ内容を 1 回だけ・エラーを先に', () => {
+    const w = (id: string) => ({ type: 'warning' as const, warningId: id, code: 'degraded_capture' as const, message: '自分の音声取得はOFFです（会議のミュートとは別です）', evidenceUtteranceIds: [], at: 0 });
+    const n = collectNotices({ snapshot: { ...snapshot, sources: { SELF: 'no_permission', REMOTE: 'capturing' } }, lastError: null, warnings: [w('w1'), w('w2')] });
+    expect(n).toHaveLength(2);
+    expect(n[0]!.tone).toBe('error');
+    expect(n[0]!.text).toContain('設定画面でマイクを許可');
   });
 });
 
@@ -203,6 +242,88 @@ describe('LiveView 操作', () => {
     const buttons = toolbar.querySelectorAll('button');
     expect(buttons.length).toBe(9);
     for (const b of buttons) expect(b.getAttribute('aria-keyshortcuts')).toBeTruthy();
+  });
+
+  it('【次に言う一言】が画面の先頭（状態・お知らせ・操作より前）にある', () => {
+    const { container } = render(
+      <LiveView {...base} lastError="サーバー: 失敗" view={viewOf()} snapshot={snapshot} actions={actions()} />,
+    );
+    const say = container.querySelector('.say')!;
+    expect(say.textContent).toBe(makeCard().say);
+    const first = container.querySelector('main .card')!;
+    expect(first.contains(say)).toBe(true);
+    for (const sel of ['.statusline', '.notices', '[role="toolbar"]', '.extras']) {
+      const el = container.querySelector(sel)!;
+      expect(say.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    }
+    // 【今の一手】は小さなラベルとしてその直前、【今は言わない】と根拠は後ろ
+    const labels = [...container.querySelectorAll('.card .slot-label')].map((e) => e.textContent);
+    expect(labels).toEqual(['【今の一手】', '【次に言う一言】', '【今は言わない】']);
+  });
+
+  it('同じ注意は 1 回だけ表示（warningId が違っても）', () => {
+    const w = (id: string) => ({ type: 'warning' as const, warningId: id, code: 'degraded_capture' as const, message: '自分の音声取得はOFFです（会議のミュートとは別です）', evidenceUtteranceIds: [], at: 0 });
+    render(<LiveView {...base} warnings={[w('w1'), w('w2')]} view={viewOf()} snapshot={snapshot} actions={actions()} />);
+    expect(screen.getAllByText(/自分の音声取得はOFFです/)).toHaveLength(1);
+  });
+
+  it('お知らせは積み上げず 1 行。「ほかN件」で残りを開く', () => {
+    const w = { type: 'warning' as const, warningId: 'w1', code: 'degraded_capture' as const, message: '注意その1', evidenceUtteranceIds: [], at: 0 };
+    const { container } = render(
+      <LiveView {...base} warnings={[w]} snapshot={{ ...snapshot, sources: { SELF: 'no_permission', REMOTE: 'capturing' } }} view={viewOf()} actions={actions()} />,
+    );
+    expect(container.querySelectorAll('.notice-line')).toHaveLength(1);
+    expect(screen.getByRole('alert').textContent).toContain('設定画面でマイクを許可');
+    fireEvent.click(screen.getByRole('button', { name: 'ほか1件' }));
+    expect(container.querySelectorAll('.notice-line')).toHaveLength(2);
+  });
+
+  it('状態は 1 行。送信中・保存なしは常に見え、詳細は開いて確認できる', () => {
+    const status = {
+      type: 'status' as const,
+      sessionId: 's1',
+      lifecycle: 'capturing' as const,
+      mode: 'LIVE' as const,
+      externalSending: true,
+      storage: 'memory_only' as const,
+      pipelines: {
+        capture: { SELF: { state: 'active' as const, reason: null, since: 0 }, REMOTE: { state: 'active' as const, reason: null, since: 0 } },
+        stt: { state: 'active' as const, reason: null, since: 0 },
+        advice: { state: 'active' as const, reason: null, since: 0 },
+      },
+      at: 0,
+    };
+    const { container } = render(<LiveView {...base} status={status} view={viewOf()} snapshot={snapshot} actions={actions()} />);
+    const line = container.querySelector('.statusline')!;
+    expect(line.textContent).toContain('LIVE・正常');
+    expect(line.textContent).toContain('送信中');
+    expect(line.textContent).toContain('保存なし');
+    expect(container.querySelector('.statusbar')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: /LIVE・正常/ }));
+    expect(container.querySelector('.statusbar')!.textContent).toContain('文字起こし');
+  });
+
+  it('参考カードは見た目で区別（status-reference）し、言う一言の横に「参考」と出す', () => {
+    let s = copilotReducer(initialCopilotState, { type: 'server', message: { type: 'advice.card', card: makeCard() } });
+    s = copilotReducer(s, { type: 'pin', adviceId: 'a1' });
+    s = copilotReducer(s, { type: 'server', message: { type: 'advice.card', card: makeCard({ adviceId: 'a2', createdAt: 1500 }) } });
+    const { container } = render(<CardPanel view={selectCardView(s, 2000)} />);
+    expect(container.querySelector('.card.status-reference')).toBeTruthy();
+    expect(container.querySelector('.say-label')!.textContent).toContain('参考扱い');
+  });
+
+  it('主要3ボタン（切り返し・次に聞く・次の約束）は大きく、終了は他と離す', () => {
+    const { container } = render(<LiveView {...base} view={viewOf()} snapshot={snapshot} actions={actions()} />);
+    const big = [...container.querySelectorAll('.controls-primary button')].map((b) => b.textContent);
+    expect(big).toEqual(['切り返しR', '次に聞くQ', '次の約束N']);
+    const sec = container.querySelector('.controls-secondary')!;
+    expect(sec.lastElementChild!.textContent).toBe('終了E');
+    expect(sec.querySelector('.end-sep')!.nextElementSibling!.textContent).toBe('終了E');
+  });
+
+  it('文字起こし履歴は既定で閉じている', () => {
+    const { container } = render(<LiveView {...base} view={viewOf()} snapshot={snapshot} actions={actions()} />);
+    expect((container.querySelector('details.transcript') as HTMLDetailsElement).open).toBe(false);
   });
 });
 

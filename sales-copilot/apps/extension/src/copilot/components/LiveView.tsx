@@ -4,7 +4,7 @@ import { Meter } from '../../ui/common';
 import type { OffscreenSnapshot } from '../../shared/runtime-messages';
 import type { CardView } from '../state';
 import { CardPanel } from './CardPanel';
-import { StatusBar, type StatusBarProps } from './StatusBar';
+import { NoticeLine, StatusLine, collectNotices, type StatusBarProps } from './StatusBar';
 import { TranscriptPanel } from './TranscriptPanel';
 import type { TranscriptSegmentMessage } from '@sales-copilot/contracts';
 
@@ -42,6 +42,7 @@ interface ControlDef {
   pressed?: boolean;
   disabled?: boolean;
   danger?: boolean;
+  primary?: boolean;
 }
 
 export function LiveView(props: LiveViewProps) {
@@ -63,9 +64,9 @@ export function LiveView(props: LiveViewProps) {
   };
 
   const controls: ControlDef[] = [
-    { key: 'r', label: '切り返し', run: () => request('rebuttal'), disabled: !live || snapshot.paused },
-    { key: 'q', label: '次に聞く', run: () => request('next_question'), disabled: !live || snapshot.paused },
-    { key: 'n', label: '次の約束', run: () => request('next_step'), disabled: !live || snapshot.paused },
+    { key: 'r', label: '切り返し', primary: true, run: () => request('rebuttal'), disabled: !live || snapshot.paused },
+    { key: 'q', label: '次に聞く', primary: true, run: () => request('next_question'), disabled: !live || snapshot.paused },
+    { key: 'n', label: '次の約束', primary: true, run: () => request('next_step'), disabled: !live || snapshot.paused },
     {
       key: 'p',
       label: pinned ? '固定解除' : '表示固定',
@@ -113,126 +114,127 @@ export function LiveView(props: LiveViewProps) {
     return () => window.removeEventListener('keydown', onKey);
   }, [actions]);
 
+  const notices = collectNotices({ snapshot, lastError: props.lastError, warnings: props.warnings });
+  const primary = controls.filter((c) => c.primary);
+  const secondary = controls.filter((c) => !c.primary && !c.danger);
+  const danger = controls.filter((c) => c.danger);
+  const btn = (c: ControlDef, cls: string) => (
+    <button
+      key={c.key}
+      type="button"
+      className={c.danger ? `${cls} danger` : cls}
+      aria-keyshortcuts={c.key.toUpperCase()}
+      aria-pressed={c.pressed === undefined ? undefined : c.pressed}
+      disabled={c.disabled}
+      onClick={c.run}
+    >
+      {c.label}
+      <kbd>{c.key.toUpperCase()}</kbd>
+    </button>
+  );
+
   return (
-    <div className="app">
-      <div className="row" style={{ justifyContent: 'space-between' }}>
-        <strong>ZEROSYS カンペ</strong>
-        <div className="row">
-          <button type="button" aria-label="文字を小さく" aria-keyshortcuts="-" onClick={() => actions.changeFont(-0.1)}>
-            A−
-          </button>
-          <button type="button" aria-label="文字を大きく" aria-keyshortcuts="+" onClick={() => actions.changeFont(0.1)}>
-            A＋
-          </button>
-          <button type="button" aria-label="明暗の切替" aria-keyshortcuts="d" onClick={actions.toggleTheme}>
-            明暗
-          </button>
-        </div>
-      </div>
-      <StatusBar snapshot={snapshot} status={props.status} usage={props.usage} onOpenOptions={actions.openOptions} />
-      {props.purpose && actions.updatePurpose ? (
-        editingPurpose === null ? (
-          <p className="small">
-            商談目的: {props.purpose}{' '}
-            <button type="button" onClick={() => setEditingPurpose(props.purpose ?? '')}>
-              変更
-            </button>
-          </p>
-        ) : (
-          <form
-            className="row"
-            aria-label="商談目的の変更"
-            onSubmit={(ev) => {
-              ev.preventDefault();
-              const next = editingPurpose.trim();
-              if (next) actions.updatePurpose?.(next.slice(0, 500));
-              setEditingPurpose(null);
-            }}
-          >
-            <label htmlFor="live-purpose" className="small">
-              商談目的
+    <div className="app live">
+      <h1 className="sr-only">ZEROSYS カンペ</h1>
+      <main className="prompter">
+        <CardPanel view={view} onUnpin={card && pinned ? () => actions.unpin(card.adviceId) : undefined} />
+        {pinned ? <p className="small dim">表示固定は画面の切替を止めるだけです。解析は続いています（止めるには「解析一時停止」）。</p> : null}
+      </main>
+
+      <div className="dock">
+        <StatusLine
+          snapshot={snapshot}
+          status={props.status}
+          usage={props.usage}
+          onOpenOptions={actions.openOptions}
+          onFont={actions.changeFont}
+          onTheme={actions.toggleTheme}
+        />
+        <NoticeLine notices={notices} onOpenOptions={actions.openOptions} />
+        {confirmEnd ? (
+          <section className="box" aria-label="終了の確認">
+            <p>
+              <strong>商談を終了しますか？</strong> 音声取得・送信・解析をすべて止めます。再開には会議タブで新たに開始が必要です。
+            </p>
+            <label className="check">
+              <input type="checkbox" checked={exportReq} onChange={(e) => setExportReq(e.target.checked)} />
+              <span>
+                振り返りをこのPCのファイルへ出力する（任意）
+                <br />
+                <span className="small tone-warn">出力ファイルには商談の機密情報が含まれる可能性があります。保管・削除はご自身で管理してください。</span>
+              </span>
             </label>
-            <input id="live-purpose" type="text" maxLength={500} value={editingPurpose} onChange={(e) => setEditingPurpose(e.target.value)} autoFocus />
-            <button type="submit" className="primary" disabled={!editingPurpose.trim()}>
-              保存
-            </button>
-            <button type="button" onClick={() => setEditingPurpose(null)}>
-              やめる
-            </button>
-          </form>
-        )
-      ) : null}
-      {props.lastError ? (
-        <div className="notice error" role="alert">
-          {props.lastError}
-        </div>
-      ) : null}
-      {props.warnings.slice(-2).map((w) => (
-        <div key={w.warningId} className="notice small" role="status">
-          注意: {w.message}
-        </div>
-      ))}
-
-      <CardPanel view={view} onUnpin={card && pinned ? () => actions.unpin(card.adviceId) : undefined} />
-      {pinned ? <p className="small dim">表示固定は画面の切替を止めるだけです。解析は続いています（止めるには「解析一時停止」）。</p> : null}
-
-      {confirmEnd ? (
-        <section className="box" aria-label="終了の確認">
-          <p>
-            <strong>商談を終了しますか？</strong> 音声取得・送信・解析をすべて止めます。再開には会議タブで新たに開始が必要です。
-          </p>
-          <label className="check">
-            <input type="checkbox" checked={exportReq} onChange={(e) => setExportReq(e.target.checked)} />
-            <span>
-              振り返りをこのPCのファイルへ出力する（任意）
-              <br />
-              <span className="small tone-warn">出力ファイルには商談の機密情報が含まれる可能性があります。保管・削除はご自身で管理してください。</span>
-            </span>
-          </label>
-          <div className="row">
-            <button type="button" className="danger" onClick={() => actions.end(exportReq)}>
-              終了する
-            </button>
-            <button type="button" onClick={() => setConfirmEnd(false)}>
-              戻る
-            </button>
+            <div className="row">
+              <button type="button" className="danger" onClick={() => actions.end(exportReq)}>
+                終了する
+              </button>
+              <button type="button" onClick={() => setConfirmEnd(false)}>
+                戻る
+              </button>
+            </div>
+          </section>
+        ) : (
+          <div className="controls" role="toolbar" aria-label="操作">
+            <div className="controls-primary">{primary.map((c) => btn(c, 'big'))}</div>
+            <div className="controls-secondary">
+              {secondary.map((c) => btn(c, 'compact'))}
+              <span className="end-sep" aria-hidden="true" />
+              {danger.map((c) => btn(c, 'compact'))}
+            </div>
           </div>
-        </section>
-      ) : (
-        <div className="controls" role="toolbar" aria-label="操作">
-          {controls.map((c) => (
-            <button
-              key={c.key}
-              type="button"
-              className={c.danger ? 'danger' : undefined}
-              aria-keyshortcuts={c.key.toUpperCase()}
-              aria-pressed={c.pressed === undefined ? undefined : c.pressed}
-              disabled={c.disabled}
-              onClick={c.run}
-            >
-              {c.label}
-              <kbd>{c.key.toUpperCase()}</kbd>
-            </button>
-          ))}
-        </div>
-      )}
-      {feedbackDone ? (
-        <p className="small dim" role="status">
-          {feedbackDone}
-        </p>
-      ) : null}
-      {!snapshot.selfEnabled && live ? (
-        <p className="small tone-info">自分の音声は取得していません（会議側だけを解析中）。</p>
-      ) : (
-        <p className="small dim">Meetでミュートしても、このアプリの自分の音声取得は止まりません。止めるには「自分の音声取得OFF」。</p>
-      )}
+        )}
+        {feedbackDone ? (
+          <p className="small dim" role="status">
+            {feedbackDone}
+          </p>
+        ) : null}
+      </div>
 
-      <details>
-        <summary>音量</summary>
-        <Meter name="会議側" db={props.levels.REMOTE} />
-        <Meter name="自分" db={props.levels.SELF} note={snapshot.selfEnabled ? '取得なし' : '取得OFF'} />
-      </details>
-      <TranscriptPanel segments={props.transcript} />
+      <div className="extras">
+        {props.purpose && actions.updatePurpose ? (
+          editingPurpose === null ? (
+            <p className="small">
+              商談目的: {props.purpose}{' '}
+              <button type="button" onClick={() => setEditingPurpose(props.purpose ?? '')}>
+                変更
+              </button>
+            </p>
+          ) : (
+            <form
+              className="row"
+              aria-label="商談目的の変更"
+              onSubmit={(ev) => {
+                ev.preventDefault();
+                const next = editingPurpose.trim();
+                if (next) actions.updatePurpose?.(next.slice(0, 500));
+                setEditingPurpose(null);
+              }}
+            >
+              <label htmlFor="live-purpose" className="small">
+                商談目的
+              </label>
+              <input id="live-purpose" type="text" maxLength={500} value={editingPurpose} onChange={(e) => setEditingPurpose(e.target.value)} autoFocus />
+              <button type="submit" className="primary" disabled={!editingPurpose.trim()}>
+                保存
+              </button>
+              <button type="button" onClick={() => setEditingPurpose(null)}>
+                やめる
+              </button>
+            </form>
+          )
+        ) : null}
+        {!snapshot.selfEnabled && live ? (
+          <p className="small tone-info">自分の音声は取得していません（会議側だけを解析中）。</p>
+        ) : (
+          <p className="small dim">Meetでミュートしても、このアプリの自分の音声取得は止まりません。止めるには「自分の音声取得OFF」。</p>
+        )}
+        <details>
+          <summary>音量</summary>
+          <Meter name="会議側" db={props.levels.REMOTE} />
+          <Meter name="自分" db={props.levels.SELF} note={snapshot.selfEnabled ? '取得なし' : '取得OFF'} />
+        </details>
+        <TranscriptPanel segments={props.transcript} />
+      </div>
     </div>
   );
 }

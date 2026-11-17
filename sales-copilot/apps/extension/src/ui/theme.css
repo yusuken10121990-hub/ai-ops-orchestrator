@@ -192,59 +192,230 @@ label.check input {
   flex-wrap: wrap;
   gap: 4px 10px;
   font-size: 0.8em;
-  border-bottom: 1px solid var(--border);
-  padding-bottom: 6px;
-  margin-bottom: 8px;
 }
 .statusbar .item {
   white-space: nowrap;
 }
+
+/* ===== 商談中カンペ（テレプロンプター配置） ===== */
+.app.live {
+  padding: 8px 12px 16px;
+}
+.prompter {
+  min-height: 0;
+}
 .card {
   border: 2px solid var(--border);
   border-radius: 10px;
-  padding: 10px 12px;
-  margin: 6px 0 10px;
+  padding: 8px 12px 6px;
+  margin: 0 0 8px;
+  background: var(--bg);
 }
-.card.status-reference {
-  border-style: dashed;
+.card .card-top {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 8px;
 }
-.card.status-invalidated {
-  border-style: dotted;
-  opacity: 0.85;
+.card .card-top .chips {
+  margin-left: auto;
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 4px;
 }
 .card .slot-label {
-  font-size: 0.8em;
+  font-size: 0.78em;
   font-weight: 700;
   color: var(--text-dim);
-  margin-top: 8px;
+}
+.card .say-label {
+  margin-top: 6px;
 }
 .card .headline {
-  font-size: 1.15em;
+  font-size: 0.95em;
   font-weight: 700;
 }
 .card .say {
-  font-size: 1.55em;
+  font-size: clamp(1.55em, calc(1em + 2.2vw), 2.3em);
   font-weight: 700;
-  line-height: 1.5;
+  line-height: 1.45;
   background: var(--say-bg);
   border: 2px solid var(--say-border);
   border-radius: 8px;
-  padding: 8px 10px;
-  margin-top: 2px;
+  padding: 8px 12px;
+  margin: 2px 0 6px;
   word-break: break-word;
 }
-.card .avoid {
-  font-size: 1.05em;
+.card .say-empty {
+  font-size: 1.15em;
+  color: var(--text-dim);
+  padding: 6px 2px;
+  margin: 2px 0 6px;
+}
+.card .avoid-line {
+  font-size: 0.92em;
+  color: var(--text-dim);
+}
+.card .avoid-line .avoid {
+  color: var(--text);
+}
+.card .card-warnings {
+  margin-top: 2px;
+}
+.card details.reason > summary {
+  font-size: 0.86em;
+  color: var(--text-dim);
+}
+/* 参考・期限切れ: 色を薄くせず（コントラスト維持）、地色と枠で「今のカードではない」を示す */
+.card.status-reference {
+  border-style: dashed;
+  background: var(--surface);
+}
+.card.status-reference .say {
+  background: transparent;
+  border-style: dashed;
+  border-color: var(--border);
+  color: var(--text-dim);
+  font-weight: 600;
+}
+.card.status-invalidated {
+  border-style: dotted;
+  background: var(--surface);
+}
+.card.status-current {
+  border-color: var(--say-border);
+}
+
+/* 下に固定する操作エリア（状態 1 行・お知らせ 1 行・ボタン） */
+.dock {
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
+  background: var(--bg);
+  border-top: 1px solid var(--border);
+  padding: 6px 0 4px;
+  box-shadow: 0 -6px 10px -8px rgba(0, 0, 0, 0.35);
+}
+.statusline {
+  display: flex;
+  align-items: center;
+  gap: 4px 8px;
+  flex-wrap: wrap;
+}
+.statusline .health {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+  padding: 2px 8px;
+  font-weight: 700;
+  font-size: 0.88em;
+  border-color: currentColor;
+  background: var(--bg);
+  max-width: 100%;
+}
+.statusline .health .health-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.statusline .health .dot {
+  width: 0.7em;
+  height: 0.7em;
+  border-radius: 50%;
+  background: currentColor;
+  flex: none;
+}
+.statusline .safety {
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+.statusline .prefs {
+  margin-left: auto;
+  display: inline-flex;
+  gap: 4px;
+}
+.statusline .prefs button {
+  min-height: 32px;
+  padding: 2px 8px;
+  font-size: 0.86em;
+}
+.status-details {
+  margin-top: 6px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  max-height: 30vh;
+  overflow: auto;
+}
+.notices {
+  margin-top: 6px;
+}
+.notice-line {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  border-left: 4px solid var(--warn);
+  background: var(--surface);
+  padding: 3px 8px;
+  margin: 3px 0;
+  font-size: 0.9em;
+}
+.notice-line.error {
+  border-left-color: var(--error);
+  font-weight: 700;
+}
+.notice-line .notice-text {
+  flex: 1 1 12em;
+}
+.notice-line button {
+  min-height: 30px;
+  padding: 2px 8px;
+  font-size: 0.92em;
+}
+button.link {
+  background: transparent;
+  border-color: transparent;
+  text-decoration: underline;
+  color: var(--text);
 }
 .controls {
+  margin: 6px 0 2px;
+}
+.controls-primary {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
   gap: 6px;
-  margin: 8px 0;
 }
-.controls button {
-  font-size: 0.92em;
+.controls button.big {
+  min-height: 48px;
+  font-size: 1.05em;
+  font-weight: 700;
   padding: 6px 4px;
+  background: var(--surface-2);
+}
+.controls-secondary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 6px;
+  align-items: center;
+}
+.controls button.compact {
+  min-height: 32px;
+  font-size: 0.8em;
+  padding: 2px 7px;
+}
+.controls .end-sep {
+  flex: 1 0 8px;
+}
+.controls button.compact.danger {
+  padding: 2px 12px;
+}
+.extras {
+  margin-top: 10px;
 }
 kbd {
   font-size: 0.75em;

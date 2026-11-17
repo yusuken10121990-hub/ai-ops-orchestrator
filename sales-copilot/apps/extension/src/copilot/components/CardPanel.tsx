@@ -5,7 +5,7 @@ import type { CardView } from '../state';
 
 /**
  * カンペ表示。会話・助言は全て React のテキストノードとして描画する（HTML として解釈しない／XSS 対策）。
- * 【今の一手】【次に言う一言】【今は言わない】だけを大きく、根拠は折りたたむ。
+ * 【次に言う一言】を一番大きく（ひと目で読める）。【今の一手】はその上に小さく、【今は言わない】と根拠は下に控えめに。
  */
 
 const KIND_LABEL: Record<AdviceKind, string> = {
@@ -52,10 +52,13 @@ export interface CardPanelProps {
 export function CardPanel({ view, onUnpin }: CardPanelProps) {
   if (!view.card || !view.displayStatus) {
     return (
-      <section className="card" aria-label="カンペ" aria-live="polite">
-        <div className="slot-label">【今の一手】</div>
-        <div className="headline">待機</div>
-        <p className="dim">今は相手の説明を聞く場面です。必要になったらここに表示します。</p>
+      <section className="card status-empty" aria-label="カンペ" aria-live="polite">
+        <div className="card-top">
+          <span className="slot-label">【今の一手】</span>
+          <span className="headline">待機</span>
+        </div>
+        <div className="slot-label say-label">【次に言う一言】</div>
+        <div className="say-empty">今は相手の説明を聞く場面です。必要になったらここに表示します。</div>
       </section>
     );
   }
@@ -66,15 +69,37 @@ export function CardPanel({ view, onUnpin }: CardPanelProps) {
   const trig = triggerLabel(c);
   return (
     <section className={`card status-${status}`} aria-label="カンペ" aria-live="polite" data-advice-id={c.adviceId}>
-      <div className="row">
-        <Badge label={cardStatusLabel(status)} prefix="状態" />
-        {view.mode === 'pinned' ? <Badge label={{ text: '表示固定中', tone: 'info' }} /> : null}
-        <span className="badge tone-muted">{KIND_LABEL[c.kind]}</span>
-        {trig ? <span className="badge tone-muted">{trig}</span> : null}
+      <div className="card-top">
+        <span className="slot-label">【今の一手】</span>
+        <span className="headline">{quiet ? c.headline || '待機' : c.headline}</span>
+        <span className="chips">
+          <Badge label={cardStatusLabel(status)} prefix="状態" />
+          {view.mode === 'pinned' ? <Badge label={{ text: '表示固定中', tone: 'info' }} /> : null}
+          <span className="badge tone-muted">{KIND_LABEL[c.kind]}</span>
+          {trig ? <span className="badge tone-muted">{trig}</span> : null}
+        </span>
       </div>
+
+      <div className="slot-label say-label">
+        【次に言う一言】
+        {status === 'reference' && !invalid ? <span className="tone-warn"> 参考扱いです（現行の推奨ではありません）</span> : null}
+      </div>
+      {invalid ? (
+        <div className="notice-line error" role="alert">
+          このカードは無効です
+          {view.invalidReason ? `（${INVALID_REASON_LABEL[view.invalidReason]}）` : ''}。この内容では話さないでください。
+        </div>
+      ) : quiet || !c.say ? (
+        <div className="say-empty">{quiet ? '今は相手の説明を聞く' : '（今は言うことはありません）'}</div>
+      ) : (
+        <div className="say" lang="ja">
+          {c.say}
+        </div>
+      )}
+
       {view.hasNewerCard ? (
-        <div className="notice" role="status">
-          <span>新しいカードがあります（表示固定中のため切り替えていません）。</span>{' '}
+        <div className="notice-line warn" role="status">
+          <span className="notice-text">新しいカードがあります（表示固定中のため切り替えていません）。</span>
           {onUnpin ? (
             <button type="button" onClick={onUnpin}>
               固定を解除して新しいカードを見る
@@ -82,33 +107,13 @@ export function CardPanel({ view, onUnpin }: CardPanelProps) {
           ) : null}
         </div>
       ) : null}
-      {invalid ? (
-        <div className="notice error" role="alert">
-          このカードは無効です
-          {view.invalidReason ? `（${INVALID_REASON_LABEL[view.invalidReason]}）` : ''}。この内容では話さないでください。
-        </div>
-      ) : null}
-      {status === 'reference' && !invalid ? <div className="notice">参考扱いです（現行の推奨ではありません）。</div> : null}
 
-      <div className="slot-label">【今の一手】</div>
-      <div className="headline">{quiet ? c.headline || '待機' : c.headline}</div>
-
-      <div className="slot-label">【次に言う一言】</div>
-      {invalid ? (
-        <div className="dim">（無効のため表示しません）</div>
-      ) : quiet || !c.say ? (
-        <div className="dim">{quiet ? '今は相手の説明を聞く' : '（今は言うことはありません）'}</div>
-      ) : (
-        <div className="say" lang="ja">
-          {c.say}
-        </div>
-      )}
-
-      <div className="slot-label">【今は言わない】</div>
-      <div className="avoid">{invalid ? '—' : c.avoid ?? '特になし'}</div>
+      <div className="avoid-line">
+        <span className="slot-label">【今は言わない】</span> <span className="avoid">{invalid ? '—' : c.avoid ?? '特になし'}</span>
+      </div>
 
       {view.warnings.length > 0 ? (
-        <ul className="plain small" aria-label="注意">
+        <ul className="plain small card-warnings" aria-label="注意">
           {view.warnings.map((w) => (
             <li key={w.code} className="tone-warn">
               注意: {w.message}
@@ -117,7 +122,7 @@ export function CardPanel({ view, onUnpin }: CardPanelProps) {
         </ul>
       ) : null}
 
-      <details>
+      <details className="reason">
         <summary>根拠・確認事項</summary>
         <p>
           <span className="badge tone-muted">{EVIDENCE_LABEL[c.evidenceLevel]}</span> {c.briefReason}

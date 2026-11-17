@@ -4,10 +4,10 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "build": "vite build && vite build -c vite.worklet.config.ts && node scripts/check-dist.mjs",
+    "build": "vite build && vite build -c vite.worklet.config.ts && vite build -c vite.content.config.ts --mode meet-page && vite build -c vite.content.config.ts --mode meet-content && node scripts/check-dist.mjs",
     "dev": "node scripts/dev.mjs",
     "typecheck": "tsc -p tsconfig.json",
-    "test:e2e": "node scripts/e2e-smoke.mjs"
+    "test:e2e": "node scripts/e2e-smoke.mjs && node scripts/e2e-meet-popup.mjs"
   },
   "dependencies": {
     "@sales-copilot/contracts": "workspace:*",

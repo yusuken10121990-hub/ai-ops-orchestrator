@@ -48,7 +48,26 @@ export type StopReason =
 export type ToSw =
   | { target: 'sw'; type: 'ui.getTarget' }
   | { target: 'sw'; type: 'ui.start'; config: StartConfig }
-  | { target: 'sw'; type: 'ui.openOptions' };
+  | { target: 'sw'; type: 'ui.openOptions' }
+  /** Meet のポップアップで「接続」が押された（content script から。対象タブは sender.tab）。 */
+  | { target: 'sw'; type: 'meet.connect'; meetingCode: string; purpose: string }
+  /** copilot 画面が自動開始を処理した（再読み込みで二重に開始しない）。 */
+  | { target: 'sw'; type: 'ui.autoStartDone' };
+
+export interface MeetConnectResult {
+  ok: boolean;
+  error?: string;
+}
+
+/** 会議音声の取り方。tab = 拡張アイコン（tabCapture）、inpage = Meet ポップアップの「接続」（ページ内取得）。 */
+export type CaptureVia = 'tab' | 'inpage';
+
+/** 「接続」1 タップで開いた画面が、確認画面を挟まずに開始するための情報。 */
+export interface AutoStartRequest {
+  purpose: string;
+  meetingCode: string;
+  requestedAt: number;
+}
 
 export interface TargetInfo {
   tabId: number | null;
@@ -57,11 +76,16 @@ export interface TargetInfo {
   /** 会議タブの音声を音量確認のために取得済みか（外部送信はまだ）。 */
   armed: boolean;
   armError: string | null;
+  via: CaptureVia | null;
+  /** 未処理の自動開始（Meet ポップアップの「接続」）。null = 通常の開始前画面。 */
+  autoStart: AutoStartRequest | null;
 }
 
 // ---- service worker / UI → offscreen ----
 export type ToOffscreen =
   | { target: 'offscreen'; type: 'arm'; streamId: string }
+  /** このタブの content script からの音声 Port だけを受け付ける（Meet ポップアップの「接続」）。 */
+  | { target: 'offscreen'; type: 'inpage.expect'; tabId: number }
   | { target: 'offscreen'; type: 'start'; config: StartConfig }
   | { target: 'offscreen'; type: 'client'; message: ClientMessage }
   | { target: 'offscreen'; type: 'self.set'; enabled: boolean }

@@ -3,7 +3,7 @@
   "name": "ZEROSYS Sales Copilot",
   "short_name": "ZEROSYS Copilot",
   "version": "0.1.0",
-  "description": "商談中カンペAI（本人専用）。会議タブ音声と自分のマイクを別系統で取得し、ローカルサーバー経由でカンペを表示します。",
+  "description": "商談中カンペAI（本人専用）。Meet参加時のポップアップの「接続」1回で、会議の音声と自分のマイクを別系統で取得し、ローカルサーバー経由でカンペを表示します。",
   "minimum_chrome_version": "116",
   "action": {
     "default_title": "この会議タブで ZEROSYS カンペを開始"
@@ -13,9 +13,40 @@
     "type": "module"
   },
   "options_page": "options.html",
-  "permissions": ["tabCapture", "offscreen", "storage", "activeTab"],
-  "host_permissions": ["http://127.0.0.1/*", "http://localhost/*"],
+  "permissions": [
+    "tabCapture",
+    "offscreen",
+    "storage",
+    "activeTab"
+  ],
+  "host_permissions": [
+    "http://127.0.0.1/*",
+    "http://localhost/*"
+  ],
   "content_security_policy": {
     "extension_pages": "script-src 'self'; object-src 'self'; connect-src 'self' http://127.0.0.1:* http://localhost:* ws://127.0.0.1:* ws://localhost:*"
-  }
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://meet.google.com/*"
+      ],
+      "js": [
+        "meet-page.js"
+      ],
+      "run_at": "document_start",
+      "world": "MAIN",
+      "all_frames": false
+    },
+    {
+      "matches": [
+        "https://meet.google.com/*"
+      ],
+      "js": [
+        "meet-content.js"
+      ],
+      "run_at": "document_start",
+      "all_frames": false
+    }
+  ]
 }

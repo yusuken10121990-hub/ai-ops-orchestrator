@@ -3,8 +3,9 @@
  * service worker や copilot ウィンドウには MediaStream を置かない（SPEC §6-2）。
  * offscreen では chrome.runtime 以外の拡張 API は使えないため、設定値は start メッセージで受け取る。
  */
-import { CaptureController, type AudioGraphLike, type CaptureDeps, type MediaStreamLike, type PcmListener } from './capture-controller';
+import { CaptureController, type AudioGraphLike, type CaptureDeps, type InPageLink, type MediaStreamLike, type PcmListener } from './capture-controller';
 import type { FromOffscreen, ToOffscreen } from '../shared/runtime-messages';
+import { MEET_PORT_NAME, base64ToPcm, parseToOffscreenPort } from '../meet/wire';
 
 const WORKLET_URL = chrome.runtime.getURL('capture-worklet.js');
 const PROCESSOR_NAME = 'sales-copilot-capture';
@@ -97,6 +98,47 @@ const deps: CaptureDeps = {
 
 const controller = new CaptureController(deps);
 
+// Meet ポップアップの「接続」: service worker が指定したタブの content script からの Port だけ受け付ける
+let expectedInPageTab: number | null = null;
+chrome.runtime.onConnect.addListener((port) => {
+  if (port.name !== MEET_PORT_NAME) return;
+  const tabId = port.sender?.tab?.id;
+  if (tabId === undefined || tabId !== expectedInPageTab) {
+    port.disconnect();
+    return;
+  }
+  expectedInPageTab = null;
+  let open = true;
+  const link: InPageLink = {
+    send(msg) {
+      if (!open) return;
+      try {
+        port.postMessage(msg);
+      } catch {
+        /* 切断済み */
+      }
+    },
+    close() {
+      if (!open) return;
+      open = false;
+      port.disconnect();
+    },
+  };
+  port.onMessage.addListener((raw: unknown) => {
+    const m = parseToOffscreenPort(raw);
+    if (!m) return;
+    if (m.type === 'pcm') {
+      const pcm = base64ToPcm(m.b64);
+      if (pcm) controller.inPagePcm(link, m.source, pcm, m.levelDb);
+    } else controller.inPageError(link, m.type === 'self.error' ? 'SELF' : 'REMOTE', m.name);
+  });
+  port.onDisconnect.addListener(() => {
+    open = false;
+    controller.inPageLost(link);
+  });
+  void controller.armInPage(link);
+});
+
 chrome.runtime.onMessage.addListener((raw: unknown, _sender, sendResponse) => {
   const msg = raw as ToOffscreen;
   if (!msg || msg.target !== 'offscreen') return false;
@@ -104,6 +146,10 @@ chrome.runtime.onMessage.addListener((raw: unknown, _sender, sendResponse) => {
     case 'arm':
       void controller.arm(msg.streamId).then(() => sendResponse(controller.snapshot()));
       return true;
+    case 'inpage.expect':
+      expectedInPageTab = msg.tabId;
+      sendResponse({ ok: true });
+      return false;
     case 'start':
       void controller.start(msg.config);
       sendResponse({ ok: true });

@@ -11,7 +11,9 @@ import {
   type PcmListener,
   type ProcessorHandle,
   type WsLike,
+  type InPageLink,
 } from './capture-controller';
+import type { FromOffscreenPort } from '../meet/wire';
 import type { FromOffscreen, StartConfig } from '../shared/runtime-messages';
 
 class FakeTrack implements MediaTrackLike {
@@ -203,8 +205,8 @@ const config: StartConfig = {
 
 const flush = () => new Promise((r) => setTimeout(r, 0));
 
-async function startLive(env: ReturnType<typeof setup>) {
-  await env.ctl.arm('stream-1');
+async function startLive(env: ReturnType<typeof setup>, arm?: () => Promise<void>) {
+  await (arm ? arm() : env.ctl.arm('stream-1'));
   const p = env.ctl.start(config);
   await flush();
   const ws = env.sockets[0]!;
@@ -407,5 +409,114 @@ describe('CaptureController', () => {
     const after = ws.sentJson.filter((m) => m.type === 'audio.gap');
     expect(after).toHaveLength(2);
     expect(ws.sentJson.findIndex((m) => m === after[1])).toBeLessThan(ws.sentJson.findIndex((m) => m.type === 'session.end'));
+  });
+});
+
+class FakeLink implements InPageLink {
+  sent: FromOffscreenPort[] = [];
+  closed = false;
+  send(m: FromOffscreenPort): void {
+    if (!this.closed) this.sent.push(m);
+  }
+  close(): void {
+    this.closed = true;
+  }
+  types(): string[] {
+    return this.sent.map((m) => m.type + ('enabled' in m ? `:${m.enabled}` : ''));
+  }
+}
+
+describe('CaptureController — Meet ページ内取得（ワンタップ接続）', () => {
+  it('接続直後（開始前）は音量だけ・送信しない。tabCapture もマイク取得もしない', async () => {
+    const env = setup();
+    const link = new FakeLink();
+    await env.ctl.armInPage(link);
+    env.ctl.inPagePcm(link, 'REMOTE', new Int16Array(1600), -25);
+    expect(env.ctl.snapshot()).toMatchObject({ phase: 'armed', sources: { REMOTE: 'armed', SELF: 'off' } });
+    expect(env.sockets).toHaveLength(0);
+    expect(env.tabStreams).toHaveLength(0);
+    expect(env.micStreams).toHaveLength(0);
+    expect(env.graph.playback).toEqual([]); // Meet 自身が再生しているので二重再生しない
+  });
+
+  it('開始後は REMOTE/SELF を別系統の 16kHz フレームで送り、マイクはページ側（self.start）で取る', async () => {
+    const env = setup();
+    const link = new FakeLink();
+    const ws = await startLive(env, () => env.ctl.armInPage(link));
+    expect(link.types()).toContain('self.start');
+    expect(env.micStreams).toHaveLength(0);
+    env.ctl.inPagePcm(link, 'REMOTE', new Int16Array(1600), -20);
+    env.ctl.inPagePcm(link, 'SELF', new Int16Array(1600), -20);
+    const headers = ws.sentBinary.map((b) => decodeAudioFrame(b).header);
+    expect(headers.map((h) => h.source).sort()).toEqual(['REMOTE', 'SELF']);
+    expect(headers.every((h) => h.sampleRate === 16000 && h.sessionId === 'sess-1')).toBe(true);
+    expect(ws.sentJson).toContainEqual({ type: 'source.state', source: 'SELF', state: 'on' });
+  });
+
+  it('別の Port（古い接続）からの音声は受け取らない', async () => {
+    const env = setup();
+    const old = new FakeLink();
+    const link = new FakeLink();
+    await env.ctl.armInPage(old);
+    await env.ctl.armInPage(link);
+    expect(old.closed).toBe(true);
+    expect(old.types()).toContain('stop.all');
+    const ws = await startLive(env, async () => {});
+    env.ctl.inPagePcm(old, 'REMOTE', new Int16Array(1600), -20);
+    expect(ws.sentBinary).toHaveLength(0);
+  });
+
+  it('解析一時停止: ページ側の会議音声処理を止め、マイクを解放。再開で戻る', async () => {
+    const env = setup();
+    const link = new FakeLink();
+    const ws = await startLive(env, () => env.ctl.armInPage(link));
+    await env.ctl.setPaused(true);
+    expect(link.types()).toEqual(expect.arrayContaining(['remote.enable:false', 'self.stop']));
+    const before = ws.sentBinary.length;
+    env.ctl.inPagePcm(link, 'REMOTE', new Int16Array(1600), -20);
+    env.ctl.inPagePcm(link, 'SELF', new Int16Array(1600), -20);
+    expect(ws.sentBinary.length).toBe(before);
+    await env.ctl.setPaused(false);
+    expect(link.types().slice(-2)).toEqual(['remote.enable:true', 'self.start']);
+  });
+
+  it('自分の音声取得OFF: ページ側のマイクを止め、以後 SELF は送らない', async () => {
+    const env = setup();
+    const link = new FakeLink();
+    const ws = await startLive(env, () => env.ctl.armInPage(link));
+    await env.ctl.setSelf(false);
+    expect(link.types()).toContain('self.stop');
+    const before = ws.sentBinary.length;
+    env.ctl.inPagePcm(link, 'SELF', new Int16Array(1600), -20);
+    expect(ws.sentBinary.length).toBe(before);
+  });
+
+  it('終了: ページ側に stop.all を送り Port を閉じる。WS も切る', async () => {
+    const env = setup();
+    const link = new FakeLink();
+    const ws = await startLive(env, () => env.ctl.armInPage(link));
+    await env.ctl.stop('user_end');
+    expect(link.types()).toContain('stop.all');
+    expect(link.closed).toBe(true);
+    expect(ws.closed).toBe(true);
+    expect(env.ctl.activeTimerCount).toBe(0);
+  });
+
+  it('Port が切れた（タブを閉じた・再読み込み）ら商談を止める', async () => {
+    const env = setup();
+    const link = new FakeLink();
+    const ws = await startLive(env, () => env.ctl.armInPage(link));
+    env.ctl.inPageLost(link);
+    await flush();
+    expect(env.ctl.snapshot()).toMatchObject({ phase: 'stopped', stopReason: 'tab_closed' });
+    expect(ws.sentJson).toContainEqual(expect.objectContaining({ type: 'source.state', source: 'REMOTE', state: 'lost' }));
+  });
+
+  it('ページ側のマイクが拒否されたら SELF を「許可なし」にする（商談は続ける）', async () => {
+    const env = setup();
+    const link = new FakeLink();
+    await startLive(env, () => env.ctl.armInPage(link));
+    env.ctl.inPageError(link, 'SELF', 'NotAllowedError');
+    expect(env.ctl.snapshot()).toMatchObject({ phase: 'live', sources: { SELF: 'no_permission' } });
   });
 });

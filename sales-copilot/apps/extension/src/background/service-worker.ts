@@ -4,8 +4,11 @@
  *   tabCapture.getMediaStreamId({ targetTabId }) を取得して offscreen へ渡す（ID は数秒で失効するため即利用）。
  * - その後 copilot ウィンドウ（popup 型）を開く。ウィンドウを開いても・他タブへ移っても対象は変えない。
  * - ウィンドウが閉じられたら取得・送信を全停止し offscreen を閉じる。対象タブが閉じられても停止。
+ * - Meet ポップアップの「接続」（content script からの meet.connect）: tabCapture を使わず、ページ内で取得した音声を
+ *   offscreen が Port で受け取る。copilot ウィンドウを開き、確認画面を挟まずに自動開始させる（autoStart）。
+ *   アクションのクリックが要らないので 1 タップで済む。従来の拡張アイコン（tabCapture）はそのまま代替経路として残す。
  */
-import type { FromOffscreen, TargetInfo, ToOffscreen, ToSw } from '../shared/runtime-messages';
+import type { AutoStartRequest, CaptureVia, FromOffscreen, MeetConnectResult, TargetInfo, ToOffscreen, ToSw } from '../shared/runtime-messages';
 
 const OFFSCREEN_URL = 'offscreen.html';
 const COPILOT_URL = 'copilot.html';
@@ -17,9 +20,20 @@ interface SwState {
   copilotWindowId: number | null;
   armed: boolean;
   armError: string | null;
+  via: CaptureVia | null;
+  autoStart: AutoStartRequest | null;
 }
 
-const EMPTY: SwState = { targetTabId: null, targetTitle: null, isMeet: false, copilotWindowId: null, armed: false, armError: null };
+const EMPTY: SwState = {
+  targetTabId: null,
+  targetTitle: null,
+  isMeet: false,
+  copilotWindowId: null,
+  armed: false,
+  armError: null,
+  via: null,
+  autoStart: null,
+};
 
 // service worker は停止・再起動されるため、状態は storage.session に置く（ディスクへは書かない）。
 async function load(): Promise<SwState> {
@@ -95,7 +109,7 @@ chrome.action.onClicked.addListener((tab) => {
         // まだ会議タブを取得できていない場合だけ、本人がクリックしたタブを対象として取り直す。
         if (!st.armed && tab.id !== undefined) {
           const url = tab.url ?? '';
-          await save({ targetTabId: tab.id, targetTitle: tab.title ?? null, isMeet: url.startsWith('https://meet.google.com/') });
+          await save({ targetTabId: tab.id, targetTitle: tab.title ?? null, isMeet: url.startsWith('https://meet.google.com/'), via: 'tab' });
           await armTarget(tab.id);
         }
         await chrome.windows.update(st.copilotWindowId, { focused: true });
@@ -110,6 +124,7 @@ chrome.action.onClicked.addListener((tab) => {
       targetTabId: tab.id,
       targetTitle: tab.title ?? null,
       isMeet: url.startsWith('https://meet.google.com/'),
+      via: 'tab',
     });
     // 2) ユーザー操作起点で stream ID を取得し offscreen で即利用（音量確認のみ・送信はまだ）
     await armTarget(tab.id);
@@ -118,6 +133,41 @@ chrome.action.onClicked.addListener((tab) => {
     await save({ copilotWindowId: win?.id ?? null });
   })();
 });
+
+function isBusy(phase: string | undefined): boolean {
+  return phase === 'live' || phase === 'connecting' || phase === 'ending';
+}
+
+/** Meet ポップアップの「接続」1 タップ。対象タブ＝押されたタブ（sender.tab）。 */
+async function meetConnect(tab: chrome.tabs.Tab, meetingCode: string, purpose: string): Promise<MeetConnectResult> {
+  const tabId = tab.id!;
+  const st = await load();
+  const old = st.copilotWindowId !== null ? await chrome.windows.get(st.copilotWindowId).catch(() => null) : null;
+  if (old && (await hasOffscreen())) {
+    const snap = (await toOffscreen({ target: 'offscreen', type: 'getState' })) as { phase?: string } | undefined;
+    if (isBusy(snap?.phase)) {
+      await chrome.windows.update(old.id!, { focused: true }).catch(() => {});
+      return { ok: false, error: '別の商談のカンペが動いています。先にカンペ画面で「終了」してください' };
+    }
+  }
+  // 動いていない古いカンペ画面（終了画面・開始前画面）は閉じて、新しく開き直す（前の状態を持ち越さない）。
+  // 先に記録から外すので、windows.onRemoved の停止処理は走らない（何も取得していない）。
+  await save({ ...EMPTY });
+  if (old?.id !== undefined) await chrome.windows.remove(old.id).catch(() => {});
+  await save({
+    targetTabId: tabId,
+    targetTitle: tab.title ?? null,
+    isMeet: true,
+    via: 'inpage',
+    armed: true,
+    autoStart: { purpose, meetingCode, requestedAt: Date.now() },
+  });
+  await ensureOffscreen();
+  await toOffscreen({ target: 'offscreen', type: 'inpage.expect', tabId });
+  const created = await chrome.windows.create({ url: COPILOT_URL, type: 'popup', width: 440, height: 720, focused: true });
+  await save({ copilotWindowId: created?.id ?? null });
+  return { ok: true };
+}
 
 chrome.windows.onRemoved.addListener((windowId) => {
   void (async () => {
@@ -139,10 +189,26 @@ chrome.tabs.onRemoved.addListener((tabId) => {
   })();
 });
 
-chrome.runtime.onMessage.addListener((raw: unknown, _sender, sendResponse) => {
+chrome.runtime.onMessage.addListener((raw: unknown, sender, sendResponse) => {
   const msg = raw as ToSw | FromOffscreen;
   if (!msg || msg.target !== 'sw') return false;
   switch (msg.type) {
+    case 'meet.connect': {
+      const tab = sender.tab;
+      // sender.url は送り元フレームの URL（tabs 権限なしでも入る）
+      const fromMeet = (sender.url ?? tab?.url ?? '').startsWith('https://meet.google.com/');
+      if (!tab || tab.id === undefined || !fromMeet || typeof msg.meetingCode !== 'string' || typeof msg.purpose !== 'string') {
+        sendResponse({ ok: false, error: 'Meet のタブから押されていません' } satisfies MeetConnectResult);
+        return false;
+      }
+      void meetConnect(tab, msg.meetingCode.slice(0, 32), msg.purpose.slice(0, 500)).then(sendResponse, (e: unknown) =>
+        sendResponse({ ok: false, error: e instanceof Error ? e.message : String(e) } satisfies MeetConnectResult),
+      );
+      return true;
+    }
+    case 'ui.autoStartDone':
+      void save({ autoStart: null });
+      return false;
     case 'ui.getTarget':
       void load().then((st) => {
         const info: TargetInfo = {
@@ -151,6 +217,8 @@ chrome.runtime.onMessage.addListener((raw: unknown, _sender, sendResponse) => {
           isMeet: st.isMeet,
           armed: st.armed,
           armError: st.armError,
+          via: st.via,
+          autoStart: st.autoStart,
         };
         sendResponse(info);
       });
@@ -167,7 +235,7 @@ chrome.runtime.onMessage.addListener((raw: unknown, _sender, sendResponse) => {
       return false;
     case 'offscreen.stopped':
       void (async () => {
-        await save({ armed: false });
+        await save({ armed: false, autoStart: null });
         // UI が終了画面を出せるよう少し待ってから閉じる（新しい商談が始まっていれば閉じない）
         closeOffscreenLaterIfIdle();
       })();

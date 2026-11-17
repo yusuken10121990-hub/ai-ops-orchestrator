@@ -2,6 +2,7 @@
 // 1) 拡張機能 dist が無い／ソースより古ければビルド
 // 2) 実サーバー × 実拡張機能の結合テスト（scripts/e2e-integration.mjs）
 // 3) モックサーバーでの拡張機能スモーク（apps/extension/scripts/e2e-smoke.mjs: 偽マイク→16kHz フレーム・XSS・ハートビート）
+// 4) Meet ポップアップのワンタップ接続（apps/extension/scripts/e2e-meet-popup.mjs: 偽 Meet ページ × モックサーバー）
 // 実 API（Deepgram / Anthropic）は呼ばない。
 import { spawn } from 'node:child_process';
 import { existsSync, readdirSync, statSync } from 'node:fs';
@@ -21,7 +22,8 @@ function newestMtime(dir) {
 
 function needsBuild() {
   const marker = join(EXT_DIR, 'dist', 'manifest.json');
-  if (!existsSync(marker) || !existsSync(join(EXT_DIR, 'dist', 'capture-worklet.js'))) return true;
+  for (const f of ['capture-worklet.js', 'meet-page.js', 'meet-content.js']) if (!existsSync(join(EXT_DIR, 'dist', f))) return true;
+  if (!existsSync(marker)) return true;
   const built = statSync(marker).mtimeMs;
   const sources = Math.max(
     newestMtime(join(EXT_DIR, 'src')),
@@ -45,9 +47,12 @@ if (needsBuild() || process.argv.includes('--build')) {
   console.log('[e2e] 拡張機能 dist は最新です（ビルド省略。強制する場合は --build）');
 }
 
-console.log('\n[e2e] 1/2 実サーバー × 実拡張機能（OFFLINE）');
+console.log('\n[e2e] 1/3 実サーバー × 実拡張機能（OFFLINE）');
 const a = await runNode(join(ROOT, 'scripts', 'e2e-integration.mjs'));
-console.log('\n[e2e] 2/2 拡張機能スモーク（モックサーバー）');
+console.log('\n[e2e] 2/3 拡張機能スモーク（モックサーバー）');
 const b = await runNode(join(EXT_DIR, 'scripts', 'e2e-smoke.mjs'));
-console.log(`\n[e2e] integration: ${a === 0 ? 'PASS' : 'FAIL'} / smoke: ${b === 0 ? 'PASS' : 'FAIL'}`);
-process.exit(a === 0 && b === 0 ? 0 : 1);
+console.log('\n[e2e] 3/3 Meet ポップアップのワンタップ接続（偽 Meet ページ × モックサーバー）');
+const c = await runNode(join(EXT_DIR, 'scripts', 'e2e-meet-popup.mjs'));
+const v = (x) => (x === 0 ? 'PASS' : 'FAIL');
+console.log(`\n[e2e] integration: ${v(a)} / smoke: ${v(b)} / meet-popup: ${v(c)}`);
+process.exit(a === 0 && b === 0 && c === 0 ? 0 : 1);

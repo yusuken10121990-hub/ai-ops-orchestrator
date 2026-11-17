@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-11-17T02:55:15.513Z",
+  "generated_at": "2026-11-17T06:54:36.953Z",
   "note": "受託システムの一覧(営業台帳の自動追加用・公開して問題ない項目のみ)",
   "systems": [
     {
@@ -162,6 +162,15 @@
       "url": "https://web-production-91534.up.railway.app",
       "status": "live",
       "addedAt": "2026-11-05",
+      "source": "ledger"
+    },
+    {
+      "id": "sales-copilot",
+      "name": "ZEROSYS Sales Copilot(商談中カンペAI・Google Meetの2系統音声を文字起こしし次の一言を表示)",
+      "client": "",
+      "url": "http://127.0.0.1:8787",
+      "status": "building",
+      "addedAt": "2026-11-16",
       "source": "ledger"
     }
   ]

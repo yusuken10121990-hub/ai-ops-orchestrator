@@ -1,6 +1,7 @@
 import type { AdviceLlmOutput, AdviceTrigger, ApprovedFact } from '@sales-copilot/contracts';
 import { AdviceLlmError } from './errors';
 import { clarifyFirstOutput, interestCheckOutput, respectfulCloseOutput } from './validate';
+import { closingAskOutput, manualAnchor, objectionRebuttalOutput, politeCloseOutput } from './objection';
 import { DECLINE_RE, STRONG_INTENT_RE, normalizeForRules, topicLabel } from './text-rules';
 import type { AdviceLlm, AdviceLlmRequest, AdviceLlmResponse, AdviceMemoItem, AdviceWindowUtterance } from './types';
 
@@ -80,9 +81,46 @@ export class RuleBasedOfflineLlm implements AdviceLlm {
       if (e instanceof AdviceLlmError) throw e;
       throw new AdviceLlmError('invalid_json', 'offline: could not parse prompt data');
     }
-    const out = label(decide(parsed));
+    const out = label(decideManual(parsed) ?? decide(parsed));
     return { text: JSON.stringify(out), usage: { inputTokens: null, outputTokens: null }, model: OFFLINE_MODEL_ID };
   }
+}
+
+function unresolvedOf(p: ParsedRequest): AdviceMemoItem[] {
+  return Object.entries(p.memo)
+    .flatMap(([field, items]) => items.map((i) => ({ ...i, field: field as AdviceMemoItem['field'] })))
+    .filter((i) => (i.field === 'openQuestions' || i.field === 'checkItems') && !i.resolved);
+}
+
+function isDeclinedOffline(p: ParsedRequest): boolean {
+  const remote = p.window.filter((u) => u.source === 'REMOTE');
+  const memoDecline = Object.entries(p.memo).some(([field, items]) => field === 'declineSignals' && items.some((i) => !i.resolved));
+  return memoDecline || remote.slice(-3).some((u) => DECLINE_RE.test(normalizeForRules(u.text)));
+}
+
+/**
+ * 手動ボタンの規則:
+ * - クロージング: 見送り → お礼を伝えて終える / 未解決あり → 確認を先に / それ以外 → 締め＋次の場の依頼
+ * - 切り返し: 通常の規則で「聞く」になってしまう反論（高い・困っていない・比較したい等）には論点別の返答
+ */
+function decideManual(p: ParsedRequest): AdviceLlmOutput | null {
+  const anchor = manualAnchor(p.window);
+  const ev = anchor.target ? [anchor.target.utteranceId] : [];
+  if (p.trigger === 'manual_closing') {
+    if (isDeclinedOffline(p)) return politeCloseOutput(ev);
+    const unresolved = unresolvedOf(p);
+    if (unresolved.length > 0) {
+      const target = unresolved[unresolved.length - 1]!;
+      return clarifyFirstOutput(topicLabel(target.text), target.evidenceUtteranceIds.slice(0, 12));
+    }
+    return closingAskOutput(anchor.type, ev);
+  }
+  if (p.trigger === 'manual_rebuttal' && anchor.target && anchor.type !== 'other') {
+    const regular = decide(p);
+    if (regular.action === 'show') return regular;
+    return objectionRebuttalOutput(anchor.type, ev);
+  }
+  return null;
 }
 
 function decide(p: ParsedRequest): AdviceLlmOutput {

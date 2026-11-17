@@ -232,6 +232,22 @@ describe('LiveView 操作', () => {
     expect(a.changeFont).toHaveBeenCalledWith(0.1);
   });
 
+  it('C キーとクロージングボタンで closing を要求する（一時停止中は送らない）', () => {
+    const a = actions();
+    const { unmount } = render(<LiveView {...base} view={viewOf()} snapshot={snapshot} actions={a} />);
+    fireEvent.keyDown(window, { key: 'c' });
+    expect(a.sendClient).toHaveBeenCalledWith({ type: 'advice.request', kind: 'closing', requestId: 'req-1' });
+    fireEvent.keyDown(window, { key: 'C' });
+    expect(a.sendClient).toHaveBeenCalledTimes(2);
+    fireEvent.click(screen.getByRole('button', { name: /クロージング/ }));
+    expect(a.sendClient).toHaveBeenCalledTimes(3);
+    unmount();
+    const b = actions();
+    render(<LiveView {...base} view={viewOf()} snapshot={{ ...snapshot, paused: true }} actions={b} />);
+    fireEvent.keyDown(window, { key: 'c' });
+    expect(b.sendClient).not.toHaveBeenCalled();
+  });
+
   it('終了は確認を挟み、出力は機密情報の注意つきで任意', () => {
     const a = actions();
     render(<LiveView {...base} view={viewOf()} snapshot={snapshot} actions={a} />);
@@ -261,7 +277,7 @@ describe('LiveView 操作', () => {
     render(<LiveView {...base} view={viewOf()} snapshot={snapshot} actions={actions()} />);
     const toolbar = screen.getByRole('toolbar');
     const buttons = toolbar.querySelectorAll('button');
-    expect(buttons.length).toBe(9);
+    expect(buttons.length).toBe(10);
     for (const b of buttons) expect(b.getAttribute('aria-keyshortcuts')).toBeTruthy();
   });
 
@@ -336,10 +352,10 @@ describe('LiveView 操作', () => {
     expect(container.textContent).not.toContain('現行推奨ではありません');
   });
 
-  it('主要3ボタン（切り返し・次に聞く・次の約束）は大きく、終了は他と離す', () => {
+  it('主要4ボタン（切り返し・次に聞く・次の約束・クロージング）は大きく、終了は他と離す', () => {
     const { container } = render(<LiveView {...base} view={viewOf()} snapshot={snapshot} actions={actions()} />);
     const big = [...container.querySelectorAll('.controls-primary button')].map((b) => b.textContent);
-    expect(big).toEqual(['切り返しR', '次に聞くQ', '次の約束N']);
+    expect(big).toEqual(['切り返しR', '次に聞くQ', '次の約束N', 'クロージングC']);
     const sec = container.querySelector('.controls-secondary')!;
     expect(sec.lastElementChild!.textContent).toBe('終了E');
     expect(sec.querySelector('.end-sep')!.nextElementSibling!.textContent).toBe('終了E');

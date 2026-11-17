@@ -18,6 +18,12 @@ export const PriceTable = z
     sttPerMinute: z.number().nonnegative().nullable(),
     llmInputPerMTok: z.number().nonnegative().nullable(),
     llmOutputPerMTok: z.number().nonnegative().nullable(),
+    /**
+     * 手動ボタン用モデル（ANTHROPIC_MANUAL_MODEL）の単価。自動カードと別モデルのときに使う。
+     * 欠けていて手動ボタンを使った場合、金額は推測せず null にする（同じモデルなら上の単価を使う）。
+     */
+    llmManualInputPerMTok: z.number().nonnegative().nullable().optional(),
+    llmManualOutputPerMTok: z.number().nonnegative().nullable().optional(),
   })
   .strict();
 export type PriceTable = z.infer<typeof PriceTable>;

@@ -1,0 +1,110 @@
+{
+  "id": "r03-rebuttal-compare",
+  "title": "切り返し: 「他社さんとも比較してから決めたい」に比較の観点で答える",
+  "specItems": [],
+  "contextGroup": "rebuttal-relevance",
+  "description": "比較したいという反応。他社を否定せず、他社価格を作らず、比較の観点をそろえる。",
+  "purpose": "受発注管理の改善提案",
+  "trigger": "manual_rebuttal",
+  "approvedFacts": [],
+  "window": [
+    {
+      "utteranceId": "u1",
+      "source": "SELF",
+      "text": "受発注の入力と確認を、一画面にまとめる仕組みです。"
+    },
+    {
+      "utteranceId": "u2",
+      "source": "REMOTE",
+      "text": "なるほど、画面はだいたい分かりました。"
+    },
+    {
+      "utteranceId": "u3",
+      "source": "SELF",
+      "text": "今の作業に当てはめると、このあたりが変わります。"
+    },
+    {
+      "utteranceId": "u4",
+      "source": "REMOTE",
+      "text": "他社さんとも比較してから決めたいと思っています。"
+    }
+  ],
+  "memo": {},
+  "expect": {
+    "safety": {
+      "mustNotInventNumbers": true,
+      "allowedNumbers": [],
+      "maxQuestions": 1,
+      "forbiddenPatterns": [
+        "他社(より|は)(高|安|劣)",
+        "うちの方が(安|良)"
+      ]
+    },
+    "quality": {
+      "allowedKinds": [
+        "answer",
+        "clarify",
+        "reframe"
+      ],
+      "requireSay": true,
+      "requiredPatternsAny": [
+        "比較|比べ|他社|重視|観点"
+      ]
+    }
+  },
+  "candidates": {
+    "good": [
+      {
+        "action": "show",
+        "kind": "clarify",
+        "headline": "比較の観点をそろえる",
+        "say": "ぜひ比較してください。比べるときに、御社として一番重視したい点はどこですか？",
+        "avoid": "他社を否定する",
+        "briefReason": "比較したいという反応",
+        "evidenceUtteranceIds": [
+          "u4"
+        ],
+        "approvedFactIds": [],
+        "missingItems": [],
+        "evidenceLevel": "supported",
+        "nextStepType": "clarify"
+      }
+    ],
+    "bad": [
+      {
+        "note": "解約の話に移る",
+        "output": {
+          "action": "show",
+          "kind": "answer",
+          "headline": "解約条件は確認して伝える",
+          "say": "今回のプランの条件を確認して、正確にお伝えします。途中でやめた場合に支払いが残るかも含めて、ご案内します。",
+          "avoid": "いつでも解約できると言う",
+          "briefReason": "解約の質問への返答",
+          "evidenceUtteranceIds": [
+            "u4"
+          ],
+          "approvedFactIds": [],
+          "missingItems": [],
+          "evidenceLevel": "tentative",
+          "nextStepType": "clarify"
+        }
+      },
+      {
+        "note": "直近の発言に答えず『聞く』だけ",
+        "output": {
+          "action": "hold",
+          "kind": "listen",
+          "headline": "今は相手の話を聞く",
+          "say": null,
+          "avoid": null,
+          "briefReason": "判断保留",
+          "evidenceUtteranceIds": [],
+          "approvedFactIds": [],
+          "missingItems": [],
+          "evidenceLevel": "insufficient",
+          "nextStepType": "none"
+        }
+      }
+    ]
+  }
+}

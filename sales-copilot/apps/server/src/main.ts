@@ -37,6 +37,17 @@ export async function startServer(config: ServerConfig = loadConfig()): Promise<
         timeoutMs: config.advice.timeoutMs,
       })
     : null;
+  // 手動ボタン（切り返し・次に聞く・次の約束・クロージング）用。押したときだけ呼ぶので、遅延より質を優先したモデル・長めの上限
+  const manualLlm = config.anthropic.apiKey
+    ? config.anthropic.manualModel === config.anthropic.model
+      ? liveLlm
+      : new AnthropicAdviceLlm({
+          apiKey: config.anthropic.apiKey,
+          model: config.anthropic.manualModel,
+          effort: config.anthropic.effort,
+          timeoutMs: config.advice.manualTimeoutMs,
+        })
+    : null;
   // 改善案づくり（options 画面のボタンを押したときだけ）。同じキー・同じモデル、長めのタイムアウト。
   const proposalLlm = config.anthropic.apiKey
     ? new AnthropicAdviceLlm({ apiKey: config.anthropic.apiKey, model: config.anthropic.model, effort: 'low', timeoutMs: 40_000 })
@@ -63,6 +74,7 @@ export async function startServer(config: ServerConfig = loadConfig()): Promise<
     coaching: coachingBinding,
     createLiveRecognizer,
     liveLlm,
+    manualLlm,
     proposalLlm,
     loadReplay,
     listOfflineScripts,

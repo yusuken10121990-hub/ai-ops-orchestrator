@@ -8,6 +8,7 @@ import {
   ClientMessage,
   ConfigStatusResponse,
   FactsListResponse,
+  MANUAL_KIND_TO_TRIGGER,
   OfflineScriptsResponse,
   PairingRequest,
   ServerMessage,
@@ -181,6 +182,11 @@ describe('ws messages', () => {
     expect(parseClientMessage(JSON.stringify({ type: 'advice.request', kind: 'close_now', requestId: 'r1' })).ok).toBe(
       false,
     );
+  });
+
+  it('closing is a manual kind mapped to manual_closing', () => {
+    expect(parseClientMessage(JSON.stringify({ type: 'advice.request', kind: 'closing', requestId: 'r1' })).ok).toBe(true);
+    expect(MANUAL_KIND_TO_TRIGGER.closing).toBe('manual_closing');
   });
 
   it('status distinguishes silence / no_permission / not_configured / disconnected', () => {

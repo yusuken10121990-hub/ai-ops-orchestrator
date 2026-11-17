@@ -35,7 +35,7 @@ export interface AdviceEngineLike {
 }
 
 export interface CoachingPort {
-  createEngine(llm: AdviceLlm, opts: { maxRetries: number; timeoutMs: number }): AdviceEngineLike;
+  createEngine(llm: AdviceLlm, opts: { maxRetries: number; timeoutMs: number; maxOutputTokens?: number }): AdviceEngineLike;
   /** OFFLINE 用（外部送信なし・ルールベースと明示）。 */
   createOfflineLlm(): AdviceLlm;
   /** 確定発話で自動助言を要求すべきか。 */

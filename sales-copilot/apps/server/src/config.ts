@@ -47,7 +47,10 @@ export interface ServerConfig {
   };
   anthropic: {
     apiKey: string | null;
+    /** 自動カード（発言ごと・低遅延が重要）用モデル。 */
     model: string;
+    /** 手動ボタン（切り返し・次に聞く・次の約束・クロージング）用モデル。押したときだけ呼ぶので遅延より質を優先。 */
+    manualModel: string;
     effort: 'low' | 'medium' | 'high' | null;
   };
   advice: {
@@ -56,6 +59,8 @@ export interface ServerConfig {
     cooldownMs: number;
     staleMs: number;
     manualMinIntervalMs: number;
+    /** 手動ボタン1回の生成の上限（ms）。手動用モデルは自動用より遅いので別に持つ。 */
+    manualTimeoutMs: number;
   };
   conversationWindowMs: number;
   budget: BudgetLimits;
@@ -162,6 +167,27 @@ export function pairingCodeForTest(env: Env): string | null {
   return v;
 }
 
+const DEFAULT_ANTHROPIC_MODEL = 'claude-haiku-5-5';
+const DEFAULT_ANTHROPIC_MANUAL_MODEL = 'claude-sonnet-5-5';
+
+/**
+ * 手動ボタン用モデルの単価。未設定でも、手動用モデルが自動用と同じなら自動用の単価をそのまま使う。
+ * 別モデルで単価が無ければ null（金額は推測しない）。
+ */
+function manualPrices(env: Env): { llmManualInputPerMTok: number | null; llmManualOutputPerMTok: number | null } {
+  const model = str(env, 'ANTHROPIC_MODEL') ?? DEFAULT_ANTHROPIC_MODEL;
+  const manualModel = str(env, 'ANTHROPIC_MANUAL_MODEL') ?? DEFAULT_ANTHROPIC_MANUAL_MODEL;
+  const inM = optNum(env, 'PRICE_LLM_MANUAL_INPUT_PER_MTOK');
+  const outM = optNum(env, 'PRICE_LLM_MANUAL_OUTPUT_PER_MTOK');
+  if (manualModel === model) {
+    return {
+      llmManualInputPerMTok: inM ?? optNum(env, 'PRICE_LLM_INPUT_PER_MTOK'),
+      llmManualOutputPerMTok: outM ?? optNum(env, 'PRICE_LLM_OUTPUT_PER_MTOK'),
+    };
+  }
+  return { llmManualInputPerMTok: inM, llmManualOutputPerMTok: outM };
+}
+
 export function loadConfig(env: Env = process.env): ServerConfig {
   const endpointingRaw = str(env, 'DEEPGRAM_ENDPOINTING_MS');
   const utteranceEndRaw = str(env, 'DEEPGRAM_UTTERANCE_END_MS');
@@ -179,6 +205,7 @@ export function loadConfig(env: Env = process.env): ServerConfig {
       sttPerMinute: optNum(env, 'PRICE_STT_PER_MINUTE'),
       llmInputPerMTok: optNum(env, 'PRICE_LLM_INPUT_PER_MTOK'),
       llmOutputPerMTok: optNum(env, 'PRICE_LLM_OUTPUT_PER_MTOK'),
+      ...manualPrices(env),
     });
     // 出典・確認日が欠けた価格表は使わない（推測しない）
     priceTable = parsed.success ? parsed.data : null;
@@ -210,7 +237,8 @@ export function loadConfig(env: Env = process.env): ServerConfig {
     },
     anthropic: {
       apiKey: str(env, 'ANTHROPIC_API_KEY'),
-      model: str(env, 'ANTHROPIC_MODEL') ?? 'claude-haiku-5-5',
+      model: str(env, 'ANTHROPIC_MODEL') ?? DEFAULT_ANTHROPIC_MODEL,
+      manualModel: str(env, 'ANTHROPIC_MANUAL_MODEL') ?? DEFAULT_ANTHROPIC_MANUAL_MODEL,
       effort: effort as 'low' | 'medium' | 'high' | null,
     },
     advice: {
@@ -219,6 +247,7 @@ export function loadConfig(env: Env = process.env): ServerConfig {
       cooldownMs: int(env, 'ADVICE_COOLDOWN_MS', 6000),
       staleMs: int(env, 'ADVICE_STALE_MS', 8000),
       manualMinIntervalMs: int(env, 'ADVICE_MANUAL_MIN_INTERVAL_MS', 1500),
+      manualTimeoutMs: int(env, 'ADVICE_MANUAL_TIMEOUT_MS', 15_000),
     },
     conversationWindowMs: int(env, 'CONVERSATION_WINDOW_MS', 90_000),
     budget: {
@@ -270,7 +299,7 @@ export function loadDotEnv(file = path.join(WORKSPACE_ROOT, '.env')): void {
 /** 状態表示用: 設定の有無だけ（値は出さない）。 */
 export function providerStatus(cfg: ServerConfig): {
   stt: { configured: boolean; provider: 'deepgram'; model: string; language: string };
-  llm: { configured: boolean; provider: 'anthropic'; model: string };
+  llm: { configured: boolean; provider: 'anthropic'; model: string; manualModel: string };
   modes: { LIVE: boolean; OFFLINE: boolean };
   offlineAnthropicAvailable: boolean;
   priceTable: { configured: boolean; currency: string | null; checkedDate: string | null };
@@ -279,7 +308,7 @@ export function providerStatus(cfg: ServerConfig): {
   const llm = cfg.anthropic.apiKey !== null;
   return {
     stt: { configured: stt, provider: 'deepgram', model: cfg.deepgram.model, language: cfg.deepgram.language },
-    llm: { configured: llm, provider: 'anthropic', model: cfg.anthropic.model },
+    llm: { configured: llm, provider: 'anthropic', model: cfg.anthropic.model, manualModel: cfg.anthropic.manualModel },
     modes: { LIVE: stt && llm, OFFLINE: true },
     offlineAnthropicAvailable: cfg.offline.useAnthropic && llm,
     priceTable: {

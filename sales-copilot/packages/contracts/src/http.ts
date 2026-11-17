@@ -24,7 +24,16 @@ export const ConfigStatusResponse = z
     stt: z
       .object({ configured: z.boolean(), provider: z.literal('deepgram'), model: z.string().max(100), language: z.string().max(20) })
       .strict(),
-    llm: z.object({ configured: z.boolean(), provider: z.literal('anthropic'), model: z.string().max(100) }).strict(),
+    llm: z
+      .object({
+        configured: z.boolean(),
+        provider: z.literal('anthropic'),
+        /** 自動カード用モデル。 */
+        model: z.string().max(100),
+        /** 手動ボタン（切り返し等）用モデル。旧サーバーでは欠ける。 */
+        manualModel: z.string().max(100).optional(),
+      })
+      .strict(),
     modes: z.object({ LIVE: z.boolean(), OFFLINE: z.boolean() }).strict(),
     /**
      * OFFLINE テストで Anthropic を使えるか（キーあり かつ OFFLINE_USE_ANTHROPIC=1）。

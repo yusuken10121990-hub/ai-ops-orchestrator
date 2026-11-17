@@ -49,7 +49,7 @@ ws パッケージ: `ws@8.23.0`。
 | 項目 | 採用値 |
 |---|---|
 | SDK | `@anthropic-ai/sdk@1.8.0`（API version ヘッダー `2026-10-21` を SDK が送る） |
-| モデル | `ANTHROPIC_MODEL`（既定 `claude-haiku-5-5`。.env.example の既定値。低遅延モデル） |
+| モデル | 自動カード: `ANTHROPIC_MODEL`（既定 `claude-haiku-5-5`。低遅延）／手動ボタン: `ANTHROPIC_MANUAL_MODEL`（既定 `claude-sonnet-5-5`。押したときだけ呼ぶので質を優先。タイムアウト `ADVICE_MANUAL_TIMEOUT_MS` 既定 15000・出力上限 2048 トークン） |
 | 呼び出し | `messages.create`（非ストリーミング。未検証の途中文を UI に出さないため） |
 | 構造化出力 | `output_config.format = { type: "json_schema", schema }`（schema は coaching の `adviceOutputJsonSchema()`） |
 | effort | `ANTHROPIC_EFFORT`（既定 `low`。`none` で送らない）。`thinking` は送らない（モデル既定。Haiku 5.5 / Opus 5.5 では disabled 指定が 400 になる場合があるため） |

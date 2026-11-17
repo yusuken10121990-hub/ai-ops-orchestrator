@@ -42,9 +42,13 @@ export interface PageAudioDeps {
   emit(msg: FromPage): void;
   setInterval(fn: () => void, ms: number): unknown;
   clearInterval(id: unknown): void;
+  /** 単調増加時計（ms）。止まった処理の検知に使う。未指定なら検知しない。 */
+  now?(): number;
 }
 
 const RESCAN_MS = 2000;
+/** 会議音声の処理がこの時間何も出さなければ、処理を作り直す（AudioContext の停止・作り直し等への備え）。 */
+export const REMOTE_STALL_MS = 6000;
 
 function errName(e: unknown): string {
   return e && typeof e === 'object' && 'name' in e ? String((e as { name: unknown }).name) : 'Error';
@@ -59,6 +63,10 @@ export class PageAudio {
   private selfGen = 0;
   private rescan: unknown = null;
   private lastReportedCount = 0;
+  private remoteEnabled = true;
+  private lastRemotePcmAt = 0;
+  /** 処理を作り直した回数（テスト・診断用）。 */
+  remoteRebuilds = 0;
 
   constructor(private readonly deps: PageAudioDeps) {}
 
@@ -84,6 +92,7 @@ export class PageAudio {
   private removeRemoteTrack(t: TrackLike): void {
     if (!this.remoteTracks.delete(t.id)) return;
     this.remote?.removeTrack(t);
+    this.report();
   }
 
   private report(): void {
@@ -92,8 +101,48 @@ export class PageAudio {
     this.deps.emit({ type: 'rtc.active', remoteTracks: this.remoteTracks.size });
   }
 
+  /**
+   * 拾い直し。画面共有の開始・停止で Meet が接続（RTCPeerConnection）やトラックを作り直しても、
+   * 新しいトラックを足し、終わったトラックを外す（close() で終わったトラックは ended イベントが来ないことがある）。
+   */
   private collect(): void {
+    for (const t of [...this.remoteTracks.values()]) if (t.readyState === 'ended') this.removeRemoteTrack(t);
     for (const t of this.deps.collectRemoteTracks()) this.addRemoteTrack(t);
+  }
+
+  /** 定期処理: 拾い直し＋止まった処理の作り直し。 */
+  private tick(): void {
+    this.collect();
+    const now = this.deps.now?.();
+    if (now === undefined || !this.remote || !this.remoteEnabled) return;
+    if (now - this.lastRemotePcmAt > REMOTE_STALL_MS) this.rebuildRemote();
+  }
+
+  private makeRemotePipe(): AudioPipe {
+    return this.deps.createPipe('REMOTE', (pcm, levelDb, rate) => {
+      if (this.deps.now) this.lastRemotePcmAt = this.deps.now();
+      this.deps.emit({ type: 'pcm', source: 'REMOTE', pcm, levelDb, inputSampleRate: rate });
+    });
+  }
+
+  private rebuildRemote(): void {
+    const old = this.remote;
+    if (!old) return;
+    try {
+      old.close();
+    } catch {
+      /* noop */
+    }
+    try {
+      this.remote = this.makeRemotePipe();
+    } catch (e) {
+      this.remote = null;
+      this.deps.emit({ type: 'remote.error', name: errName(e) });
+      return;
+    }
+    this.remoteRebuilds++;
+    this.lastRemotePcmAt = this.deps.now?.() ?? 0;
+    for (const t of this.remoteTracks.values()) this.remote.addTrack(t);
   }
 
   handle(msg: ToPage): void {
@@ -101,6 +150,8 @@ export class PageAudio {
       case 'remote.start':
         return this.startRemote();
       case 'remote.enable':
+        this.remoteEnabled = msg.enabled;
+        if (msg.enabled) this.lastRemotePcmAt = this.deps.now?.() ?? 0;
         this.remote?.setEnabled(msg.enabled);
         return;
       case 'self.start':
@@ -115,10 +166,10 @@ export class PageAudio {
 
   private startRemote(): void {
     if (this.remote) return;
+    this.remoteEnabled = true;
+    this.lastRemotePcmAt = this.deps.now?.() ?? 0;
     try {
-      this.remote = this.deps.createPipe('REMOTE', (pcm, levelDb, rate) =>
-        this.deps.emit({ type: 'pcm', source: 'REMOTE', pcm, levelDb, inputSampleRate: rate }),
-      );
+      this.remote = this.makeRemotePipe();
     } catch (e) {
       this.deps.emit({ type: 'remote.error', name: errName(e) });
       return;
@@ -126,7 +177,7 @@ export class PageAudio {
     this.collect();
     for (const t of this.remoteTracks.values()) this.remote.addTrack(t);
     // 後から参加した相手・Meet がトラックを作り直した場合に備えて定期的に拾い直す
-    this.rescan = this.deps.setInterval(() => this.collect(), RESCAN_MS);
+    this.rescan = this.deps.setInterval(() => this.tick(), RESCAN_MS);
   }
 
   private async startSelf(): Promise<void> {

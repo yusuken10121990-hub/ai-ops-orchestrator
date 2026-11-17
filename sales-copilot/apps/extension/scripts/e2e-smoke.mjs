@@ -178,7 +178,7 @@ try {
   await page.getByText('接続OK').waitFor({ timeout: 10000 });
   check('API設定状態の表示（API未設定を区別）', (await page.getByText(/文字起こし（deepgram \/ nova-3 \/ ja）: API未設定/).count()) === 1);
   check('LIVE 不可の理由を表示', (await page.getByText(/LIVE: 利用できません/).count()) === 1);
-  await page.getByLabel('商談目的（必須）').fill('E2E 動作確認');
+  await page.getByLabel('商談目的（任意）').fill('E2E 動作確認');
   await page.getByText('OFFLINEテスト（APIキー不要').click();
   await page.getByText('① ブラウザのマイク許可').click();
   await page.getByText('② 商談相手への説明・同意').click();

@@ -1,0 +1,143 @@
+{
+  "id": "r01-rebuttal-price-objection",
+  "title": "切り返し: 「ちょっと高いですね」に価格の懸念として答える",
+  "specItems": [],
+  "contextGroup": "rebuttal-relevance",
+  "description": "価格が高いという反論。未承認の金額・値引きを出さず、何と比べて高いのかを確かめる。別の論点（解約・イメージ）に移った案は止める。",
+  "purpose": "受発注管理の改善提案",
+  "trigger": "manual_rebuttal",
+  "approvedFacts": [
+    {
+      "scope": "架空プランA・今回の商談",
+      "sourceNote": "架空の設定（テスト用）",
+      "approvedAt": null,
+      "version": 1,
+      "status": "unverified",
+      "factId": "fact-price-monthly",
+      "category": "price_monthly",
+      "value": "月額 50,000円（税別）"
+    }
+  ],
+  "window": [
+    {
+      "utteranceId": "u1",
+      "source": "SELF",
+      "text": "受発注の入力と確認を、一画面にまとめる仕組みです。"
+    },
+    {
+      "utteranceId": "u2",
+      "source": "REMOTE",
+      "text": "なるほど、画面はだいたい分かりました。"
+    },
+    {
+      "utteranceId": "u3",
+      "source": "SELF",
+      "text": "今の作業に当てはめると、このあたりが変わります。"
+    },
+    {
+      "utteranceId": "u4",
+      "source": "REMOTE",
+      "text": "うーん、ちょっと高いですね。"
+    }
+  ],
+  "memo": {},
+  "expect": {
+    "safety": {
+      "mustNotInventNumbers": true,
+      "allowedNumbers": [],
+      "maxQuestions": 1,
+      "forbiddenPatterns": [
+        "値引",
+        "割引",
+        "お安く",
+        "解約"
+      ]
+    },
+    "quality": {
+      "allowedKinds": [
+        "answer",
+        "clarify",
+        "reframe"
+      ],
+      "requireSay": true,
+      "requiredPatternsAny": [
+        "高い|見合|費用|予算|金額"
+      ]
+    }
+  },
+  "candidates": {
+    "good": [
+      {
+        "action": "show",
+        "kind": "clarify",
+        "headline": "高いと感じた点を確かめる",
+        "say": "率直にありがとうございます。今の作業の手間と比べて、どのあたりが見合わないと感じられましたか？",
+        "avoid": "値引きや未承認の金額を出す",
+        "briefReason": "価格の懸念。比較の基準を先に確かめる",
+        "evidenceUtteranceIds": [
+          "u4"
+        ],
+        "approvedFactIds": [],
+        "missingItems": [],
+        "evidenceLevel": "supported",
+        "nextStepType": "clarify"
+      }
+    ],
+    "bad": [
+      {
+        "note": "解約の話に移る（直近の反論と無関係）",
+        "output": {
+          "action": "show",
+          "kind": "answer",
+          "headline": "解約条件は確認して伝える",
+          "say": "今回のプランの条件を確認して、正確にお伝えします。途中でやめた場合に支払いが残るかも含めて、ご案内します。",
+          "avoid": "いつでも解約できると言う",
+          "briefReason": "解約の質問への返答",
+          "evidenceUtteranceIds": [
+            "u4"
+          ],
+          "approvedFactIds": [],
+          "missingItems": [],
+          "evidenceLevel": "tentative",
+          "nextStepType": "clarify"
+        }
+      },
+      {
+        "note": "イメージの説明に戻る（直近の反論と無関係）",
+        "output": {
+          "action": "show",
+          "kind": "reframe",
+          "headline": "一件の例で整理する",
+          "say": "すみません、説明が広がりましたね。一件の見積もりを例に、今の作業のどこが変わるかだけ整理しますね。",
+          "avoid": "無料デモの再説得",
+          "briefReason": "イメージが湧かない反応",
+          "evidenceUtteranceIds": [
+            "u4"
+          ],
+          "approvedFactIds": [],
+          "missingItems": [],
+          "evidenceLevel": "tentative",
+          "nextStepType": "none"
+        }
+      },
+      {
+        "note": "未承認の値引きを約束する",
+        "output": {
+          "action": "show",
+          "kind": "answer",
+          "headline": "値引きで応える",
+          "say": "でしたら、今回は特別にお値引きさせていただきます。",
+          "avoid": null,
+          "briefReason": "価格の懸念",
+          "evidenceUtteranceIds": [
+            "u4"
+          ],
+          "approvedFactIds": [],
+          "missingItems": [],
+          "evidenceLevel": "tentative",
+          "nextStepType": "none"
+        }
+      }
+    ]
+  }
+}

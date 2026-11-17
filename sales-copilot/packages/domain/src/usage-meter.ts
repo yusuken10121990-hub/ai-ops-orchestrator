@@ -32,6 +32,11 @@ export interface LlmUsage {
   /** プロバイダーが報告した実 usage。未報告なら null（推測で埋めない）。 */
   inputTokens: number | null;
   outputTokens: number | null;
+  /**
+   * auto = 自動カード（ANTHROPIC_MODEL）/ manual = 手動ボタン（ANTHROPIC_MANUAL_MODEL）。
+   * 単価がモデルごとに違うため金額は分けて計算する。省略時は auto。
+   */
+  tier?: 'auto' | 'manual';
 }
 
 export type ExternalCallKind = 'stt' | 'llm';
@@ -49,6 +54,10 @@ export class UsageMeter {
   private readonly seenCalls = new Set<string>();
   private inTok = 0;
   private outTok = 0;
+  /** 上のうち手動ボタン分（単価が別）。 */
+  private manualInTok = 0;
+  private manualOutTok = 0;
+  private manualCalls = 0;
   private calls = 0;
   private unreportedCalls = 0;
 
@@ -72,8 +81,15 @@ export class UsageMeter {
     this.seenCalls.add(u.callId);
     this.calls++;
     if (u.inputTokens === null || u.outputTokens === null) this.unreportedCalls++;
-    this.inTok += Math.max(0, u.inputTokens ?? 0);
-    this.outTok += Math.max(0, u.outputTokens ?? 0);
+    const inTok = Math.max(0, u.inputTokens ?? 0);
+    const outTok = Math.max(0, u.outputTokens ?? 0);
+    this.inTok += inTok;
+    this.outTok += outTok;
+    if (u.tier === 'manual') {
+      this.manualCalls++;
+      this.manualInTok += inTok;
+      this.manualOutTok += outTok;
+    }
     return true;
   }
 
@@ -90,13 +106,21 @@ export class UsageMeter {
     const p = this.priceTable;
     if (!p) return null;
     const usesStt = this.sttSecondsTotal > 0;
-    const usesLlm = this.calls > 0;
+    const usesAutoLlm = this.calls - this.manualCalls > 0;
+    const usesManualLlm = this.manualCalls > 0;
     if (usesStt && p.sttPerMinute === null) return null;
-    if (usesLlm && (p.llmInputPerMTok === null || p.llmOutputPerMTok === null)) return null;
+    if (usesAutoLlm && (p.llmInputPerMTok === null || p.llmOutputPerMTok === null)) return null;
+    // 手動ボタン用モデルの単価が無ければ推測しない（別モデルの単価で代用しない）
+    const mIn = p.llmManualInputPerMTok ?? null;
+    const mOut = p.llmManualOutputPerMTok ?? null;
+    if (usesManualLlm && (mIn === null || mOut === null)) return null;
     if (this.unreportedCalls > 0) return null;
+    const autoIn = this.inTok - this.manualInTok;
+    const autoOut = this.outTok - this.manualOutTok;
     const amount =
       (usesStt ? (this.sttSecondsTotal / 60) * (p.sttPerMinute ?? 0) : 0) +
-      (usesLlm ? (this.inTok / 1e6) * (p.llmInputPerMTok ?? 0) + (this.outTok / 1e6) * (p.llmOutputPerMTok ?? 0) : 0);
+      (usesAutoLlm ? (autoIn / 1e6) * (p.llmInputPerMTok ?? 0) + (autoOut / 1e6) * (p.llmOutputPerMTok ?? 0) : 0) +
+      (usesManualLlm ? (this.manualInTok / 1e6) * (mIn ?? 0) + (this.manualOutTok / 1e6) * (mOut ?? 0) : 0);
     return { amount, currency: p.currency, priceSource: p.source, priceCheckedDate: p.checkedDate };
   }
 

@@ -1,4 +1,5 @@
 import { existsSync } from 'node:fs';
+import { homedir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { BudgetLimits, PriceTable } from '@sales-copilot/contracts';
@@ -16,7 +17,22 @@ export interface ServerConfig {
   allowedExtensionId: string | null;
   dataDir: string;
   exportDir: string;
+  /**
+   * 本人用データフォルダ（ペアリング記録・ローカル管理用の秘密・自動起動時のログ）。
+   * Windows: %LOCALAPPDATA%\ZEROSYS-SalesCopilot。USER_DATA_DIR で変更可。
+   */
+  userDataDir: string;
+  /** ペアリング記録（トークンの sha256 ハッシュのみ）の保存先。TOKEN_STORE_FILE で変更可。 */
+  tokenStoreFile: string;
+  /** ログをファイルへ書く（自動起動用・ローテーションあり）。未設定なら標準出力。 */
+  logFile: string | null;
+  /** トークンの有効期間（使うたびに延長）。既定は期限なし（SESSION_TOKEN_TTL_DAYS=0 / 未設定）。 */
   tokenTtlMs: number;
+  /**
+   * 旧設定 SESSION_TOKEN_TTL_MS（以前の .env.example は 12 時間を書いていた）が .env に残っている。
+   * 毎日の再ペアリングを無くすため使わない（起動時に警告だけ出す）。
+   */
+  legacyTokenTtlIgnored: boolean;
   pairingCodeTtlMs: number;
   pairingMaxAttempts: number;
 
@@ -31,7 +47,10 @@ export interface ServerConfig {
   };
   anthropic: {
     apiKey: string | null;
+    /** 自動カード（発言ごと・低遅延が重要）用モデル。 */
     model: string;
+    /** 手動ボタン（切り返し・次に聞く・次の約束・クロージング）用モデル。押したときだけ呼ぶので遅延より質を優先。 */
+    manualModel: string;
     effort: 'low' | 'medium' | 'high' | null;
   };
   advice: {
@@ -40,12 +59,19 @@ export interface ServerConfig {
     cooldownMs: number;
     staleMs: number;
     manualMinIntervalMs: number;
+    /** 手動ボタン1回の生成の上限（ms）。手動用モデルは自動用より遅いので別に持つ。 */
+    manualTimeoutMs: number;
   };
   conversationWindowMs: number;
   budget: BudgetLimits;
   priceTable: PriceTable | null;
   /** 解析停止/終了後に会話データ（振り返り用）をメモリに残す上限。 */
   retentionMs: number;
+  /**
+   * 拡張との接続が切れたとき、同じ商談を再接続で続けられるよう保持する時間（SESSION_RESUME_GRACE_MS）。
+   * 既定 60 秒。0 = 切れたら即終了（以前の動作）。保持中は STT・助言生成を新たに始めない（音声が来ないため）。
+   */
+  resumeGraceMs: number;
   /** 1系統あたりの未送信音声キュー上限（ms）。 */
   maxAudioQueueMs: number;
   offline: {
@@ -96,6 +122,40 @@ function bool(env: Env, k: string, def: boolean): boolean {
   return v === '1' || v.toLowerCase() === 'true';
 }
 
+/**
+ * 「期限なし」の実体（約 100 年）。期限は数値のまま扱う（保存形式・拡張との契約を変えないため）。
+ * 2026-11-17 オーナー「永久にしておいてよ」。解除（revoke）と tokens.json の削除で失効できる。
+ */
+export const NO_EXPIRY_TTL_MS = 100 * 365 * 24 * 60 * 60 * 1000;
+/** 既定は期限なし（SESSION_TOKEN_TTL_DAYS 未設定 または 0）。使うたびに延長する動作はそのまま。 */
+export const DEFAULT_TOKEN_TTL_MS = NO_EXPIRY_TTL_MS;
+export const APP_DIR_NAME = 'ZEROSYS-SalesCopilot';
+/** ローカル管理用の秘密（pnpm pair が読む）のファイル名。 */
+export const LOCAL_ADMIN_FILE = 'local-admin.json';
+
+/**
+ * 本人用データフォルダ。scripts/user-data-dir.mjs と同じ規則（テストで一致を確認）。
+ * USER_DATA_DIR があればそれ。無ければ Windows: %LOCALAPPDATA%\ZEROSYS-SalesCopilot、
+ * macOS: ~/Library/Application Support/ZEROSYS-SalesCopilot、その他: $XDG_STATE_HOME（~/.local/state）配下。
+ */
+export function userDataDirFor(env: Env, platform: NodeJS.Platform = process.platform, home: string = homedir()): string {
+  const v = env.USER_DATA_DIR?.trim();
+  if (v) return v;
+  if (platform === 'win32') return path.join(env.LOCALAPPDATA?.trim() || path.join(home, 'AppData', 'Local'), APP_DIR_NAME);
+  if (platform === 'darwin') return path.join(home, 'Library', 'Application Support', APP_DIR_NAME);
+  return path.join(env.XDG_STATE_HOME?.trim() || path.join(home, '.local', 'state'), APP_DIR_NAME);
+}
+
+/** SESSION_TOKEN_TTL_DAYS: 0 または未設定 = 期限なし（既定）。1〜400 = その日数（使うたびに延長）。 */
+export function tokenTtlMsFrom(env: Env): number {
+  const v = str(env, 'SESSION_TOKEN_TTL_DAYS');
+  if (v === null) return DEFAULT_TOKEN_TTL_MS;
+  const d = Number(v);
+  if (d === 0) return NO_EXPIRY_TTL_MS;
+  if (!Number.isFinite(d) || d < 1 || d > 400) throw new Error('SESSION_TOKEN_TTL_DAYS must be 0 (no expiry) or 1..400');
+  return Math.round(d * 24 * 60 * 60 * 1000);
+}
+
 /** PAIRING_CODE_FOR_TEST は NODE_ENV=test のときだけ受け付ける。本番起動で使われないよう、それ以外は起動エラー。 */
 export function pairingCodeForTest(env: Env): string | null {
   const v = str(env, 'PAIRING_CODE_FOR_TEST');
@@ -105,6 +165,27 @@ export function pairingCodeForTest(env: Env): string | null {
   }
   if (!/^\d{6}$/.test(v)) throw new Error('PAIRING_CODE_FOR_TEST must be 6 digits');
   return v;
+}
+
+const DEFAULT_ANTHROPIC_MODEL = 'claude-haiku-5-5';
+const DEFAULT_ANTHROPIC_MANUAL_MODEL = 'claude-sonnet-5-5';
+
+/**
+ * 手動ボタン用モデルの単価。未設定でも、手動用モデルが自動用と同じなら自動用の単価をそのまま使う。
+ * 別モデルで単価が無ければ null（金額は推測しない）。
+ */
+function manualPrices(env: Env): { llmManualInputPerMTok: number | null; llmManualOutputPerMTok: number | null } {
+  const model = str(env, 'ANTHROPIC_MODEL') ?? DEFAULT_ANTHROPIC_MODEL;
+  const manualModel = str(env, 'ANTHROPIC_MANUAL_MODEL') ?? DEFAULT_ANTHROPIC_MANUAL_MODEL;
+  const inM = optNum(env, 'PRICE_LLM_MANUAL_INPUT_PER_MTOK');
+  const outM = optNum(env, 'PRICE_LLM_MANUAL_OUTPUT_PER_MTOK');
+  if (manualModel === model) {
+    return {
+      llmManualInputPerMTok: inM ?? optNum(env, 'PRICE_LLM_INPUT_PER_MTOK'),
+      llmManualOutputPerMTok: outM ?? optNum(env, 'PRICE_LLM_OUTPUT_PER_MTOK'),
+    };
+  }
+  return { llmManualInputPerMTok: inM, llmManualOutputPerMTok: outM };
 }
 
 export function loadConfig(env: Env = process.env): ServerConfig {
@@ -124,11 +205,13 @@ export function loadConfig(env: Env = process.env): ServerConfig {
       sttPerMinute: optNum(env, 'PRICE_STT_PER_MINUTE'),
       llmInputPerMTok: optNum(env, 'PRICE_LLM_INPUT_PER_MTOK'),
       llmOutputPerMTok: optNum(env, 'PRICE_LLM_OUTPUT_PER_MTOK'),
+      ...manualPrices(env),
     });
     // 出典・確認日が欠けた価格表は使わない（推測しない）
     priceTable = parsed.success ? parsed.data : null;
   }
 
+  const userDataDir = path.resolve(userDataDirFor(env));
   return {
     host: str(env, 'HOST') ?? '127.0.0.1',
     port: int(env, 'PORT', 8787),
@@ -136,7 +219,11 @@ export function loadConfig(env: Env = process.env): ServerConfig {
     allowedExtensionId: str(env, 'ALLOWED_EXTENSION_ID'),
     dataDir: path.resolve(WORKSPACE_ROOT, str(env, 'DATA_DIR') ?? 'data'),
     exportDir: path.resolve(WORKSPACE_ROOT, str(env, 'EXPORT_DIR') ?? 'exports'),
-    tokenTtlMs: int(env, 'SESSION_TOKEN_TTL_MS', 12 * 60 * 60 * 1000),
+    userDataDir,
+    tokenStoreFile: path.resolve(userDataDir, str(env, 'TOKEN_STORE_FILE') ?? 'tokens.json'),
+    logFile: str(env, 'LOG_FILE') === null ? null : path.resolve(userDataDir, str(env, 'LOG_FILE')!),
+    tokenTtlMs: tokenTtlMsFrom(env),
+    legacyTokenTtlIgnored: str(env, 'SESSION_TOKEN_TTL_MS') !== null,
     pairingCodeTtlMs: int(env, 'PAIRING_CODE_TTL_MS', 10 * 60 * 1000),
     pairingMaxAttempts: int(env, 'PAIRING_MAX_ATTEMPTS', 5),
     deepgram: {
@@ -150,7 +237,8 @@ export function loadConfig(env: Env = process.env): ServerConfig {
     },
     anthropic: {
       apiKey: str(env, 'ANTHROPIC_API_KEY'),
-      model: str(env, 'ANTHROPIC_MODEL') ?? 'claude-haiku-5-5',
+      model: str(env, 'ANTHROPIC_MODEL') ?? DEFAULT_ANTHROPIC_MODEL,
+      manualModel: str(env, 'ANTHROPIC_MANUAL_MODEL') ?? DEFAULT_ANTHROPIC_MANUAL_MODEL,
       effort: effort as 'low' | 'medium' | 'high' | null,
     },
     advice: {
@@ -159,6 +247,7 @@ export function loadConfig(env: Env = process.env): ServerConfig {
       cooldownMs: int(env, 'ADVICE_COOLDOWN_MS', 6000),
       staleMs: int(env, 'ADVICE_STALE_MS', 8000),
       manualMinIntervalMs: int(env, 'ADVICE_MANUAL_MIN_INTERVAL_MS', 1500),
+      manualTimeoutMs: int(env, 'ADVICE_MANUAL_TIMEOUT_MS', 15_000),
     },
     conversationWindowMs: int(env, 'CONVERSATION_WINDOW_MS', 90_000),
     budget: {
@@ -170,6 +259,7 @@ export function loadConfig(env: Env = process.env): ServerConfig {
     },
     priceTable,
     retentionMs: int(env, 'SESSION_RETENTION_MS', 10 * 60 * 1000),
+    resumeGraceMs: int(env, 'SESSION_RESUME_GRACE_MS', 60 * 1000),
     maxAudioQueueMs: int(env, 'AUDIO_MAX_QUEUE_MS', 2000),
     offline: {
       script: str(env, 'OFFLINE_SCRIPT'),
@@ -209,7 +299,7 @@ export function loadDotEnv(file = path.join(WORKSPACE_ROOT, '.env')): void {
 /** 状態表示用: 設定の有無だけ（値は出さない）。 */
 export function providerStatus(cfg: ServerConfig): {
   stt: { configured: boolean; provider: 'deepgram'; model: string; language: string };
-  llm: { configured: boolean; provider: 'anthropic'; model: string };
+  llm: { configured: boolean; provider: 'anthropic'; model: string; manualModel: string };
   modes: { LIVE: boolean; OFFLINE: boolean };
   offlineAnthropicAvailable: boolean;
   priceTable: { configured: boolean; currency: string | null; checkedDate: string | null };
@@ -218,7 +308,7 @@ export function providerStatus(cfg: ServerConfig): {
   const llm = cfg.anthropic.apiKey !== null;
   return {
     stt: { configured: stt, provider: 'deepgram', model: cfg.deepgram.model, language: cfg.deepgram.language },
-    llm: { configured: llm, provider: 'anthropic', model: cfg.anthropic.model },
+    llm: { configured: llm, provider: 'anthropic', model: cfg.anthropic.model, manualModel: cfg.anthropic.manualModel },
     modes: { LIVE: stt && llm, OFFLINE: true },
     offlineAnthropicAvailable: cfg.offline.useAnthropic && llm,
     priceTable: {

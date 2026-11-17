@@ -6,11 +6,14 @@ import {
   type AdviceInvalidationReason,
   type ApprovedFact,
   type CaptureSource,
+  type CoachingRule,
   type ClientMessage,
   type ErrorCode,
+  type ManualAdviceKind,
   type PipelineState,
   type PipelineStatus,
   type ServerMessage,
+  type SessionEndReason,
   type SessionMode,
   type SessionStartMessage,
   type StatusReason,
@@ -20,6 +23,7 @@ import {
 import {
   AdviceScheduler,
   ConversationState,
+  CrossChannelEchoFilter,
   PinController,
   SessionLifecycle,
   TranscriptStore,
@@ -57,6 +61,8 @@ export interface SessionRuntimeDeps {
   createLiveRecognizer: (source: CaptureSource) => SpeechRecognizer | null;
   /** 実 LLM（Anthropic）。未設定なら null。 */
   liveLlm: AdviceLlm | null;
+  /** 手動ボタン用の実 LLM（ANTHROPIC_MANUAL_MODEL）。未指定なら liveLlm。 */
+  manualLlm?: AdviceLlm | null;
   loadReplay: (name: string | null) => ReplayScript;
   send: (m: ServerMessage) => void;
   now?: () => number;
@@ -98,6 +104,12 @@ export class SessionRuntime {
   private readonly pin = new PinController();
   private latency = new LatencyTracker();
   private engine: AdviceEngineLike | null = null;
+  /** 手動ボタン用（別モデル）。同じモデルなら engine と同じもの。 */
+  private manualEngine: AdviceEngineLike | null = null;
+  /** スピーカー音の回り込み（相手の声が自分のマイクに入る）を SELF から除く。 */
+  private readonly echoFilter = new CrossChannelEchoFilter();
+  /** 取り込み後に回り込みと分かった SELF 発言（助言の文脈に使わない）。 */
+  private readonly echoSuppressedSelf = new Set<string>();
   private llmExternal = false;
   private adviceLabel: string | null = null;
   private mode: SessionMode | null = null;
@@ -105,6 +117,9 @@ export class SessionRuntime {
   private purpose = '';
   private customerName: string | null = null;
   private facts: ApprovedFact[] = [];
+  /** 営業補正ルール（承認済み）。開始時に読み、セッション中は変えない（次のセッションから反映）。 */
+  private coachingRules: CoachingRule[] = [];
+  private rulesVersion = 0;
   private readonly recognizers = new Map<CaptureSource, SpeechRecognizer>();
   private readonly recognizerUnsubs = new Map<CaptureSource, () => void>();
   private replay: ReplayDriver | null = null;
@@ -162,8 +177,11 @@ export class SessionRuntime {
       case 'session.start':
         return this.start(msg);
       case 'session.end':
-        void this.end(msg.exportRequested);
+        void this.end(msg.exportRequested, msg.reason ?? 'user_end');
         return;
+      case 'session.resume':
+        // 再接続は接続の受付側（app.ts）で処理する。ここに届くのは同じ接続で二重に送った場合だけ
+        return this.error('invalid_state', 'session.resume must be the first message after hello', true);
       case 'analysis.pause':
         void this.pause();
         return;
@@ -256,9 +274,28 @@ export class SessionRuntime {
     });
   }
 
-  /** WS 切断（ウィンドウを閉じた等）: 見えない状態で取得を続けないため終了する。 */
+  /**
+   * WS が切れた（拡張の再接続待ち）。音声は届かないので STT の接続だけ閉じ、商談は保持する。
+   * 猶予内に session.resume が来なければ、受付側が end(false, 'connection_lost') を呼ぶ。
+   * @returns 保持する商談があるか（無ければ受付側はすぐ破棄してよい）。
+   */
+  detach(): boolean {
+    if (!this.hasSession) return false;
+    this.stopRecognizers();
+    this.log.info({ sessionId: this.sessionId }, 'session detached (waiting for reconnect)');
+    return true;
+  }
+
+  /** 再接続して同じ商談を続ける。現在の状態を新しい接続へ送り直す。 */
+  reattach(): void {
+    if (!this.hasSession) return;
+    this.log.info({ sessionId: this.sessionId }, 'session resumed');
+    this.sendStatus();
+  }
+
+  /** 互換用: 猶予なしで切断＝終了（SESSION_RESUME_GRACE_MS=0）。 */
   async onDisconnect(): Promise<void> {
-    if (this.hasSession) await this.end(false);
+    if (this.hasSession) await this.end(false, 'connection_lost');
   }
 
   /** 承認済み条件が変更・失効した（設定画面）。この商談の該当カードを無効化する。 */
@@ -311,6 +348,9 @@ export class SessionRuntime {
     this.purpose = msg.purpose;
     this.customerName = msg.customerName ?? null;
     this.facts = resolved.facts;
+    const ruleSet = this.d.store.learning.activeRuleSet();
+    this.coachingRules = ruleSet.rules;
+    this.rulesVersion = ruleSet.version;
     this.startedAt = this.now();
     const short = sessionId.slice(4, 12);
     const ids: IdGenerator = (() => {
@@ -330,9 +370,19 @@ export class SessionRuntime {
     // 助言エンジンの選択（LIVE は実 LLM のみ。OFFLINE は opt-in 時だけ実 LLM、それ以外はルールベースと明示）
     const llm = this.selectLlm(msg.mode, msg.offlineUseAnthropic === true);
     this.engine = llm ? this.d.coaching.createEngine(llm, { maxRetries: cfg.advice.maxRetries, timeoutMs: cfg.advice.timeoutMs }) : null;
+    this.manualEngine = this.engine;
+    const manualLlm = this.d.manualLlm ?? null;
+    if (this.engine && this.llmExternal && manualLlm && manualLlm !== llm) {
+      this.manualEngine = this.d.coaching.createEngine(manualLlm, {
+        maxRetries: cfg.advice.maxRetries,
+        timeoutMs: cfg.advice.manualTimeoutMs,
+        maxOutputTokens: 2048,
+      });
+    }
     this.scheduler = new AdviceScheduler({
       sessionId,
       promptVersion: this.engine?.promptVersion ?? 'unconfigured',
+      rulesVersion: this.rulesVersion,
       clock,
       idGenerator: ids,
       cooldownMs: cfg.advice.cooldownMs,
@@ -365,6 +415,8 @@ export class SessionRuntime {
         sessionId,
         mode: msg.mode,
         appliedFacts: resolved.facts.length,
+        rulesVersion: this.rulesVersion,
+        coachingRules: this.coachingRules.length,
         advice: this.adviceLabel ?? 'not_configured',
         stt: this.pipes.stt.state,
         offlineScript: script?.name ?? null,
@@ -392,12 +444,12 @@ export class SessionRuntime {
     if (mode === 'LIVE') {
       if (!live) return null;
       this.llmExternal = true;
-      this.adviceLabel = `anthropic:${this.d.config.anthropic.model}`;
+      this.adviceLabel = `anthropic:${this.d.config.anthropic.model} / manual:${this.d.config.anthropic.manualModel}`;
       return live;
     }
     if (offlineAnthropicRequested && this.d.config.offline.useAnthropic && live) {
       this.llmExternal = true;
-      this.adviceLabel = `anthropic:${this.d.config.anthropic.model} (OFFLINE opt-in)`;
+      this.adviceLabel = `anthropic:${this.d.config.anthropic.model} / manual:${this.d.config.anthropic.manualModel} (OFFLINE opt-in)`;
       return live;
     }
     this.llmExternal = false;
@@ -432,7 +484,7 @@ export class SessionRuntime {
     this.sendStatus();
   }
 
-  async end(exportRequested: boolean): Promise<void> {
+  async end(exportRequested: boolean, endReason: SessionEndReason = 'user_end'): Promise<void> {
     if (!this.lifecycle || this.ended) return;
     this.lifecycle.end();
     this.ended = true;
@@ -460,6 +512,7 @@ export class SessionRuntime {
     this.log.info(
       {
         sessionId: this.sessionId,
+        endReason,
         exported: exportPath !== null,
         cards: this.cards.size,
         latency: this.latency.stats().counts,
@@ -487,7 +540,7 @@ export class SessionRuntime {
     });
     if (this.d.config.retentionMs <= 0) clear();
     // 終了処理（任意の出力）が全て済んだ後に、確定通知を1回だけ送る
-    this.d.send({ type: 'session.ended', sessionId: this.sessionId!, exportPath, reviewAvailableUntil: retainedUntil });
+    this.d.send({ type: 'session.ended', sessionId: this.sessionId!, exportPath, reviewAvailableUntil: retainedUntil, endReason });
   }
 
   /** STT 接続・生成要求・待機・タイマーを止める（pause/end 共通）。 */
@@ -586,8 +639,62 @@ export class SessionRuntime {
     }
   }
 
+  /** 音声時刻 → 比較用の時刻（音声の到着時刻。記録が無ければ開始時刻＋音声時刻）。 */
+  private echoTime(source: CaptureSource, audioMs: number): number {
+    return this.latency.wallTimeForAudio(source, audioMs) ?? this.startedAt + audioMs;
+  }
+
+  /**
+   * ヘッドセットなしで相手の声が自分のマイクに回り込んだ SELF の確定発言なら true（取り込まない）。
+   * 途中経過（interim）だけ出ていた区間は空で確定させて画面から消す。件数だけをログに出す（本文は出さない）。
+   */
+  private dropSelfEcho(r: NormalizedSttResult): boolean {
+    if (r.source !== 'SELF' || !r.isFinal || r.text.trim().length === 0) return false;
+    const t = { text: r.text, startMs: this.echoTime('SELF', r.startMs), endMs: this.echoTime('SELF', r.endMs) };
+    if (!this.echoFilter.shouldDropSelf(t)) return false;
+    const ing = this.transcript!.ingest({
+      source: r.source,
+      streamGeneration: r.streamGeneration,
+      text: '',
+      isFinal: true,
+      speechFinal: r.speechFinal,
+      startMs: r.startMs,
+      endMs: r.endMs,
+    });
+    const seg = ing.change === 'empty_ignored' ? null : ing.segment;
+    if (seg) {
+      this.d.send({
+        type: 'transcript.segment',
+        segmentId: seg.segmentId,
+        utteranceId: seg.utteranceId,
+        source: seg.source,
+        streamGeneration: seg.streamGeneration,
+        text: seg.text,
+        isFinal: seg.isFinal,
+        speechFinal: seg.speechFinal,
+        startMs: seg.startMs,
+        endMs: seg.endMs,
+        revision: seg.revision,
+      });
+    }
+    this.log.debug({ sessionId: this.sessionId, selfEchoDropped: this.echoFilter.droppedCount }, 'self echo dropped');
+    return true;
+  }
+
+  /** 確定発言を回り込み判定器に記録。REMOTE が後から届いて一致した SELF は助言の文脈から外す。 */
+  private recordForEcho(utt: Utterance): void {
+    if (utt.text.length === 0 || utt.source === 'UNKNOWN') return;
+    const t = { text: utt.text, startMs: this.echoTime(utt.source, utt.startMs), endMs: this.echoTime(utt.source, utt.endMs) };
+    if (utt.source === 'SELF') return this.echoFilter.recordSelf(utt.utteranceId, t);
+    const hits = this.echoFilter.recordRemote(utt.utteranceId, t);
+    if (hits.length === 0) return;
+    for (const id of hits) this.echoSuppressedSelf.add(id);
+    this.log.debug({ sessionId: this.sessionId, selfEchoDropped: this.echoFilter.droppedCount }, 'self echo excluded from advice context');
+  }
+
   private onSttResult(r: NormalizedSttResult): void {
     if (!this.isActive) return; // 一時停止・終了後に届いた結果は扱わない
+    if (this.dropSelfEcho(r)) return;
     const ing = this.transcript!.ingest({
       source: r.source,
       streamGeneration: r.streamGeneration,
@@ -623,6 +730,7 @@ export class SessionRuntime {
     for (const other of ing.otherUtterancesFlagged) this.conversation!.upsertUtterance(other);
 
     if (ing.utteranceTextChanged && utt.text.length > 0) {
+      this.recordForEcho(utt);
       const conv = this.conversation!;
       const up = conv.upsertUtterance(utt);
       let significant = up.significant;
@@ -705,7 +813,7 @@ export class SessionRuntime {
     return true;
   }
 
-  private manual(kind: 'rebuttal' | 'next_question' | 'next_step', requestId: string): void {
+  private manual(kind: ManualAdviceKind, requestId: string): void {
     if (!this.requireSession()) return;
     if (!this.isActive) return this.error('invalid_state', 'analysis is paused', true, requestId);
     if (!this.engine) return this.error('not_configured', 'advice LLM is not configured', false, requestId);
@@ -778,7 +886,8 @@ export class SessionRuntime {
   }
 
   private async runJob(job: AdviceJob): Promise<void> {
-    const engine = this.engine;
+    const manual = job.trigger !== 'auto';
+    const engine = manual ? (this.manualEngine ?? this.engine) : this.engine;
     if (!engine || !this.canStartLlm()) {
       this.guard.llmAfterStop += this.ended || !this.isActive ? 1 : 0;
       this.process(this.scheduler!.fail(job.jobId));
@@ -794,14 +903,19 @@ export class SessionRuntime {
     } catch (e) {
       this.inflight.delete(job.jobId);
       const aborted = job.signal.aborted || (e as { kind?: string; name?: string })?.kind === 'aborted' || (e as { name?: string })?.name === 'AbortError';
-      if (!aborted) this.onLlmFailure(job, (e as { kind?: string })?.kind ?? 'unknown', (e as { usage?: AdviceResultLike['usage'] }).usage);
+      if (!aborted) this.onLlmFailure(job, (e as { kind?: string })?.kind ?? 'unknown', (e as { usage?: AdviceResultLike['usage'] }).usage, manual);
       if (this.scheduler && !this.ended) this.process(this.scheduler.fail(job.jobId));
       this.afterJob();
       return;
     }
     this.inflight.delete(job.jobId);
     if (this.llmExternal) {
-      this.usage!.addLlmUsage({ callId: job.jobId, inputTokens: result.usage.inputTokens, outputTokens: result.usage.outputTokens });
+      this.usage!.addLlmUsage({
+        callId: job.jobId,
+        inputTokens: result.usage.inputTokens,
+        outputTokens: result.usage.outputTokens,
+        tier: manual ? 'manual' : 'auto',
+      });
     }
     if (this.ended || job.signal.aborted) {
       this.process(this.scheduler!.complete(job.jobId, result.output, result.warnings));
@@ -826,9 +940,14 @@ export class SessionRuntime {
   }
 
   /** エンジンが例外で失敗した（通常はエンジンが fallback を返すが、例外も安全側で扱う）。 */
-  private onLlmFailure(job: AdviceJob, kind: string, usage?: AdviceResultLike['usage']): void {
+  private onLlmFailure(job: AdviceJob, kind: string, usage?: AdviceResultLike['usage'], manual = false): void {
     if (usage && this.llmExternal) {
-      this.usage!.addLlmUsage({ callId: job.jobId, inputTokens: usage.inputTokens, outputTokens: usage.outputTokens });
+      this.usage!.addLlmUsage({
+        callId: job.jobId,
+        inputTokens: usage.inputTokens,
+        outputTokens: usage.outputTokens,
+        tier: manual ? 'manual' : 'auto',
+      });
     }
     this.latency.outcome(kind === 'timeout' ? 'timeout' : 'failed');
     this.applyLlmDegradation(kind);
@@ -880,10 +999,14 @@ export class SessionRuntime {
       contextRevision: job.contextRevision,
       trigger: job.trigger,
       purpose: this.purpose,
-      window: snap.window.map((u) => ({ utteranceId: u.utteranceId, source: u.source, text: u.text, flags: [...u.flags] })),
+      window: snap.window
+        // 回り込みと分かった SELF 発言（相手の声の重複）は助言の文脈に使わない
+        .filter((u) => !this.echoSuppressedSelf.has(u.utteranceId))
+        .map((u) => ({ utteranceId: u.utteranceId, source: u.source, text: u.text, flags: [...u.flags] })),
       memo: snap,
       approvedFacts: this.facts.filter((f) => f.status === 'approved'),
       degraded: conv.isDegraded(),
+      coachingRules: this.coachingRules.map((r) => ({ ruleId: r.ruleId, text: r.text, scope: r.scope })),
     };
   }
 
@@ -921,7 +1044,28 @@ export class SessionRuntime {
   private feedback(adviceId: string, rating: 'helpful' | 'off'): void {
     const card = this.cards.get(adviceId) ?? this.scheduler?.getCard(adviceId);
     if (!card) return this.error('invalid_message', 'unknown adviceId', true);
-    this.d.store.addFeedback({ adviceId, rating, kind: card.kind, promptVersion: card.promptVersion });
+    const base = {
+      adviceId,
+      rating,
+      kind: card.kind,
+      promptVersion: card.promptVersion,
+      sessionId: card.sessionId,
+      rulesVersion: card.rulesVersion ?? this.rulesVersion,
+    };
+    if (!this.d.store.learning.settings().saveCardText) {
+      this.d.store.addFeedback(base);
+      return;
+    }
+    // 学習用の文面: カード自身の欄と商談目的だけ。会話本文は入れず、顧客名は伏せる。
+    const names = this.customerName ? [this.customerName] : [];
+    this.d.store.addFeedback({
+      ...base,
+      headline: redactNames(card.headline, names),
+      say: card.say === null ? null : redactNames(card.say, names),
+      avoid: card.avoid === null ? null : redactNames(card.avoid, names),
+      situation: situationTags(card),
+      purpose: this.purpose ? redactNames(this.purpose, names) : null,
+    });
   }
 
   private sourceState(msg: Extract<ClientMessage, { type: 'source.state' }>): void {
@@ -1083,4 +1227,27 @@ function llmErrorCode(kind: string): ErrorCode {
   if (kind === 'rate_limited') return 'rate_limited';
   if (kind === 'timeout') return 'timeout';
   return 'upstream_error';
+}
+
+/** 顧客名（会社名・担当者名）を伏せ字にする。敬称つきでも外れるよう名前そのものを置き換える。 */
+export function redactNames(text: string, names: readonly string[]): string {
+  let out = text;
+  for (const raw of names) {
+    for (const n of raw.split(/[\s　/／・,、]+/).concat(raw)) {
+      const t = n.trim();
+      if (t.length < 2) continue;
+      out = out.split(t).join('（顧客名）');
+    }
+  }
+  return out;
+}
+
+/** 学習用の場面タグ（会話本文を含まないコードだけ）。 */
+export function situationTags(card: AdviceCard): string[] {
+  return [
+    `trigger:${card.trigger}`,
+    `next:${card.nextStepType}`,
+    `evidence:${card.evidenceLevel}`,
+    ...card.warnings.map((w) => `warn:${w.code}`),
+  ].slice(0, 12);
 }

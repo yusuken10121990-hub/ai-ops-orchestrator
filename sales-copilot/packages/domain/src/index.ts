@@ -6,3 +6,4 @@ export * from './advice-scheduler';
 export * from './pin';
 export * from './session-lifecycle';
 export * from './usage-meter';
+export * from './echo-filter';

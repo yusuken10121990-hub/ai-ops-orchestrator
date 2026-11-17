@@ -2,8 +2,12 @@ import websocket from '@fastify/websocket';
 import Fastify, { LogController, type FastifyBaseLogger, type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
 import type { Logger } from 'pino';
 import type WebSocket from 'ws';
+import { createHash, timingSafeEqual } from 'node:crypto';
 import {
+  AuthCheckResponse,
   ConfigStatusResponse,
+  LOCAL_ADMIN_HEADER,
+  LocalPairingCodeResponse,
   FactApproveRequest,
   FactCreateRequest,
   FactPatchRequest,
@@ -24,10 +28,12 @@ import {
 import type { AdviceLlm, SpeechRecognizer } from '@sales-copilot/providers';
 import { AuthManager, bearerToken, isAllowedHostHeader, parseExtensionOrigin, urlCarriesCredential } from './auth';
 import type { CoachingPort } from './coaching-port';
+import { registerLearningRoutes } from './learning-routes';
 import { providerStatus, type ServerConfig } from './config';
 import type { ReplayScript } from './replay';
 import { SERVER_VERSION, SessionRuntime, type SessionReview } from './session-runtime';
 import type { Store } from './store';
+import type { TokenPersistence } from './token-store';
 
 export interface AppDeps {
   config: ServerConfig;
@@ -36,12 +42,23 @@ export interface AppDeps {
   coaching: CoachingPort;
   createLiveRecognizer: (source: CaptureSource) => SpeechRecognizer | null;
   liveLlm: AdviceLlm | null;
+  /** 手動ボタン用の実 LLM（ANTHROPIC_MANUAL_MODEL）。未指定なら liveLlm を使う。 */
+  manualLlm?: AdviceLlm | null;
+  /** 学習（承認制）の改善案づくり用 LLM。未指定なら liveLlm を使う。 */
+  proposalLlm?: AdviceLlm | null;
   loadReplay: (name: string | null) => ReplayScript;
   /** GET /offline/scripts の一覧（タイトル等のみ）。 */
   listOfflineScripts?: () => OfflineScriptInfo[];
   now?: () => number;
   /** hello を待つ時間（ms）。 */
   helloTimeoutMs?: number;
+  /** ペアリング記録（ハッシュのみ）の永続化先。無ければメモリだけ。 */
+  tokenStore?: TokenPersistence | null;
+  /**
+   * POST /local/pairing-code（pnpm pair）に必要な秘密。サーバー起動ごとに作り直し、本人だけが読めるファイルに置く。
+   * 無ければこの経路は無効（404）。
+   */
+  localAdminSecret?: string | null;
 }
 
 export interface AppHandle {
@@ -66,6 +83,9 @@ export async function buildApp(deps: AppDeps): Promise<AppHandle> {
     pairingCodeTtlMs: config.pairingCodeTtlMs,
     pairingMaxAttempts: config.pairingMaxAttempts,
     allowedExtensionId: config.allowedExtensionId,
+    store: deps.tokenStore ?? null,
+    // 保存に失敗してもメモリ上は動く（再起動で再ペアリングが要る）。中身・トークンはログに出さない
+    onPersistError: (op, e) => logger.error({ op, err: e }, 'pairing store error'),
   });
   const runtimes = new Set<SessionRuntime>();
   const reviews = new Map<string, SessionReview>();
@@ -146,6 +166,37 @@ export async function buildApp(deps: AppDeps): Promise<AppHandle> {
 
   app.options('/*', async (_req, reply) => reply.code(204).send());
 
+  // ペアリングがまだ有効か（期限は使うたびに延長される。最新の期限を返す）
+  app.get('/auth/check', { preHandler: requireAuth('session') }, async (req, reply) => {
+    const info = auth.tokenInfo(bearerToken(req.headers.authorization));
+    if (!info) return reply.code(401).send({ error: 'unauthorized' });
+    return AuthCheckResponse.parse({ ok: true, ...info });
+  });
+
+  // 設定画面の「解除」: このトークンをサーバー側でも失効させる（保存済みの記録からも消す）
+  app.post('/auth/revoke', { preHandler: requireAuth('settings') }, async (req) => {
+    const revoked = auth.revokeToken(bearerToken(req.headers.authorization));
+    logger.info({ revoked }, 'pairing revoked');
+    return { ok: true };
+  });
+
+  // pnpm pair: 同じ PC の本人だけが読めるファイルの秘密を持つ要求にだけ、新しいペアリングコードを返す。
+  // ブラウザ（Origin 付き）からは使えない。秘密は起動ごとに作り直す。
+  const adminSecretHash = deps.localAdminSecret ? createHash('sha256').update(deps.localAdminSecret).digest() : null;
+  app.post('/local/pairing-code', async (req, reply) => {
+    if (!adminSecretHash) return reply.code(404).send({ error: 'not_found' });
+    if (req.headers.origin !== undefined) return reply.code(403).send({ error: 'origin_not_allowed' });
+    const got = req.headers[LOCAL_ADMIN_HEADER];
+    const given = typeof got === 'string' ? createHash('sha256').update(got).digest() : null;
+    if (!given || !timingSafeEqual(given, adminSecretHash)) {
+      logger.warn({ route: '/local/pairing-code' }, 'rejected: local admin secret');
+      return reply.code(401).send({ error: 'unauthorized' });
+    }
+    const pairingCode = auth.issuePairingCode();
+    logger.info('pairing code issued (pnpm pair)');
+    return LocalPairingCodeResponse.parse({ pairingCode, expiresAt: now() + config.pairingCodeTtlMs });
+  });
+
   // 応答は返す前に contracts のスキーマで検証する（拡張側も同じスキーマで受ける）
   app.get('/config/status', { preHandler: requireAuth('settings') }, async () =>
     ConfigStatusResponse.parse({
@@ -212,6 +263,14 @@ export async function buildApp(deps: AppDeps): Promise<AppHandle> {
     });
   });
 
+  registerLearningRoutes(app, {
+    config,
+    logger,
+    store,
+    proposalLlm: deps.proposalLlm === undefined ? deps.liveLlm : deps.proposalLlm,
+    preHandler: requireAuth('settings'),
+  });
+
   app.get('/offline/scripts', { preHandler: requireAuth('session') }, async () => {
     const scripts = deps.listOfflineScripts?.() ?? [];
     const preferred = config.offline.script;
@@ -225,19 +284,42 @@ export async function buildApp(deps: AppDeps): Promise<AppHandle> {
 
   // --- WebSocket -------------------------------------------------------------
 
+  /**
+   * 再接続待ちの商談（WS が切れた後、SESSION_RESUME_GRACE_MS の間だけ保持）。
+   * 画面共有・ウィンドウ切替・一時的な通信断で商談が終わらないようにする（オーナーの実商談で発生）。
+   */
+  interface Conn {
+    socket: WebSocket;
+  }
+  /** 商談（runtime）が送る先。runtime を作った接続の Conn で、再接続のたびに socket だけ差し替える。 */
+  const connOf = new WeakMap<SessionRuntime, Conn>();
+  const detached = new Map<string, { runtime: SessionRuntime; timer: ReturnType<typeof setTimeout> }>();
+
+  const endDetached = (sessionId: string) => {
+    const e = detached.get(sessionId);
+    if (!e) return;
+    detached.delete(sessionId);
+    clearTimeout(e.timer);
+    void e.runtime.end(false, 'connection_lost').finally(() => runtimes.delete(e.runtime));
+  };
+
   app.get('/ws', { websocket: true }, (socket: WebSocket, req) => {
     const extId = parseExtensionOrigin(req.headers.origin);
     let authed = false;
+    /** この接続が今送っている先（再接続で別の接続へ引き継がれたら、こちらの close では何もしない）。 */
+    const conn: Conn = { socket };
     const send = (m: ServerMessage) => {
-      if (socket.readyState === 1) socket.send(JSON.stringify(m));
+      const s = conn.socket;
+      if (s.readyState === 1) s.send(JSON.stringify(m));
     };
-    const runtime = new SessionRuntime({
+    let runtime = new SessionRuntime({
       config,
       logger,
       store,
       coaching: deps.coaching,
       createLiveRecognizer: deps.createLiveRecognizer,
       liveLlm: deps.liveLlm,
+      manualLlm: deps.manualLlm === undefined ? deps.liveLlm : deps.manualLlm,
       loadReplay: deps.loadReplay,
       send,
       now,
@@ -253,9 +335,41 @@ export async function buildApp(deps: AppDeps): Promise<AppHandle> {
         t.unref?.();
       },
     });
+    connOf.set(runtime, conn);
+    let first = true;
     const helloTimer = setTimeout(() => {
       if (!authed) socket.close(WS_CLOSE.timeout, 'hello timeout');
     }, deps.helloTimeoutMs ?? 5000);
+
+    /** 同じ商談を引き継ぐ。保持中（切断済み）か、古い接続がまだ開いている（半開き）場合のどちらでも。 */
+    const resume = (sessionId: string): boolean => {
+      let target: SessionRuntime | null = null;
+      const d = detached.get(sessionId);
+      if (d) {
+        clearTimeout(d.timer);
+        detached.delete(sessionId);
+        target = d.runtime;
+      } else {
+        for (const r of runtimes) if (r !== runtime && r.hasSession && r.currentSessionId === sessionId) target = r;
+      }
+      if (!target || !target.hasSession) return false;
+      const out = connOf.get(target);
+      if (!out) return false;
+      const oldSocket = out.socket;
+      // 新しい接続へ付け替える（古い接続の close は「引き継ぎ済み」として無視される）
+      runtimes.delete(runtime);
+      runtime = target;
+      out.socket = socket;
+      if (oldSocket && oldSocket !== socket && oldSocket.readyState <= 1) {
+        try {
+          oldSocket.close(1000, 'resumed elsewhere');
+        } catch {
+          /* noop */
+        }
+      }
+      runtimes.add(target);
+      return true;
+    };
 
     socket.on('message', (data: Buffer, isBinary: boolean) => {
       if (!authed) {
@@ -279,7 +393,10 @@ export async function buildApp(deps: AppDeps): Promise<AppHandle> {
         send({ type: 'hello.ack', protocolVersion: PROTOCOL_VERSION, serverVersion: SERVER_VERSION });
         return;
       }
+      // 別の接続へ引き継がれた古い接続からは受け取らない
+      if (connOf.get(runtime)?.socket !== socket) return;
       if (isBinary) {
+        first = false;
         runtime.handleAudio(data);
         return;
       }
@@ -288,6 +405,16 @@ export async function buildApp(deps: AppDeps): Promise<AppHandle> {
         send({ type: 'error', code: 'invalid_message', message: 'invalid message', recoverable: true });
         return;
       }
+      if (parsed.message.type === 'session.resume' && first && !runtime.hasSession) {
+        first = false;
+        const sid = parsed.message.sessionId;
+        const ok = resume(sid);
+        send({ type: 'session.resumed', sessionId: sid, ok });
+        if (ok) runtime.reattach();
+        else logger.info({ route: '/ws' }, 'session resume rejected (not found or expired)');
+        return;
+      }
+      first = false;
       try {
         runtime.handleMessage(parsed.message);
       } catch (e) {
@@ -297,7 +424,18 @@ export async function buildApp(deps: AppDeps): Promise<AppHandle> {
     });
     socket.on('close', () => {
       clearTimeout(helloTimer);
-      void runtime.onDisconnect().finally(() => runtimes.delete(runtime));
+      // 別の接続へ引き継ぎ済みなら何もしない
+      if (connOf.get(runtime)?.socket !== socket) return;
+      const r = runtime;
+      const sid = r.currentSessionId;
+      const grace = config.resumeGraceMs;
+      if (sid && grace > 0 && r.detach()) {
+        const timer = setTimeout(() => endDetached(sid), grace);
+        timer.unref?.();
+        detached.set(sid, { runtime: r, timer });
+        return;
+      }
+      void r.onDisconnect().finally(() => runtimes.delete(r));
     });
   });
 

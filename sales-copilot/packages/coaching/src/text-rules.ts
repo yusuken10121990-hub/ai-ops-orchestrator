@@ -158,6 +158,21 @@ export function findGuarantee(text: string): boolean {
 
 export const FREE_RE = /無料|タダ|ただで|0円|ゼロ円|費用はかかりません|お金はかかりません/;
 
+/** 値引き・特別価格の約束（承認済み条件に無ければ出さない）。 */
+export const DISCOUNT_RE = /値引|割引|値下げ|特別価格|特別料金|お安く|安くし(ます|ておき|てお)|安くでき|勉強させ|キャンペーン価格|サービスします/;
+
+/**
+ * 「30分ほどお時間をいただけますか」のような、打ち合わせの長さの依頼（60分以下）。
+ * 価格・期間・効果の約束ではないので、次の約束・クロージングの台詞では数値の出所検査から外す。
+ */
+export function isMeetingDurationRequest(text: string, raw: string): boolean {
+  const t = normalizeForRules(text);
+  const m = raw.match(/^(\d{1,2})\s*分$/);
+  if (!m || Number(m[1]) > 60 || Number(m[1]) <= 0) return false;
+  const esc = raw.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`${esc}(ほど|程度|だけ|くらい|ぐらい)?(の)?(お時間|時間を|ほど時間|お打ち合わせ|打ち合わせ|ミーティング|面談|オンライン|いただ|頂)`).test(t);
+}
+
 export const REDUCTION_RE = /削減|減らせ|減らし|減ります|減る|短縮|浮きます|浮く|ゼロに|なくせ|なくなります|半分に|半減|節約/;
 
 export const CAPABILITY_RE =

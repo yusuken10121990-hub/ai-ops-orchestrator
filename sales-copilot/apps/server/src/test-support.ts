@@ -11,6 +11,7 @@ import { AdviceLlmError, FakeSpeechRecognizer, type AdviceLlm, type AdviceLlmReq
 import { coachingBinding } from './coaching-binding';
 import { loadConfig, type ServerConfig } from './config';
 import { createLogger } from './logger';
+import type { Logger } from 'pino';
 import { loadReplay } from './main';
 import { SessionRuntime } from './session-runtime';
 import { Store } from './store';
@@ -28,6 +29,10 @@ export function testConfig(over: Partial<ServerConfig> = {}, env: Record<string,
     ...base,
     dataDir: path.join(dir, 'data'),
     exportDir: path.join(dir, 'exports'),
+    // 本物の本人用フォルダ（%LOCALAPPDATA% 等）へは書かない
+    userDataDir: path.join(dir, 'user'),
+    tokenStoreFile: path.join(dir, 'user', 'tokens.json'),
+    logFile: null,
     advice: { ...base.advice, cooldownMs: 0, manualMinIntervalMs: 0 },
     usageIntervalMs: 500,
     ...over,
@@ -94,7 +99,9 @@ export interface RuntimeHarness {
   ofType<T extends ServerMessage['type']>(t: T): Extract<ServerMessage, { type: T }>[];
 }
 
-export function runtimeHarness(opts: { llm?: AdviceLlm | null; config?: Partial<ServerConfig>; withStt?: boolean } = {}): RuntimeHarness {
+export function runtimeHarness(
+  opts: { llm?: AdviceLlm | null; manualLlm?: AdviceLlm | null; config?: Partial<ServerConfig>; withStt?: boolean; logger?: Logger } = {},
+): RuntimeHarness {
   const config = testConfig({
     ...opts.config,
     deepgram: { ...testConfig().deepgram, apiKey: opts.withStt === false ? null : FAKE_DEEPGRAM_KEY },
@@ -102,7 +109,7 @@ export function runtimeHarness(opts: { llm?: AdviceLlm | null; config?: Partial<
   const messages: ServerMessage[] = [];
   const recognizers = new Map<CaptureSource, FakeSpeechRecognizer[]>();
   const store = new Store(':memory:');
-  const { logger } = testLogger('silent');
+  const logger = opts.logger ?? testLogger('silent').logger;
   const runtime = new SessionRuntime({
     config,
     logger,
@@ -117,6 +124,7 @@ export function runtimeHarness(opts: { llm?: AdviceLlm | null; config?: Partial<
       return r;
     },
     liveLlm: opts.llm === undefined ? new CountingLlm() : opts.llm,
+    ...(opts.manualLlm !== undefined ? { manualLlm: opts.manualLlm } : {}),
     loadReplay,
     send: (m) => messages.push(m),
   });

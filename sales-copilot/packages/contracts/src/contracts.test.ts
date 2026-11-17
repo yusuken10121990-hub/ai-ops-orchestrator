@@ -8,6 +8,7 @@ import {
   ClientMessage,
   ConfigStatusResponse,
   FactsListResponse,
+  MANUAL_KIND_TO_TRIGGER,
   OfflineScriptsResponse,
   PairingRequest,
   ServerMessage,
@@ -183,6 +184,11 @@ describe('ws messages', () => {
     );
   });
 
+  it('closing is a manual kind mapped to manual_closing', () => {
+    expect(parseClientMessage(JSON.stringify({ type: 'advice.request', kind: 'closing', requestId: 'r1' })).ok).toBe(true);
+    expect(MANUAL_KIND_TO_TRIGGER.closing).toBe('manual_closing');
+  });
+
   it('status distinguishes silence / no_permission / not_configured / disconnected', () => {
     const st = (state: string, reason: string | null) => ({ state, reason, since: 0 });
     const msg = {
@@ -228,6 +234,17 @@ describe('integration additions (session.ended / advice.displayed / audio.gap / 
     expect(ClientMessage.safeParse({ ...gap, toMs: 50 }).success).toBe(false);
     expect(ClientMessage.safeParse({ ...gap, source: 'UNKNOWN' }).success).toBe(false);
     expect(ClientMessage.safeParse({ ...gap, reason: 'whatever' }).success).toBe(false);
+  });
+
+  it('session.start: 商談目的は任意（未指定・空欄は「商談」）。開始を止めない', () => {
+    const base = { type: 'session.start', appliedFacts: [], mode: 'LIVE', selfCaptureEnabled: true, consentConfirmed: true };
+    const a = ClientMessage.safeParse(base);
+    const b = ClientMessage.safeParse({ ...base, purpose: '   ' });
+    const c = ClientMessage.safeParse({ ...base, purpose: ' A社 定例 ' });
+    expect(a.success && a.data.type === 'session.start' && a.data.purpose).toBe('商談');
+    expect(b.success && b.data.type === 'session.start' && b.data.purpose).toBe('商談');
+    expect(c.success && c.data.type === 'session.start' && c.data.purpose).toBe('A社 定例');
+    expect(ClientMessage.safeParse({ ...base, purpose: 'x'.repeat(501) }).success).toBe(false);
   });
 
   it('session.update carries a non-empty purpose (<=500) and nothing else', () => {

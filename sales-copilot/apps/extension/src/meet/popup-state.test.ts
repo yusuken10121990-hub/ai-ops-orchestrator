@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
+import { PAIRING_EXPIRED_LINE, SERVER_DOWN_LINE } from '../shared/pairing';
 import {
+  connectFailure,
   initialPopupState,
   isDeclined,
   isPopupVisible,
@@ -131,11 +133,37 @@ describe('purposeFromMeetTitle（商談目的の既定値）', () => {
     expect(purposeFromMeetTitle('A社 定例 - Google Meet', 'abc-defg-hij')).toBe('A社 定例');
   });
   it('会議名が無ければ会議コード入りの既定文', () => {
-    expect(purposeFromMeetTitle('Meet - abc-defg-hij', 'abc-defg-hij')).toBe('Google Meet の商談（abc-defg-hij）');
-    expect(purposeFromMeetTitle('Google Meet', 'abc-defg-hij')).toBe('Google Meet の商談（abc-defg-hij）');
-    expect(purposeFromMeetTitle('', null)).toBe('Google Meet の商談');
+    expect(purposeFromMeetTitle('Meet - abc-defg-hij', 'abc-defg-hij')).toBe('商談');
+    expect(purposeFromMeetTitle('Google Meet', 'abc-defg-hij')).toBe('商談');
+    expect(purposeFromMeetTitle('', null)).toBe('商談');
   });
   it('500 文字までに切る（サーバーの上限）', () => {
     expect(purposeFromMeetTitle('あ'.repeat(800), null)).toHaveLength(500);
+  });
+});
+
+describe('connectFailure (Meet ポップアップの失敗表示)', () => {
+  const connecting = (): PopupState => ({ kind: 'connecting', code: 'abc-defg-hij' });
+  it('pairing expired → the one line + a 再ペアリング (options) button', () => {
+    const s = popupReducer(connecting(), connectFailure({ problem: 'pairing_expired', error: PAIRING_EXPIRED_LINE }));
+    expect(s).toEqual({ kind: 'error', code: 'abc-defg-hij', message: 'ペアリングが切れました → 設定画面で再ペアリング', fix: 'options' });
+    expect(isPopupVisible(s)).toBe(true);
+  });
+  it('not paired → options button too', () => {
+    const s = popupReducer(connecting(), connectFailure({ problem: 'not_paired', error: 'x' }));
+    expect(s.kind === 'error' && s.fix).toBe('options');
+  });
+  it('server down → the fix line, retry stays available', () => {
+    const s = popupReducer(connecting(), connectFailure({ problem: 'server_down', error: SERVER_DOWN_LINE }));
+    expect(s).toMatchObject({ kind: 'error', message: SERVER_DOWN_LINE, fix: 'server' });
+    // 起動したら「もう一度接続」で再試行できる
+    expect(popupReducer(s, { type: 'connect' }).kind).toBe('connecting');
+  });
+  it('other failures keep the detailed message and no fix', () => {
+    const s = popupReducer(connecting(), connectFailure({ error: '別の商談のカンペが動いています' }));
+    expect(s.kind === 'error' && s.message).toContain('別の商談のカンペが動いています');
+    expect(s.kind === 'error' && s.fix).toBeUndefined();
+    const t = popupReducer(connecting(), connectFailure(null, 'Extension context invalidated'));
+    expect(t.kind === 'error' && t.message).toContain('Extension context invalidated');
   });
 });

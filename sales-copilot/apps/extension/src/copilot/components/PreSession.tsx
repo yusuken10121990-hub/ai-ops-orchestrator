@@ -5,6 +5,7 @@ import { localSourceLabel, sourceFixHint } from '../../shared/labels';
 import type { OffscreenSnapshot, TargetInfo } from '../../shared/runtime-messages';
 import type { Settings } from '../../shared/settings';
 import { isTokenUsable } from '../../shared/settings';
+import { purposeFromMeetTitle } from '../../meet/popup-state';
 
 export interface PreSessionServerInfo {
   health: 'checking' | 'ok' | 'ng';
@@ -104,10 +105,11 @@ export function PreSession(p: PreSessionProps) {
   const remoteReady = remoteState === 'armed';
   const remoteHint = p.target?.armError ? sourceFixHint('error', 'REMOTE') : sourceFixHint(remoteState, 'REMOTE');
 
+  const defaultPurpose = p.initialPurpose ?? purposeFromMeetTitle(p.target?.title, null);
   const missing: string[] = [];
   if (!paired) missing.push('サーバーとのペアリング');
   if (p.server.health !== 'ok') missing.push('ローカルサーバーへの接続');
-  if (!purpose.trim()) missing.push('商談目的');
+  // 商談目的は任意（空欄なら会議名、無ければ「商談」）。開始を止めない
   const liveUnavailable = p.server.config?.modes ? !p.server.config.modes.LIVE : false;
   const offlineAnthropicAvailable = p.server.config?.offlineAnthropicAvailable === true;
   const offlineExternal = mode === 'OFFLINE' && offlineAnthropicAvailable && offlineAnthropic;
@@ -121,7 +123,7 @@ export function PreSession(p: PreSessionProps) {
 
   const doStart = () => {
     p.onStart({
-      purpose: purpose.trim(),
+      purpose: purpose.trim() || defaultPurpose,
       customerName: customer.trim() || null,
       appliedFacts: approved.filter((f) => selected[f.factId]).map((f) => ({ factId: f.factId, version: f.version })),
       mode,
@@ -262,8 +264,8 @@ export function PreSession(p: PreSessionProps) {
       <section className="box" aria-labelledby="h-deal">
         <h2 id="h-deal">商談の情報</h2>
         <div className="field">
-          <label htmlFor="purpose">商談目的（必須）</label>
-          <input id="purpose" type="text" maxLength={500} value={purpose} onChange={(e) => setPurpose(e.target.value)} placeholder="例: 業務診断の結果共有と次の進め方" />
+          <label htmlFor="purpose">商談目的（任意）</label>
+          <input id="purpose" type="text" maxLength={500} value={purpose} onChange={(e) => setPurpose(e.target.value)} placeholder={`空欄なら「${defaultPurpose}」`} />
         </div>
         <div className="field">
           <label htmlFor="customer">顧客名（任意）</label>

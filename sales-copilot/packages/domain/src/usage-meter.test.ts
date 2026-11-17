@@ -59,6 +59,21 @@ describe('UsageMeter', () => {
     });
   });
 
+  it('manual-button calls (different model) are priced with the manual unit prices; missing → null', () => {
+    const m = new UsageMeter({ ...price, sttPerMinute: null, llmManualInputPerMTok: 20, llmManualOutputPerMTok: 100 });
+    m.addLlmUsage({ callId: 'a1', inputTokens: 1_000_000, outputTokens: 0 });
+    m.addLlmUsage({ callId: 'm1', inputTokens: 100_000, outputTokens: 10_000, tier: 'manual' });
+    expect(m.snapshot().estimatedCost?.amount).toBeCloseTo(1 + 2 + 1, 10);
+    expect(m.snapshot().llmInputTokens).toBe(1_100_000);
+    expect(m.snapshot().calls).toBe(2);
+
+    const noManualPrice = new UsageMeter({ ...price, sttPerMinute: null });
+    noManualPrice.addLlmUsage({ callId: 'a1', inputTokens: 10, outputTokens: 10 });
+    expect(noManualPrice.snapshot().estimatedCost).not.toBeNull();
+    noManualPrice.addLlmUsage({ callId: 'm1', inputTokens: 10, outputTokens: 10, tier: 'manual' });
+    expect(noManualPrice.snapshot().estimatedCost).toBeNull();
+  });
+
   it('warns at 80% and blocks new external calls at 100%', () => {
     const m = new UsageMeter(null, {
       maxSttSeconds: null,

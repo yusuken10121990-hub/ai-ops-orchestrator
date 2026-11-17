@@ -45,7 +45,7 @@ class FakePipe implements AudioPipe {
   }
 }
 
-function setup(opts: { micError?: string; extra?: TrackLike[] } = {}) {
+function setup(opts: { micError?: string; extra?: TrackLike[]; clock?: { t: number } } = {}) {
   const emitted: FromPage[] = [];
   const pipes: FakePipe[] = [];
   const mics: FakeTrack[] = [];
@@ -78,6 +78,7 @@ function setup(opts: { micError?: string; extra?: TrackLike[] } = {}) {
     clearInterval(i) {
       intervals.delete(i as number);
     },
+    ...(opts.clock ? { now: () => opts.clock!.t } : {}),
   });
   return {
     audio,
@@ -118,6 +119,65 @@ describe('PageAudio（Meet ページ内の音声取得）', () => {
     r1.end();
     expect(pipe.tracks.has('r1')).toBe(false);
     expect(env.intervals.size).toBe(1); // 後から参加した相手を拾い直す
+  });
+
+  it('画面共有の開始: Meet が新しい接続・トラックに置き換えても（古いトラックは ended イベントなしで終わる）REMOTE に付け替え続ける', () => {
+    const extra: TrackLike[] = [];
+    const env = setup({ extra });
+    const old = new FakeTrack('r-old');
+    env.audio.addRemoteTrack(old);
+    env.audio.handle({ type: 'remote.start' });
+    const pipe = env.pipes[0]!;
+    // 発表開始: 新しい RTCPeerConnection の受信トラックが増え、古い接続は close()（ended イベントは来ない）
+    extra.push(new FakeTrack('r-present'));
+    old.readyState = 'ended';
+    for (const fn of env.intervals.values()) fn();
+    expect([...pipe.tracks]).toEqual(['r-present']);
+    expect(env.pipes).toHaveLength(1); // 処理は作り直さない（同じ REMOTE 系統のまま）
+    expect(env.audio.remoteTrackCount).toBe(1);
+    // 発表終了で元に戻っても拾う
+    extra.push(new FakeTrack('r-back'));
+    for (const fn of env.intervals.values()) fn();
+    expect(pipe.tracks.has('r-back')).toBe(true);
+  });
+
+  it('全ての相手のトラックが終わったら rtc.active で 0 を知らせる（通話からの退出の判断材料）', () => {
+    const env = setup();
+    const r1 = new FakeTrack('r1');
+    env.audio.addRemoteTrack(r1);
+    env.audio.handle({ type: 'remote.start' });
+    r1.readyState = 'ended';
+    for (const fn of env.intervals.values()) fn();
+    expect(env.emitted.filter((m) => m.type === 'rtc.active').at(-1)).toEqual({ type: 'rtc.active', remoteTracks: 0 });
+  });
+
+  it('会議音声の処理が止まったら（AudioContext 停止など）作り直してトラックを付け直す。一時停止中は作り直さない', () => {
+    const clock = { t: 0 };
+    const env = setup({ clock });
+    env.audio.addRemoteTrack(new FakeTrack('r1'));
+    env.audio.handle({ type: 'remote.start' });
+    const tickAll = () => {
+      for (const fn of env.intervals.values()) fn();
+    };
+    // 音声が流れている間は作り直さない
+    for (let i = 0; i < 5; i++) {
+      clock.t += 2000;
+      env.pipes.at(-1)!.onPcm(new Int16Array(640), -30, 48000);
+      tickAll();
+    }
+    expect(env.pipes).toHaveLength(1);
+    // 止まった
+    clock.t += 7000;
+    tickAll();
+    expect(env.pipes).toHaveLength(2);
+    expect(env.pipes[0]!.closed).toBe(true);
+    expect([...env.pipes[1]!.tracks]).toEqual(['r1']);
+    expect(env.audio.remoteRebuilds).toBe(1);
+    // 一時停止中は音声が来なくて当然なので作り直さない
+    env.audio.handle({ type: 'remote.enable', enabled: false });
+    clock.t += 60_000;
+    tickAll();
+    expect(env.pipes).toHaveLength(2);
   });
 
   it('PCM は source 付きで content script へ渡す', () => {

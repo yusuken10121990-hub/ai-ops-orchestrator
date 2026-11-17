@@ -8,7 +8,8 @@ pnpm --filter @sales-copilot/server dev     # tsx watch
 ```
 
 起動すると端末にペアリングコード（6桁・10分・1回限り）が表示される。`.env`（ワークスペース直下）があれば読む。
-トークンはメモリにだけ持つので、サーバーを再起動したら拡張機能で再ペアリングが必要。
+ペアリングの記録（トークンの SHA-256 ハッシュのみ）は本人用フォルダの `tokens.json` に保存するので、再起動しても再ペアリング不要。
+端末なし（自動起動）のときは `pnpm pair` でコードを出す。詳細は [docs/security.md](../../docs/security.md)。
 node:sqlite の ExperimentalWarning が 1 行出るが動作に影響はない（Node 22）。
 
 ## HTTP
@@ -60,11 +61,17 @@ node:sqlite の ExperimentalWarning が 1 行出るが動作に影響はない�
 | `DEEPGRAM_ENDPOINTING_MS` | 300 | `false` で無効 |
 | `DEEPGRAM_UTTERANCE_END_MS` | 1000 | `off` で無効 |
 | `DEEPGRAM_SMART_FORMAT` / `DEEPGRAM_PUNCTUATE` | true / false | |
-| `ANTHROPIC_EFFORT` | low | `low`/`medium`/`high`/`none` |
+| `ANTHROPIC_MODEL` | claude-haiku-5-5 | 自動カード（発言ごと・低遅延）用のモデル |
+| `ANTHROPIC_MANUAL_MODEL` | claude-sonnet-5-5 | 手動ボタン（切り返し・次に聞く・次の約束・クロージング）用のモデル。押したときだけ呼ぶ |
+| `ANTHROPIC_EFFORT` | low | `low`/`medium`/`high`/`none`（両モデル共通） |
+| `ADVICE_TIMEOUT_MS` / `ADVICE_MANUAL_TIMEOUT_MS` | 6000 / 15000 | 自動カード / 手動ボタン1回の生成の上限 |
+| `PRICE_LLM_MANUAL_INPUT_PER_MTOK` / `PRICE_LLM_MANUAL_OUTPUT_PER_MTOK` | 未設定 | 手動用モデルの単価（出典・確認日は `PRICE_SOURCE` / `PRICE_CHECKED_DATE`）。別モデルで未設定なら、手動ボタン使用後は金額を出さない |
 | `ADVICE_MAX_RETRIES` | 1 | 不正 JSON 等の再試行（最大 3） |
 | `AUDIO_MAX_QUEUE_MS` | 2000 | 系統ごとの未送信音声上限 |
 | `SESSION_RETENTION_MS` | 600000 | 終了後のメモリ保持上限 |
-| `SESSION_TOKEN_TTL_MS` / `PAIRING_CODE_TTL_MS` / `PAIRING_MAX_ATTEMPTS` | 12h / 10min / 5 | |
+| `SESSION_TOKEN_TTL_DAYS` / `PAIRING_CODE_TTL_MS` / `PAIRING_MAX_ATTEMPTS` | 期限なし（空 または 0。1〜400 で日数・使うたびに延長） / 10min / 5 | 旧 `SESSION_TOKEN_TTL_MS` は無視（警告のみ） |
+| `SESSION_RESUME_GRACE_MS` | 60000 | 拡張との接続が切れたとき同じ商談を保持する時間。0 = 切れたら即終了 |
+| `USER_DATA_DIR` / `TOKEN_STORE_FILE` / `LOG_FILE` | `%LOCALAPPDATA%\ZEROSYS-SalesCopilot` / `tokens.json` / なし | ペアリング記録・`pnpm pair` 用の秘密・自動起動時のログ |
 | `OFFLINE_SCRIPT` / `OFFLINE_REPLAY_SPEED` / `OFFLINE_USE_ANTHROPIC` | 先頭 / 1 / 未設定 | `OFFLINE_USE_ANTHROPIC=1` は「許可」。使うのは開始時に本人が選んだときだけ |
 | `PAIRING_CODE_FOR_TEST` | 未設定 | 自動テスト専用の固定コード。`NODE_ENV=test` 以外で設定されていると起動拒否 |
 | `DATA_DIR` / `EXPORT_DIR` | `data` / `exports` | ワークスペース直下からの相対 |

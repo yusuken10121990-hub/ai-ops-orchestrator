@@ -64,17 +64,18 @@ function requireHeadlineWhenShown(v: { action: AdviceAction; headline: string },
 export const AdviceLlmOutput = AdviceLlmOutputBase.superRefine(requireHeadlineWhenShown);
 export type AdviceLlmOutput = z.infer<typeof AdviceLlmOutput>;
 
-export const AdviceTrigger = z.enum(['auto', 'manual_rebuttal', 'manual_next_question', 'manual_next_step']);
+export const AdviceTrigger = z.enum(['auto', 'manual_rebuttal', 'manual_next_question', 'manual_next_step', 'manual_closing']);
 export type AdviceTrigger = z.infer<typeof AdviceTrigger>;
 
-/** 手動ボタンの種類（SPEC §4-2: 切り返し / 次に聞く / 次の約束）。 */
-export const ManualAdviceKind = z.enum(['rebuttal', 'next_question', 'next_step']);
+/** 手動ボタンの種類（SPEC §4-2: 切り返し / 次に聞く / 次の約束 / クロージング）。 */
+export const ManualAdviceKind = z.enum(['rebuttal', 'next_question', 'next_step', 'closing']);
 export type ManualAdviceKind = z.infer<typeof ManualAdviceKind>;
 
 export const MANUAL_KIND_TO_TRIGGER: Record<ManualAdviceKind, AdviceTrigger> = {
   rebuttal: 'manual_rebuttal',
   next_question: 'manual_next_question',
   next_step: 'manual_next_step',
+  closing: 'manual_closing',
 };
 
 /** current = 現行推奨 / reference = 参考（古い・話題変化） / invalidated = 前提が崩れた */
@@ -108,6 +109,8 @@ export const AdviceCard = AdviceLlmOutputBase.extend({
   sessionId: Id,
   contextRevision: z.number().int().nonnegative(),
   promptVersion: z.string().min(1).max(64),
+  /** 生成時に有効だった営業補正ルール（承認済み）の版。0 = ルールなし。旧データでは欠ける。 */
+  rulesVersion: z.number().int().nonnegative().optional(),
   /** epoch ms */
   createdAt: z.number().int().nonnegative(),
   /** epoch ms。これを過ぎたら current ではなく reference。 */

@@ -4,7 +4,7 @@ import type { CoachingPort } from './coaching-port';
 /** @sales-copilot/coaching の実体をサーバーのポートへ結線する。 */
 export const coachingBinding: CoachingPort = {
   createEngine(llm, opts) {
-    return createAdviceEngine({ llm, maxRetries: opts.maxRetries, timeoutMs: opts.timeoutMs });
+    return createAdviceEngine({ llm, maxRetries: opts.maxRetries, timeoutMs: opts.timeoutMs, maxOutputTokens: opts.maxOutputTokens });
   },
   createOfflineLlm() {
     return new RuleBasedOfflineLlm();

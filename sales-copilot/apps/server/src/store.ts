@@ -4,6 +4,7 @@ import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { ApprovedFact, type AppliedFactRef, type FactCategory, type FactStatus } from '@sales-copilot/contracts';
 import type { FeedbackRating } from '@sales-copilot/contracts';
+import { LEARNING_SCHEMA, LearningStore, migrateFeedbackColumns } from './learning-store';
 
 /**
  * 設定・承認済み条件・最小フィードバックの永続化（node:sqlite, data/ は Git 管理外）。
@@ -35,6 +36,14 @@ export interface FeedbackRecord {
   kind: string | null;
   promptVersion: string | null;
   createdAt: number;
+  /** 以下は学習用（承認制）。会話本文・顧客名は持たない。文面は saveCardText=ON のときだけ。 */
+  sessionId?: string | null;
+  rulesVersion?: number | null;
+  headline?: string | null;
+  say?: string | null;
+  avoid?: string | null;
+  situation?: string[];
+  purpose?: string | null;
 }
 
 export type FactError = 'not_found' | 'version_mismatch' | 'already_approved' | 'not_approved';
@@ -52,6 +61,8 @@ interface FactRow {
 
 export class Store {
   private readonly db: DatabaseSync;
+  /** 学習（承認制）: 改善案・承認済みルール・版・評価の集計。 */
+  readonly learning: LearningStore;
 
   constructor(
     file: string,
@@ -111,6 +122,9 @@ export class Store {
         created_at INTEGER NOT NULL
       );
     `);
+    migrateFeedbackColumns(this.db);
+    this.db.exec(LEARNING_SCHEMA);
+    this.learning = new LearningStore(this.db, this.now);
   }
 
   close(): void {
@@ -241,12 +255,32 @@ export class Store {
 
   // --- feedback --------------------------------------------------------------
 
-  /** 既定は最小限（ID・評価・種類・promptVersion・時刻）。会話本文は保存しない。 */
+  /**
+   * 既定は最小限（ID・評価・種類・promptVersion・時刻）。会話本文は保存しない。
+   * 学習用の文面（今の一手 / 次に言う一言 / 今は言わない / 場面タグ / 商談目的）は呼び出し側が
+   * saveCardText と顧客名の伏せ字を済ませて渡す。同じカードの評価し直しは最新の1件に置き換える。
+   */
   addFeedback(f: Omit<FeedbackRecord, 'createdAt'>): FeedbackRecord {
     const rec: FeedbackRecord = { ...f, createdAt: this.now() };
+    this.db.prepare('DELETE FROM feedback WHERE advice_id = ?').run(rec.adviceId);
     this.db
-      .prepare('INSERT INTO feedback (advice_id, rating, kind, prompt_version, created_at) VALUES (?, ?, ?, ?, ?)')
-      .run(rec.adviceId, rec.rating, rec.kind, rec.promptVersion, rec.createdAt);
+      .prepare(
+        'INSERT INTO feedback (advice_id, rating, kind, prompt_version, created_at, session_id, rules_version, headline, say, avoid, situation, purpose) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      )
+      .run(
+        rec.adviceId,
+        rec.rating,
+        rec.kind,
+        rec.promptVersion,
+        rec.createdAt,
+        rec.sessionId ?? null,
+        rec.rulesVersion ?? null,
+        rec.headline ?? null,
+        rec.say ?? null,
+        rec.avoid ?? null,
+        rec.situation && rec.situation.length > 0 ? JSON.stringify(rec.situation) : null,
+        rec.purpose ?? null,
+      );
     return rec;
   }
 
@@ -257,6 +291,13 @@ export class Store {
       kind: string | null;
       prompt_version: string | null;
       created_at: number;
+      session_id: string | null;
+      rules_version: number | null;
+      headline: string | null;
+      say: string | null;
+      avoid: string | null;
+      situation: string | null;
+      purpose: string | null;
     }>;
     return rows.map((r) => ({
       adviceId: r.advice_id,
@@ -264,7 +305,19 @@ export class Store {
       kind: r.kind,
       promptVersion: r.prompt_version,
       createdAt: r.created_at,
+      sessionId: r.session_id,
+      rulesVersion: r.rules_version,
+      headline: r.headline,
+      say: r.say,
+      avoid: r.avoid,
+      situation: r.situation ? (JSON.parse(r.situation) as string[]) : [],
+      purpose: r.purpose,
     }));
+  }
+
+  /** テスト・検査用: feedback テーブルの列名。 */
+  feedbackColumns(): string[] {
+    return (this.db.prepare('PRAGMA table_info(feedback)').all() as Array<{ name: string }>).map((c) => c.name);
   }
 
   private history(f: ApprovedFact, action: FactHistoryEntry['action']): void {

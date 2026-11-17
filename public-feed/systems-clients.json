@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-11-17T15:55:28.351Z",
+  "generated_at": "2026-11-17T17:55:09.124Z",
   "note": "受託システムの一覧(営業台帳の自動追加用・公開して問題ない項目のみ)",
   "systems": [
     {
@@ -171,6 +171,15 @@
       "url": "http://127.0.0.1:8787",
       "status": "building",
       "addedAt": "2026-11-16",
+      "source": "ledger"
+    },
+    {
+      "id": "shoken-saas",
+      "name": "出店・商圏・商品需要分析SaaS（サービス名は命名中・仮称 商圏AI）",
+      "client": "",
+      "url": "http://localhost:3200（ローカルのみ・未公開）",
+      "status": "building",
+      "addedAt": "2026-11-18",
       "source": "ledger"
     }
   ]

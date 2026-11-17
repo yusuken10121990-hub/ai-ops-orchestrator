@@ -245,6 +245,8 @@ Meet で共有するときは「**タブ**」を選び、資料のタブだけ�
 | ペアリングの保存（サーバー再起動後も同じトークンで使える・期限の延長・解除・期限切れ）・`pnpm pair`・Meet ポップアップの「ペアリングが切れました」「サーバーが起動していません」 | テスト済み（Vitest・`pnpm test:e2e`） | 未検証（Windows Chrome） |
 | 自動起動（スタートアップ登録・裏で起動・PC 再起動後に「接続」だけで使える）・`pnpm autostart:uninstall` | Linux で起動の見張り役だけ確認 | **未検証（Windows）** |
 | 学習（承認制）: 評価の記録（本文・顧客名なし）・改善案の検査・承認／却下／編集／停止／削除・版・次の商談のプロンプトへの反映・版ごとの役立った率・全消去 | テスト済み（Vitest・`pnpm test:e2e` の実サーバー × 実拡張） | **未検証（実 Claude での改善案の質・Windows Chrome）** |
+| 切れても終わらせない（画面共有の開始＝新しい接続・トラック置き換え、タブ／ウィンドウ切替、カンペ画面のタイマー停止、WS 切断 → 同じ商談で再接続）・通話からの退出でだけ終了（`endReason`） | テスト済み（Vitest・`pnpm test:e2e` の偽 Meet ページ） | **未検証（本物の Meet の画面共有・Windows Chrome での長時間の非表示）** |
+| ワンタップは常に LIVE（前回 OFFLINE でも）・開始直後のモード表示・商談目的は任意・ペアリング期限なし | テスト済み（Vitest・`pnpm test:e2e`） | 未検証（Windows Chrome） |
 
 実機での確認手順は [docs/manual-checklist.md](docs/manual-checklist.md)。
 

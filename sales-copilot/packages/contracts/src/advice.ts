@@ -108,6 +108,8 @@ export const AdviceCard = AdviceLlmOutputBase.extend({
   sessionId: Id,
   contextRevision: z.number().int().nonnegative(),
   promptVersion: z.string().min(1).max(64),
+  /** 生成時に有効だった営業補正ルール（承認済み）の版。0 = ルールなし。旧データでは欠ける。 */
+  rulesVersion: z.number().int().nonnegative().optional(),
   /** epoch ms */
   createdAt: z.number().int().nonnegative(),
   /** epoch ms。これを過ぎたら current ではなく reference。 */

@@ -62,7 +62,7 @@ describe('createAdviceEngine', () => {
     expect(res.outcome).toBe('ok');
     expect(res.output).toEqual(good);
     expect(res.promptVersion).toBe(engine.promptVersion);
-    expect(res.promptVersion).toMatch(/^builder-1-[0-9a-f]{12}$/);
+    expect(res.promptVersion).toMatch(/^builder-2-[0-9a-f]{12}$/);
     expect(res.usage).toEqual({ inputTokens: 100, outputTokens: 50 });
     expect(res.model).toBe('fake-advice-llm');
     const req = llm.requests[0]!;

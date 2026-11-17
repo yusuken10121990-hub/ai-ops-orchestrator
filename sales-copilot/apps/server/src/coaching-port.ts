@@ -15,6 +15,8 @@ export interface AdviceContextInput {
   memo: ReturnType<ConversationState['snapshot']>;
   approvedFacts: ApprovedFact[];
   degraded: boolean;
+  /** 営業補正ルール（承認済み・有効）。セッション開始時点で固定。 */
+  coachingRules?: Array<{ ruleId: string; text: string; scope: string }>;
 }
 
 export interface AdviceResultLike {

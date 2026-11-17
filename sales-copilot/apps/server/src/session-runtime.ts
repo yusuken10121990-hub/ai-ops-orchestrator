@@ -6,6 +6,7 @@ import {
   type AdviceInvalidationReason,
   type ApprovedFact,
   type CaptureSource,
+  type CoachingRule,
   type ClientMessage,
   type ErrorCode,
   type PipelineState,
@@ -105,6 +106,9 @@ export class SessionRuntime {
   private purpose = '';
   private customerName: string | null = null;
   private facts: ApprovedFact[] = [];
+  /** 営業補正ルール（承認済み）。開始時に読み、セッション中は変えない（次のセッションから反映）。 */
+  private coachingRules: CoachingRule[] = [];
+  private rulesVersion = 0;
   private readonly recognizers = new Map<CaptureSource, SpeechRecognizer>();
   private readonly recognizerUnsubs = new Map<CaptureSource, () => void>();
   private replay: ReplayDriver | null = null;
@@ -311,6 +315,9 @@ export class SessionRuntime {
     this.purpose = msg.purpose;
     this.customerName = msg.customerName ?? null;
     this.facts = resolved.facts;
+    const ruleSet = this.d.store.learning.activeRuleSet();
+    this.coachingRules = ruleSet.rules;
+    this.rulesVersion = ruleSet.version;
     this.startedAt = this.now();
     const short = sessionId.slice(4, 12);
     const ids: IdGenerator = (() => {
@@ -333,6 +340,7 @@ export class SessionRuntime {
     this.scheduler = new AdviceScheduler({
       sessionId,
       promptVersion: this.engine?.promptVersion ?? 'unconfigured',
+      rulesVersion: this.rulesVersion,
       clock,
       idGenerator: ids,
       cooldownMs: cfg.advice.cooldownMs,
@@ -365,6 +373,8 @@ export class SessionRuntime {
         sessionId,
         mode: msg.mode,
         appliedFacts: resolved.facts.length,
+        rulesVersion: this.rulesVersion,
+        coachingRules: this.coachingRules.length,
         advice: this.adviceLabel ?? 'not_configured',
         stt: this.pipes.stt.state,
         offlineScript: script?.name ?? null,
@@ -884,6 +894,7 @@ export class SessionRuntime {
       memo: snap,
       approvedFacts: this.facts.filter((f) => f.status === 'approved'),
       degraded: conv.isDegraded(),
+      coachingRules: this.coachingRules.map((r) => ({ ruleId: r.ruleId, text: r.text, scope: r.scope })),
     };
   }
 
@@ -921,7 +932,28 @@ export class SessionRuntime {
   private feedback(adviceId: string, rating: 'helpful' | 'off'): void {
     const card = this.cards.get(adviceId) ?? this.scheduler?.getCard(adviceId);
     if (!card) return this.error('invalid_message', 'unknown adviceId', true);
-    this.d.store.addFeedback({ adviceId, rating, kind: card.kind, promptVersion: card.promptVersion });
+    const base = {
+      adviceId,
+      rating,
+      kind: card.kind,
+      promptVersion: card.promptVersion,
+      sessionId: card.sessionId,
+      rulesVersion: card.rulesVersion ?? this.rulesVersion,
+    };
+    if (!this.d.store.learning.settings().saveCardText) {
+      this.d.store.addFeedback(base);
+      return;
+    }
+    // 学習用の文面: カード自身の欄と商談目的だけ。会話本文は入れず、顧客名は伏せる。
+    const names = this.customerName ? [this.customerName] : [];
+    this.d.store.addFeedback({
+      ...base,
+      headline: redactNames(card.headline, names),
+      say: card.say === null ? null : redactNames(card.say, names),
+      avoid: card.avoid === null ? null : redactNames(card.avoid, names),
+      situation: situationTags(card),
+      purpose: this.purpose ? redactNames(this.purpose, names) : null,
+    });
   }
 
   private sourceState(msg: Extract<ClientMessage, { type: 'source.state' }>): void {
@@ -1083,4 +1115,27 @@ function llmErrorCode(kind: string): ErrorCode {
   if (kind === 'rate_limited') return 'rate_limited';
   if (kind === 'timeout') return 'timeout';
   return 'upstream_error';
+}
+
+/** 顧客名（会社名・担当者名）を伏せ字にする。敬称つきでも外れるよう名前そのものを置き換える。 */
+export function redactNames(text: string, names: readonly string[]): string {
+  let out = text;
+  for (const raw of names) {
+    for (const n of raw.split(/[\s　/／・,、]+/).concat(raw)) {
+      const t = n.trim();
+      if (t.length < 2) continue;
+      out = out.split(t).join('（顧客名）');
+    }
+  }
+  return out;
+}
+
+/** 学習用の場面タグ（会話本文を含まないコードだけ）。 */
+export function situationTags(card: AdviceCard): string[] {
+  return [
+    `trigger:${card.trigger}`,
+    `next:${card.nextStepType}`,
+    `evidence:${card.evidenceLevel}`,
+    ...card.warnings.map((w) => `warn:${w.code}`),
+  ].slice(0, 12);
 }

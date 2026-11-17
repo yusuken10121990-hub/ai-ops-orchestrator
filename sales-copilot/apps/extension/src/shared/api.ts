@@ -12,7 +12,15 @@ import {
   FactResponse,
   FactsListResponse,
   FactUpdateResponse,
+  LearningOkResponse,
+  LearningOverviewResponse,
+  LearningSettings,
   OfflineScriptsResponse,
+  ProposalEstimateResponse,
+  ProposalGenerateResponse,
+  RuleResponse,
+  type LearningSettingsPatch,
+  type RuleScope,
   PairingRequest,
   PairingResponse,
   SessionReviewResponse,
@@ -27,7 +35,11 @@ export type ApiError =
   | { kind: 'unauthorized' }
   | { kind: 'not_found' }
   | { kind: 'http'; status: number }
-  | { kind: 'invalid_response' };
+  | { kind: 'invalid_response' }
+  /** サーバーが理由つきで断った（学習の承認でルール文が通らない等）。message はそのまま表示してよい日本語。 */
+  | { kind: 'rejected'; code: string; message: string | null };
+
+const ServerErrorBody = z.object({ error: z.string().max(64), message: z.string().max(300).optional() });
 
 export type ApiResult<T> = { ok: true; data: T } | { ok: false; error: ApiError };
 
@@ -49,13 +61,13 @@ export class ApiClient {
     path: string,
     schema: z.ZodType<T>,
     body?: unknown,
-    opts: { bodyOnError?: boolean } = {},
+    opts: { bodyOnError?: boolean; timeoutMs?: number } = {},
   ): Promise<ApiResult<T>> {
     const headers: Record<string, string> = {};
     if (body !== undefined) headers['content-type'] = 'application/json';
     if (this.opts.token) headers[AUTH_HEADER] = `${AUTH_SCHEME} ${this.opts.token}`;
     const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), this.opts.timeoutMs ?? 5000);
+    const timer = setTimeout(() => ctrl.abort(), opts.timeoutMs ?? this.opts.timeoutMs ?? 5000);
     let res: Response;
     try {
       res = await this.fetchImpl(new URL(path, this.opts.baseUrl).toString(), {
@@ -83,6 +95,10 @@ export class ApiClient {
     }
     const parsed = schema.safeParse(json);
     if (parsed.success) return { ok: true, data: parsed.data };
+    if (!res.ok) {
+      const err = ServerErrorBody.safeParse(json);
+      if (err.success) return { ok: false, error: { kind: 'rejected', code: err.data.error, message: err.data.message ?? null } };
+    }
     return { ok: false, error: res.ok ? { kind: 'invalid_response' } : { kind: 'http', status: res.status } };
   }
 
@@ -129,9 +145,56 @@ export class ApiClient {
     return this.request('GET', '/offline/scripts', OfflineScriptsResponse);
   }
 
+  /** 学習 API 用の汎用呼び出し（スキーマ検証・理由つきエラーを含む）。 */
+  call<T>(method: string, path: string, schema: z.ZodType<T>, body?: unknown, timeoutMs?: number): Promise<ApiResult<T>> {
+    return this.request(method, path, schema, body, timeoutMs ? { timeoutMs } : {});
+  }
+
   async approveFact(factId: string, version: number): Promise<ApiResult<ApprovedFact>> {
     const r = await this.request('POST', `/facts/${encodeURIComponent(factId)}/approve`, FactResponse, { version });
     return r.ok ? { ok: true, data: r.data.fact } : r;
+  }
+}
+
+// --- 学習（承認制） -------------------------------------------------------------
+export class LearningApi {
+  constructor(private readonly api: ApiClient) {}
+
+  overview(): Promise<ApiResult<LearningOverviewResponse>> {
+    return this.api.call('GET', '/learning', LearningOverviewResponse);
+  }
+
+  updateSettings(patch: LearningSettingsPatch): Promise<ApiResult<LearningSettings>> {
+    return this.api.call('PATCH', '/learning/settings', LearningSettings, patch);
+  }
+
+  estimate(): Promise<ApiResult<ProposalEstimateResponse>> {
+    return this.api.call('POST', '/learning/proposals/estimate', ProposalEstimateResponse, {});
+  }
+
+  /** モデル呼び出しを待つので長めに待つ。 */
+  generate(): Promise<ApiResult<ProposalGenerateResponse>> {
+    return this.api.call('POST', '/learning/proposals/generate', ProposalGenerateResponse, {}, 60_000);
+  }
+
+  approve(proposalId: string, edit: { text?: string; scope?: RuleScope } = {}): Promise<ApiResult<RuleResponse>> {
+    return this.api.call('POST', `/learning/proposals/${encodeURIComponent(proposalId)}/approve`, RuleResponse, edit);
+  }
+
+  reject(proposalId: string): Promise<ApiResult<LearningOkResponse>> {
+    return this.api.call('POST', `/learning/proposals/${encodeURIComponent(proposalId)}/reject`, LearningOkResponse, {});
+  }
+
+  setRuleEnabled(ruleId: string, enabled: boolean): Promise<ApiResult<LearningOkResponse>> {
+    return this.api.call('POST', `/learning/rules/${encodeURIComponent(ruleId)}/${enabled ? 'enable' : 'disable'}`, LearningOkResponse, {});
+  }
+
+  deleteRule(ruleId: string): Promise<ApiResult<LearningOkResponse>> {
+    return this.api.call('POST', `/learning/rules/${encodeURIComponent(ruleId)}/delete`, LearningOkResponse, {});
+  }
+
+  wipe(): Promise<ApiResult<LearningOkResponse>> {
+    return this.api.call('POST', '/learning/wipe', LearningOkResponse, {});
   }
 }
 
@@ -154,6 +217,8 @@ export function describeApiError(e: ApiError): string {
       return `サーバーエラー（${e.status}）`;
     case 'invalid_response':
       return 'サーバーの応答形式が想定と違います';
+    case 'rejected':
+      return e.message ?? `サーバーが受け付けませんでした（${e.code}）`;
   }
 }
 

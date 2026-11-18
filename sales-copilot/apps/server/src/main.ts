@@ -26,6 +26,10 @@ export async function startServer(config: ServerConfig = loadConfig()): Promise<
         timeoutMs: config.advice.timeoutMs,
       })
     : null;
+  // 改善案づくり（options 画面のボタンを押したときだけ）。同じキー・同じモデル、長めのタイムアウト。
+  const proposalLlm = config.anthropic.apiKey
+    ? new AnthropicAdviceLlm({ apiKey: config.anthropic.apiKey, model: config.anthropic.model, effort: 'low', timeoutMs: 40_000 })
+    : null;
   const createLiveRecognizer = (source: CaptureSource) =>
     config.deepgram.apiKey
       ? new DeepgramStreamingRecognizer({
@@ -48,6 +52,7 @@ export async function startServer(config: ServerConfig = loadConfig()): Promise<
     coaching: coachingBinding,
     createLiveRecognizer,
     liveLlm,
+    proposalLlm,
     loadReplay,
     listOfflineScripts,
   });

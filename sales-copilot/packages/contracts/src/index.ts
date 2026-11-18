@@ -6,3 +6,4 @@ export * from './usage';
 export * from './auth';
 export * from './messages';
 export * from './http';
+export * from './learning';

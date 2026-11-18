@@ -7,7 +7,7 @@ import { normalizeForRules } from './text-rules';
 import type { AdviceContext, AdviceMemoItem } from './types';
 
 /** プロンプト組立の版。組立ロジック・アプリ側ルールを変えたら上げる。 */
-export const PROMPT_BUILDER_VERSION = 'builder-1';
+export const PROMPT_BUILDER_VERSION = 'builder-2';
 
 /** オーナー原文（SPEC §10）。改変しない。 */
 export const OWNER_SYSTEM_PROMPT: string = readFileSync(new URL('../prompts/system-prompt.ja.md', import.meta.url), 'utf8');
@@ -211,6 +211,12 @@ export function buildUserMessage(ctx: AdviceContext, styleIds?: string[]): { use
   parts.push(
     `承認済み条件（この商談で正式に使ってよい唯一の条件。ここに無い価格・期間・解約・保守・精度は未確認）:\n<approved_facts>\n${safeJson(facts)}\n</approved_facts>`,
   );
+  const rules = (ctx.coachingRules ?? []).map((r) => ({ ruleId: r.ruleId, rule: r.text, scope: r.scope }));
+  if (rules.length > 0) {
+    parts.push(
+      `営業補正ルール（承認済み）: 野中が承認した話し方の補正。scope の場面（all=全部）でだけ使う。承認済み条件・アプリ側の出力ルールと食い違うときはそちらを優先し、ここから金額・期間・条件を作らない:\n<coaching_rules>\n${safeJson(rules)}\n</coaching_rules>`,
+    );
+  }
   parts.push(
     `構造化メモ（会話から抽出した整理。status=unverified は確認候補であって正式条件ではない）:\n<memo_data>\n${safeJson(memo)}\n</memo_data>`,
   );

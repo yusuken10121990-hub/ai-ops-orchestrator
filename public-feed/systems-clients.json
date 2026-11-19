@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-11-19T09:30:10.908Z",
+  "generated_at": "2026-11-19T10:54:44.406Z",
   "note": "受託システムの一覧(営業台帳の自動追加用・公開して問題ない項目のみ)",
   "systems": [
     {
@@ -180,6 +180,15 @@
       "url": "http://localhost:3200（ローカルのみ・未公開）",
       "status": "building",
       "addedAt": "2026-11-18",
+      "source": "ledger"
+    },
+    {
+      "id": "tla-site-demo",
+      "name": "東京言語学院 提案用デモ(tla-site)",
+      "client": "東京言語学院",
+      "url": "https://web-production-d9baf5ef.up.railway.app",
+      "status": "building",
+      "addedAt": "2026-11-19",
       "source": "ledger"
     }
   ]

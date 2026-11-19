@@ -47,3 +47,24 @@ export const PairingResponse = z.discriminatedUnion('ok', [
     .strict(),
 ]);
 export type PairingResponse = z.infer<typeof PairingResponse>;
+
+/**
+ * GET /auth/check: トークンがまだ有効か（Meet ポップアップ・設定画面が使う）。
+ * サーバーは使われるたびに期限を延長するので、拡張機能はここで返る expiresAt に保存値を合わせる。
+ */
+export const AuthCheckResponse = z
+  .object({
+    ok: z.literal(true),
+    issuedAt: z.number().int().nonnegative(),
+    expiresAt: z.number().int().nonnegative(),
+    scopes: z.array(AuthScope).min(1),
+  })
+  .strict();
+export type AuthCheckResponse = z.infer<typeof AuthCheckResponse>;
+
+/** POST /local/pairing-code（pnpm pair 専用・同じ PC の本人だけが読める秘密が必要）。 */
+export const LOCAL_ADMIN_HEADER = 'x-zerosys-local-secret';
+export const LocalPairingCodeResponse = z
+  .object({ pairingCode: z.string().regex(PAIRING_CODE_PATTERN), expiresAt: z.number().int().nonnegative() })
+  .strict();
+export type LocalPairingCodeResponse = z.infer<typeof LocalPairingCodeResponse>;

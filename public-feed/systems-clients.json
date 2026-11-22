@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-11-22T00:20:27.354Z",
+  "generated_at": "2026-11-22T07:27:28.378Z",
   "note": "受託システムの一覧(営業台帳の自動追加用・公開して問題ない項目のみ)",
   "systems": [
     {
@@ -75,15 +75,6 @@
       "source": "ledger"
     },
     {
-      "id": "ai-sales-agent-v2",
-      "name": "AI営業エージェント v2",
-      "client": "",
-      "url": "https://ai-sales-agent-v2-production.up.railway.app",
-      "status": "live",
-      "addedAt": "2026-10-13",
-      "source": "ledger"
-    },
-    {
       "id": "ai-call-system",
       "name": "AIコールシステム",
       "client": "",
@@ -104,17 +95,8 @@
     {
       "id": "iwill-erp-app",
       "name": "アイウィル統合業務システム(フェーズ0・ZEROSYS案件)",
-      "client": "",
+      "client": "アイウィル",
       "url": "https://iwill-erp-production.up.railway.app",
-      "status": "live",
-      "addedAt": "2026-10-13",
-      "source": "ledger"
-    },
-    {
-      "id": "biz-erp-5-f4d454cd",
-      "name": "業務システム試作\"5\"(運送/レンタカー/整備・Railway f4d454cd)",
-      "client": "",
-      "url": "https://5-production-bcf3.up.railway.app",
       "status": "live",
       "addedAt": "2026-10-13",
       "source": "ledger"
@@ -162,24 +144,6 @@
       "url": "https://web-production-91534.up.railway.app",
       "status": "live",
       "addedAt": "2026-11-05",
-      "source": "ledger"
-    },
-    {
-      "id": "sales-copilot",
-      "name": "ZEROSYS Sales Copilot(商談中カンペAI・Google Meetの2系統音声を文字起こしし次の一言を表示)",
-      "client": "",
-      "url": "http://127.0.0.1:8787",
-      "status": "building",
-      "addedAt": "2026-11-16",
-      "source": "ledger"
-    },
-    {
-      "id": "shoken-saas",
-      "name": "出店・商圏・商品需要分析SaaS（サービス名は命名中・仮称 商圏AI）",
-      "client": "",
-      "url": "http://localhost:3200（ローカルのみ・未公開）",
-      "status": "building",
-      "addedAt": "2026-11-18",
       "source": "ledger"
     },
     {
